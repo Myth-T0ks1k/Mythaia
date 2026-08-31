@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mythaia</string>
+    <string name="about">关于</string>
+    <string name="acknowledgements">致谢</string>
+    <string name="add">添加</string>
+    <string name="add_configuration">添加配置</string>
+    <string name="add_proxy">添加代理</string>
+    <string name="add_a_configuration">添加配置</string>
+    <string name="address">地址</string>
+    <string name="allow_insecure">允许不安全</string>
+    <string name="auto">自动</string>
+    <string name="cancel">取消</string>
+    <string name="connected">已连接</string>
+    <string name="connecting">正在连接...</string>
+    <string name="continue_action">继续</string>
+    <string name="country_bypass">国家分流</string>
+    <string name="direct">直连</string>
+    <string name="default_value">默认</string>
+    <string name="delete">删除</string>
+    <string name="disable">禁用</string>
+    <string name="disconnected">未连接</string>
+    <string name="disconnecting">正在断开...</string>
+    <string name="edit">编辑</string>
+    <string name="edit_configuration">编辑配置</string>
+    <string name="enable_anyway">仍然启用</string>
+    <string name="encryption">加密</string>
+    <string name="fingerprint">指纹</string>
+    <string name="flow">流控</string>
+    <string name="go_to_settings">前往设置</string>
+    <string name="home">主页</string>
+    <string name="host">主机</string>
+    <string name="import_failed">导入失败</string>
+    <string name="link">链接</string>
+    <string name="manual">手动</string>
+    <string name="mode">模式</string>
+    <string name="name">名称</string>
+    <string name="network">网络</string>
+    <string name="no_proxies">没有代理</string>
+    <string name="none">无</string>
+    <string name="not_configured">未配置</string>
+    <string name="ok">好</string>
+    <string name="path">路径</string>
+    <string name="permission_denied">权限被拒绝</string>
+    <string name="port">端口</string>
+    <string name="proxies">代理</string>
+    <string name="public_key">公钥</string>
+    <string name="qr_code">二维码</string>
+    <string name="reconnecting">正在重连...</string>
+    <string name="routing">路由</string>
+    <string name="routing_rules">路由规则</string>
+    <string name="routing_rules_updated">路由规则已更新</string>
+    <string name="save">保存</string>
+    <string name="scan_your_qr_code">扫描二维码</string>
+    <string name="security">安全</string>
+    <string name="server">服务器</string>
+    <string name="settings">设置</string>
+    <string name="tap_to_add_proxy">点按 + 添加 VLESS 代理。</string>
+    <string name="test_all">全部测试</string>
+    <string name="test_latency">测试延迟</string>
+    <string name="timeout">超时</string>
+    <string name="insecure">不安全</string>
+    <string name="trademarks">商标</string>
+    <string name="transport">传输</string>
+    <string name="unknown">未知</string>
+    <string name="update">更新</string>
+    <string name="update_failed">更新失败</string>
+    <string name="vpn_error">VPN 错误</string>
+    <string name="latency_ms">%d 毫秒</string>
+    <string name="routing_rules_reset">以下路由规则使用的代理已被删除，它们已重置为默认: %s</string>
+    <string name="doh_routing_warning">启用 DNS over HTTPS 将导致路由规则无法工作。基于域名的路由需要使用普通 DNS 来拦截查询。</string>
+    <string name="trademarks_notice">所有商标、服务标识和公司名称均为其各自所有者的财产。</string>
+    <string name="independent_project_notice">Mythaia 是一个独立项目，与以下列出的任何公司无关，未获其认可或赞助。</string>
+    <string name="upload">上传</string>
+    <string name="download">下载</string>
+    <string name="invalid_url">无效的 URL</string>
+    <string name="invalid_qr_code">无效的二维码</string>
+    <string name="qr_code_not_vless">二维码不包含 VLESS 链接</string>
+    <string name="unknown_error">未知错误</string>
+    <string name="subscription">订阅</string>
+    <string name="open_source_libraries">开源库</string>
+    <string name="supports_vless_link">支持 VLESS 链接、订阅链接和 Clash 链接</string>
+
+    <!-- Phase 9: Encrypted DNS -->
+    <string name="encrypted_dns">加密 DNS</string>
+    <string name="dns_protocol">协议</string>
+    <string name="dns_over_https">DNS over HTTPS</string>
+    <string name="dns_over_tls">DNS over TLS</string>
+    <string name="dns_server">DNS 服务器</string>
+    <string name="dns_server_footer">留空以自动发现并升级到加密 DNS 服务器。</string>
+    <string name="encrypted_dns_warning">启用加密 DNS 将增加连接等待时间，并导致路由规则无法工作。</string>
+
+    <!-- Phase 9: IPv6 -->
+    <string name="ipv6">IPv6</string>
+    <string name="ipv6_dns_lookup">IPv6 DNS 查询</string>
+
+    <!-- Phase 9: Trusted Certificates -->
+    <string name="trusted_certificates">受信任的证书</string>
+    <string name="no_trusted_certificates">没有受信任的证书</string>
+    <string name="add_certificate">添加证书</string>
+    <string name="sha256_fingerprint">SHA-256 指纹</string>
+    <string name="sha256_fingerprint_prompt">输入要信任的证书的 SHA-256 指纹（64 个十六进制字符）。</string>
+    <string name="invalid_fingerprint">无效的指纹</string>
+    <string name="invalid_fingerprint_message">指纹无效。必须是 64 个字符的十六进制字符串，或者该指纹已存在。</string>
+    <string name="copy">复制</string>
+
+    <!-- Phase 9: Security -->
+    <string name="allow_insecure_warning">这将跳过 TLS 证书验证，使您的连接容易受到 MITM 攻击。</string>
+    <string name="allow_anyway">仍然允许</string>
+
+    <!-- Phase 9: Proxy Editor -->
+    <string name="protocol_label">协议</string>
+    <string name="password">密码</string>
+    <string name="username">用户名</string>
+    <string name="method">加密方式</string>
+
+    <!-- Phase 9: Proxy List -->
+    <string name="copy_link">复制链接</string>
+    <string name="supports_proxy_link">支持 VLESS、Shadowsocks、NaiveProxy、订阅和 Clash 链接</string>
+
+    <!-- Phase 9: QR Code -->
+    <string name="qr_code_not_supported">二维码不包含受支持的代理链接</string>
+
+    <!-- Chains -->
+    <string name="chains">链路</string>
+    <string name="no_chains">没有链路</string>
+    <string name="tap_to_add_chain">点按 + 创建代理链路。</string>
+    <string name="new_chain">新建链路</string>
+    <string name="edit_chain">编辑链路</string>
+    <string name="chain_name">链路名称</string>
+    <string name="add_proxy_to_chain">添加代理</string>
+    <string name="proxies_in_chain">代理</string>
+    <string name="chain_min_proxies">至少添加 2 个代理以组成链路。</string>
+    <string name="not_enough_proxies">代理不足</string>
+    <string name="not_enough_proxies_message">代理链路至少需要 2 个代理。</string>
+    <string name="invalid_chain">无效链路 — 部分代理缺失</string>
+    <string name="select_proxy">选择代理</string>
+    <string name="no_proxies_available">没有可用的代理</string>
+    <string name="all_proxies_in_chain">所有代理已在此链路中。</string>
+    <string name="entry">入口</string>
+    <string name="exit">出口</string>
+    <string name="route_preview">路由预览</string>
+    <string name="n_proxies">%d 个代理</string>
+
+    <!-- Missing general -->
+    <string name="join_telegram_group">加入 Telegram 群组</string>
+    <string name="select_configuration">代理</string>
+    <string name="reject">拒绝</string>
+
+    <!-- Onboarding -->
+    <string name="country_bypass_title">国家分流</string>
+    <string name="country_bypass_description">将访问本国的流量直连，绕过代理以获得更快的本地访问速度。</string>
+    <string name="ad_blocking_title">广告拦截</string>
+    <string name="ad_blocking_description">在网络层拦截广告和追踪器，获得更清爽的浏览体验。</string>
+    <string name="enable_ad_blocking">启用广告拦截</string>
+    <string name="get_started">开始使用</string>
+    <string name="next">下一步</string>
+    <string name="back">返回</string>
+
+    <!-- HTTP/3 -->
+    <string name="not_yet_supported">暂不支持</string>
+    <string name="disconnect">断开连接</string>
+    <string name="vpn_service">VPN 服务</string>
+    <string name="vpn_channel_description">活动 VPN 连接的通知</string>
+    <string name="route_preview_format">你 → %1$s → 目标</string>
+</resources>

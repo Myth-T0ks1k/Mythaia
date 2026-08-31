@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mythaia adaptive-icon monochrome layer: WingMark in white; the system
+     tints it to the themed-icon palette. Same geometry as the foreground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.6"
+        android:scaleY="0.6"
+        android:translateX="24"
+        android:translateY="24">
+        <path
+            android:pathData="M20,82 Q21,32 82,20"
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="8.5"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M20,82 Q29,47 69,38"
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="8"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M20,82 Q36,61 57,55"
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="7.5"
+            android:strokeLineCap="round" />
+    </group>
+</vector>

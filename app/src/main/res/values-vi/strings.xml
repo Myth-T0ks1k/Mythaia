@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mythaia</string>
+    <string name="about">Giới thiệu</string>
+    <string name="acknowledgements">Ghi nhận</string>
+    <string name="add">Thêm</string>
+    <string name="add_configuration">Thêm cấu hình</string>
+    <string name="add_proxy">Thêm proxy</string>
+    <string name="add_a_configuration">Thêm cấu hình</string>
+    <string name="address">Địa chỉ</string>
+    <string name="allow_insecure">Cho phép không an toàn</string>
+    <string name="auto">Tự động</string>
+    <string name="cancel">Hủy bỏ</string>
+    <string name="connected">Đã kết nối</string>
+    <string name="connecting">Đang kết nối...</string>
+    <string name="continue_action">Tiếp tục</string>
+    <string name="country_bypass">Bỏ qua quốc gia</string>
+    <string name="direct">Trực tiếp</string>
+    <string name="default_value">Mặc định</string>
+    <string name="delete">Xóa</string>
+    <string name="disable">Tắt</string>
+    <string name="disconnected">Đã ngắt kết nối</string>
+    <string name="disconnecting">Đang ngắt kết nối...</string>
+    <string name="edit">Sửa</string>
+    <string name="edit_configuration">Sửa cấu hình</string>
+    <string name="enable_anyway">Vẫn bật</string>
+    <string name="encryption">Mã hóa</string>
+    <string name="fingerprint">Vân tay</string>
+    <string name="flow">Flow</string>
+    <string name="go_to_settings">Đi đến Cài đặt</string>
+    <string name="home">Trang chủ</string>
+    <string name="host">Host</string>
+    <string name="import_failed">Nhập thất bại</string>
+    <string name="link">Liên kết</string>
+    <string name="manual">Thủ công</string>
+    <string name="mode">Chế độ</string>
+    <string name="name">Tên</string>
+    <string name="network">Mạng</string>
+    <string name="no_proxies">Không có proxy</string>
+    <string name="none">Không</string>
+    <string name="not_configured">Chưa cấu hình</string>
+    <string name="ok">OK</string>
+    <string name="path">Đường dẫn</string>
+    <string name="permission_denied">Quyền bị từ chối</string>
+    <string name="port">Cổng</string>
+    <string name="proxies">Proxy</string>
+    <string name="public_key">Khóa công khai</string>
+    <string name="qr_code">Mã QR</string>
+    <string name="reconnecting">Đang kết nối lại...</string>
+    <string name="routing">Định tuyến</string>
+    <string name="routing_rules">Quy tắc định tuyến</string>
+    <string name="routing_rules_updated">Đã cập nhật quy tắc định tuyến</string>
+    <string name="save">Lưu</string>
+    <string name="scan_your_qr_code">Quét mã QR của bạn</string>
+    <string name="security">Bảo mật</string>
+    <string name="server">Máy chủ</string>
+    <string name="settings">Cài đặt</string>
+    <string name="tap_to_add_proxy">Nhấn + để thêm proxy VLESS.</string>
+    <string name="test_all">Kiểm tra tất cả</string>
+    <string name="test_latency">Kiểm tra độ trễ</string>
+    <string name="timeout">hết thời gian</string>
+    <string name="insecure">không an toàn</string>
+    <string name="trademarks">Nhãn hiệu</string>
+    <string name="transport">Truyền tải</string>
+    <string name="unknown">Không xác định</string>
+    <string name="update">Cập nhật</string>
+    <string name="update_failed">Cập nhật thất bại</string>
+    <string name="vpn_error">Lỗi VPN</string>
+    <string name="latency_ms">%d ms</string>
+    <string name="routing_rules_reset">Proxy được sử dụng bởi các quy tắc định tuyến sau đã bị xóa. Chúng đã được đặt lại về Mặc định: %s</string>
+    <string name="doh_routing_warning">Bật DNS qua HTTPS sẽ khiến quy tắc định tuyến không hoạt động. Định tuyến theo tên miền yêu cầu DNS thuần để chặn các truy vấn.</string>
+    <string name="trademarks_notice">Tất cả các nhãn hiệu, nhãn hiệu dịch vụ và tên công ty là tài sản của chủ sở hữu tương ứng.</string>
+    <string name="independent_project_notice">Mythaia là một dự án độc lập, không liên kết, được xác nhận hay tài trợ bởi bất kỳ công ty nào được liệt kê dưới đây.</string>
+    <string name="upload">Tải lên</string>
+    <string name="download">Tải xuống</string>
+    <string name="invalid_url">URL không hợp lệ</string>
+    <string name="invalid_qr_code">Mã QR không hợp lệ</string>
+    <string name="qr_code_not_vless">Mã QR không chứa liên kết VLESS</string>
+    <string name="unknown_error">Lỗi không xác định</string>
+    <string name="subscription">Đăng ký</string>
+    <string name="open_source_libraries">Thư viện mã nguồn mở</string>
+    <string name="supports_vless_link">Hỗ trợ liên kết VLESS, liên kết đăng ký và liên kết Clash</string>
+
+    <!-- Phase 9: Encrypted DNS -->
+    <string name="encrypted_dns">DNS mã hóa</string>
+    <string name="dns_protocol">Giao thức</string>
+    <string name="dns_over_https">DNS over HTTPS</string>
+    <string name="dns_over_tls">DNS over TLS</string>
+    <string name="dns_server">Máy chủ DNS</string>
+    <string name="dns_server_footer">Để trống để tự động phát hiện và nâng cấp lên máy chủ DNS mã hóa.</string>
+    <string name="encrypted_dns_warning">Bật DNS mã hóa sẽ tăng thời gian chờ kết nối và ngăn quy tắc định tuyến hoạt động.</string>
+
+    <!-- Phase 9: IPv6 -->
+    <string name="ipv6">IPv6</string>
+    <string name="ipv6_dns_lookup">Tra cứu DNS IPv6</string>
+
+    <!-- Phase 9: Trusted Certificates -->
+    <string name="trusted_certificates">Chứng chỉ tin cậy</string>
+    <string name="no_trusted_certificates">Không có chứng chỉ tin cậy</string>
+    <string name="add_certificate">Thêm chứng chỉ</string>
+    <string name="sha256_fingerprint">Vân tay SHA-256</string>
+    <string name="sha256_fingerprint_prompt">Nhập vân tay SHA-256 (64 ký tự hex) của chứng chỉ cần tin cậy.</string>
+    <string name="invalid_fingerprint">Vân tay không hợp lệ</string>
+    <string name="invalid_fingerprint_message">Vân tay không hợp lệ. Phải là chuỗi hex 64 ký tự, hoặc nó đã tồn tại.</string>
+    <string name="copy">Sao chép</string>
+
+    <!-- Phase 9: Security -->
+    <string name="allow_insecure_warning">Thao tác này sẽ bỏ qua xác thực chứng chỉ TLS, khiến kết nối của bạn dễ bị tấn công MITM.</string>
+    <string name="allow_anyway">Vẫn cho phép</string>
+
+    <!-- Phase 9: Proxy Editor -->
+    <string name="protocol_label">Giao thức</string>
+    <string name="password">Mật khẩu</string>
+    <string name="username">Tên người dùng</string>
+    <string name="method">Phương thức</string>
+
+    <!-- Phase 9: Proxy List -->
+    <string name="copy_link">Sao chép liên kết</string>
+    <string name="supports_proxy_link">Hỗ trợ liên kết VLESS, Shadowsocks, NaiveProxy, đăng ký và Clash</string>
+
+    <!-- Phase 9: QR Code -->
+    <string name="qr_code_not_supported">Mã QR không chứa liên kết proxy được hỗ trợ</string>
+
+    <!-- Chains -->
+    <string name="chains">Chuỗi</string>
+    <string name="no_chains">Không có chuỗi</string>
+    <string name="tap_to_add_chain">Nhấn + để tạo chuỗi proxy.</string>
+    <string name="new_chain">Chuỗi mới</string>
+    <string name="edit_chain">Sửa chuỗi</string>
+    <string name="chain_name">Tên chuỗi</string>
+    <string name="add_proxy_to_chain">Thêm proxy</string>
+    <string name="proxies_in_chain">Proxy</string>
+    <string name="chain_min_proxies">Thêm ít nhất 2 proxy để tạo chuỗi.</string>
+    <string name="not_enough_proxies">Không đủ proxy</string>
+    <string name="not_enough_proxies_message">Chuỗi proxy cần ít nhất 2 proxy.</string>
+    <string name="invalid_chain">Chuỗi không hợp lệ — một số proxy bị thiếu</string>
+    <string name="select_proxy">Chọn proxy</string>
+    <string name="no_proxies_available">Không có proxy khả dụng</string>
+    <string name="all_proxies_in_chain">Tất cả proxy đã có trong chuỗi này.</string>
+    <string name="entry">Đầu vào</string>
+    <string name="exit">Đầu ra</string>
+    <string name="route_preview">Xem trước tuyến đường</string>
+    <string name="n_proxies">%d proxy</string>
+
+    <!-- Missing general -->
+    <string name="join_telegram_group">Tham gia nhóm Telegram</string>
+    <string name="select_configuration">Proxy</string>
+    <string name="reject">Từ chối</string>
+
+    <!-- Onboarding -->
+    <string name="country_bypass_title">Bỏ qua quốc gia</string>
+    <string name="country_bypass_description">Định tuyến lưu lượng đến quốc gia của bạn trực tiếp, bỏ qua proxy để truy cập nội địa nhanh hơn.</string>
+    <string name="ad_blocking_title">Chặn quảng cáo</string>
+    <string name="ad_blocking_description">Chặn quảng cáo và trình theo dõi ở cấp mạng để có trải nghiệm duyệt web sạch hơn.</string>
+    <string name="enable_ad_blocking">Bật chặn quảng cáo</string>
+    <string name="get_started">Bắt đầu</string>
+    <string name="next">Tiếp theo</string>
+    <string name="back">Quay lại</string>
+
+    <!-- HTTP/3 -->
+    <string name="not_yet_supported">Chưa hỗ trợ</string>
+    <string name="disconnect">Ngắt kết nối</string>
+    <string name="vpn_service">Dịch vụ VPN</string>
+    <string name="vpn_channel_description">Thông báo cho kết nối VPN đang hoạt động</string>
+    <string name="route_preview_format">Bạn → %1$s → Đích</string>
+</resources>

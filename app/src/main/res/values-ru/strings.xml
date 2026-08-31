@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mythaia</string>
+    <string name="about">О приложении</string>
+    <string name="acknowledgements">Благодарности</string>
+    <string name="add">Добавить</string>
+    <string name="add_configuration">Добавить конфигурацию</string>
+    <string name="add_proxy">Добавить прокси</string>
+    <string name="add_a_configuration">Добавьте конфигурацию</string>
+    <string name="address">Адрес</string>
+    <string name="allow_insecure">Небезопасное соединение</string>
+    <string name="auto">Авто</string>
+    <string name="cancel">Отмена</string>
+    <string name="connected">Подключено</string>
+    <string name="connecting">Подключение...</string>
+    <string name="continue_action">Продолжить</string>
+    <string name="country_bypass">Обход по стране</string>
+    <string name="direct">Прямое</string>
+    <string name="default_value">По умолчанию</string>
+    <string name="delete">Удалить</string>
+    <string name="disable">Отключить</string>
+    <string name="disconnected">Отключено</string>
+    <string name="disconnecting">Отключение...</string>
+    <string name="edit">Изменить</string>
+    <string name="edit_configuration">Изменить конфигурацию</string>
+    <string name="enable_anyway">Всё равно включить</string>
+    <string name="encryption">Шифрование</string>
+    <string name="fingerprint">Отпечаток</string>
+    <string name="flow">Flow</string>
+    <string name="go_to_settings">Перейти в Настройки</string>
+    <string name="home">Главная</string>
+    <string name="host">Хост</string>
+    <string name="import_failed">Ошибка импорта</string>
+    <string name="link">Ссылка</string>
+    <string name="manual">Вручную</string>
+    <string name="mode">Режим</string>
+    <string name="name">Имя</string>
+    <string name="network">Сеть</string>
+    <string name="no_proxies">Нет прокси</string>
+    <string name="none">Нет</string>
+    <string name="not_configured">Не настроено</string>
+    <string name="ok">ОК</string>
+    <string name="path">Путь</string>
+    <string name="permission_denied">Нет разрешения</string>
+    <string name="port">Порт</string>
+    <string name="proxies">Прокси</string>
+    <string name="public_key">Публичный ключ</string>
+    <string name="qr_code">QR-код</string>
+    <string name="reconnecting">Переподключение...</string>
+    <string name="routing">Маршрутизация</string>
+    <string name="routing_rules">Правила маршрутизации</string>
+    <string name="routing_rules_updated">Правила маршрутизации обновлены</string>
+    <string name="save">Сохранить</string>
+    <string name="scan_your_qr_code">Отсканируйте QR-код</string>
+    <string name="security">Безопасность</string>
+    <string name="server">Сервер</string>
+    <string name="settings">Настройки</string>
+    <string name="tap_to_add_proxy">Нажмите +, чтобы добавить прокси VLESS.</string>
+    <string name="test_all">Проверить все</string>
+    <string name="test_latency">Проверить задержку</string>
+    <string name="timeout">таймаут</string>
+    <string name="insecure">небезопасно</string>
+    <string name="trademarks">Товарные знаки</string>
+    <string name="transport">Транспорт</string>
+    <string name="unknown">Неизвестно</string>
+    <string name="update">Обновить</string>
+    <string name="update_failed">Ошибка обновления</string>
+    <string name="vpn_error">Ошибка VPN</string>
+    <string name="latency_ms">%d мс</string>
+    <string name="routing_rules_reset">Прокси, используемый следующими правилами маршрутизации, был удалён. Они сброшены на значение по умолчанию: %s</string>
+    <string name="doh_routing_warning">Включение DNS через HTTPS помешает работе правил маршрутизации. Маршрутизация по доменам требует обычного DNS для перехвата запросов.</string>
+    <string name="trademarks_notice">Все товарные знаки, знаки обслуживания и названия компаний являются собственностью их владельцев.</string>
+    <string name="independent_project_notice">Mythaia — независимый проект, не связанный ни с одной из перечисленных ниже компаний и не одобренный или спонсируемый ими.</string>
+    <string name="upload">Отправка</string>
+    <string name="download">Загрузка</string>
+    <string name="invalid_url">Неверный URL</string>
+    <string name="invalid_qr_code">Неверный QR-код</string>
+    <string name="qr_code_not_vless">QR-код не содержит ссылку VLESS</string>
+    <string name="unknown_error">Неизвестная ошибка</string>
+    <string name="subscription">Подписка</string>
+    <string name="open_source_libraries">Библиотеки с открытым кодом</string>
+    <string name="supports_vless_link">Поддержка VLESS-ссылки, ссылки подписки и Clash-ссылки</string>
+
+    <!-- Phase 9: Encrypted DNS -->
+    <string name="encrypted_dns">Зашифрованный DNS</string>
+    <string name="dns_protocol">Протокол</string>
+    <string name="dns_over_https">DNS over HTTPS</string>
+    <string name="dns_over_tls">DNS over TLS</string>
+    <string name="dns_server">DNS-сервер</string>
+    <string name="dns_server_footer">Оставьте пустым для автоматического обнаружения и перехода на зашифрованные DNS-серверы.</string>
+    <string name="encrypted_dns_warning">Включение зашифрованного DNS увеличит время ожидания подключения и помешает работе правил маршрутизации.</string>
+
+    <!-- Phase 9: IPv6 -->
+    <string name="ipv6">IPv6</string>
+    <string name="ipv6_dns_lookup">DNS-запросы IPv6</string>
+
+    <!-- Phase 9: Trusted Certificates -->
+    <string name="trusted_certificates">Доверенные сертификаты</string>
+    <string name="no_trusted_certificates">Нет доверенных сертификатов</string>
+    <string name="add_certificate">Добавить сертификат</string>
+    <string name="sha256_fingerprint">Отпечаток SHA-256</string>
+    <string name="sha256_fingerprint_prompt">Введите отпечаток SHA-256 (64 шестнадцатеричных символа) сертификата для добавления в доверенные.</string>
+    <string name="invalid_fingerprint">Недопустимый отпечаток</string>
+    <string name="invalid_fingerprint_message">Недопустимый отпечаток. Должен быть шестнадцатеричной строкой из 64 символов или он уже существует.</string>
+    <string name="copy">Копировать</string>
+
+    <!-- Phase 9: Security -->
+    <string name="allow_insecure_warning">Это пропустит проверку сертификата TLS, что сделает ваши подключения уязвимыми для атак MITM.</string>
+    <string name="allow_anyway">Разрешить в любом случае</string>
+
+    <!-- Phase 9: Proxy Editor -->
+    <string name="protocol_label">Протокол</string>
+    <string name="password">Пароль</string>
+    <string name="username">Имя пользователя</string>
+    <string name="method">Метод</string>
+
+    <!-- Phase 9: Proxy List -->
+    <string name="copy_link">Копировать ссылку</string>
+    <string name="supports_proxy_link">Поддержка ссылок VLESS, Shadowsocks, NaiveProxy, подписки и Clash</string>
+
+    <!-- Phase 9: QR Code -->
+    <string name="qr_code_not_supported">QR-код не содержит поддерживаемую ссылку на прокси</string>
+
+    <!-- Chains -->
+    <string name="chains">Цепочки</string>
+    <string name="no_chains">Нет цепочек</string>
+    <string name="tap_to_add_chain">Нажмите +, чтобы создать цепочку прокси.</string>
+    <string name="new_chain">Новая цепочка</string>
+    <string name="edit_chain">Изменить цепочку</string>
+    <string name="chain_name">Название цепочки</string>
+    <string name="add_proxy_to_chain">Добавить прокси</string>
+    <string name="proxies_in_chain">Прокси</string>
+    <string name="chain_min_proxies">Добавьте минимум 2 прокси для создания цепочки.</string>
+    <string name="not_enough_proxies">Недостаточно прокси</string>
+    <string name="not_enough_proxies_message">Для цепочки необходимо минимум 2 прокси.</string>
+    <string name="invalid_chain">Недопустимая цепочка — некоторые прокси отсутствуют</string>
+    <string name="select_proxy">Выбрать прокси</string>
+    <string name="no_proxies_available">Нет доступных прокси</string>
+    <string name="all_proxies_in_chain">Все прокси уже в этой цепочке.</string>
+    <string name="entry">Вход</string>
+    <string name="exit">Выход</string>
+    <string name="route_preview">Предпросмотр маршрута</string>
+    <string name="n_proxies">%d прокси</string>
+
+    <!-- Missing general -->
+    <string name="join_telegram_group">Присоединиться к группе Telegram</string>
+    <string name="select_configuration">Прокси</string>
+    <string name="reject">Отклонить</string>
+
+    <!-- Onboarding -->
+    <string name="country_bypass_title">Обход по стране</string>
+    <string name="country_bypass_description">Направляйте трафик в вашу страну напрямую, минуя прокси для более быстрого локального доступа.</string>
+    <string name="ad_blocking_title">Блокировка рекламы</string>
+    <string name="ad_blocking_description">Блокируйте рекламу и трекеры на сетевом уровне для более чистого просмотра.</string>
+    <string name="enable_ad_blocking">Включить блокировку рекламы</string>
+    <string name="get_started">Начать</string>
+    <string name="next">Далее</string>
+    <string name="back">Назад</string>
+
+    <!-- HTTP/3 -->
+    <string name="not_yet_supported">Пока не поддерживается</string>
+    <string name="disconnect">Отключить</string>
+    <string name="vpn_service">Служба VPN</string>
+    <string name="vpn_channel_description">Уведомление об активном подключении VPN</string>
+    <string name="route_preview_format">Вы → %1$s → Цель</string>
+</resources>

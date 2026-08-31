@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mythaia</string>
+    <string name="about">အကြောင်း</string>
+    <string name="acknowledgements">ကျေးဇူးတင်လွှာ</string>
+    <string name="add">ထည့်ရန်</string>
+    <string name="add_configuration">ဖွဲ့စည်းမှုထည့်ရန်</string>
+    <string name="add_proxy">ပရောက်စီထည့်ရန်</string>
+    <string name="add_a_configuration">ဖွဲ့စည်းမှုတစ်ခုထည့်ပါ</string>
+    <string name="address">လိပ်စာ</string>
+    <string name="allow_insecure">မလုံခြုံမှုခွင့်ပြု</string>
+    <string name="auto">အလိုအလျောက်</string>
+    <string name="cancel">ပယ်ဖျက်ရန်</string>
+    <string name="connected">ချိတ်ဆက်ပြီး</string>
+    <string name="connecting">ချိတ်ဆက်နေသည်...</string>
+    <string name="continue_action">ဆက်လုပ်ရန်</string>
+    <string name="country_bypass">နိုင်ငံရှောင်ကွင်း</string>
+    <string name="direct">တိုက်ရိုက်</string>
+    <string name="default_value">မူရင်း</string>
+    <string name="delete">ဖျက်ရန်</string>
+    <string name="disable">ပိတ်ရန်</string>
+    <string name="disconnected">ချိတ်ဆက်မှုပြတ်ပြီး</string>
+    <string name="disconnecting">ချိတ်ဆက်မှုဖြတ်နေသည်...</string>
+    <string name="edit">တည်းဖြတ်</string>
+    <string name="edit_configuration">ဖွဲ့စည်းမှုတည်းဖြတ်</string>
+    <string name="enable_anyway">ဘယ်လိုပဲဖြစ်ဖြစ် ဖွင့်ရန်</string>
+    <string name="encryption">ကုဒ်ဝှက်ခြင်း</string>
+    <string name="fingerprint">လက်ဗွေ</string>
+    <string name="flow">Flow</string>
+    <string name="go_to_settings">ဆက်တင်သို့သွားရန်</string>
+    <string name="home">ပင်မ</string>
+    <string name="host">Host</string>
+    <string name="import_failed">တင်သွင်းမှု မအောင်မြင်ပါ</string>
+    <string name="link">လင့်ခ်</string>
+    <string name="manual">ကိုယ်တိုင်</string>
+    <string name="mode">မုဒ်</string>
+    <string name="name">အမည်</string>
+    <string name="network">ကွန်ရက်</string>
+    <string name="no_proxies">ပရောက်စီမရှိပါ</string>
+    <string name="none">မရှိ</string>
+    <string name="not_configured">ဖွဲ့စည်းမထားပါ</string>
+    <string name="ok">အိုကေ</string>
+    <string name="path">လမ်းကြောင်း</string>
+    <string name="permission_denied">ခွင့်ပြုချက်ငြင်းပယ်ခံရသည်</string>
+    <string name="port">ပို့တ်</string>
+    <string name="proxies">ပရောက်စီများ</string>
+    <string name="public_key">အများသုံးသော့</string>
+    <string name="qr_code">QR ကုဒ်</string>
+    <string name="reconnecting">ပြန်လည်ချိတ်ဆက်နေသည်...</string>
+    <string name="routing">လမ်းကြောင်းသတ်မှတ်ခြင်း</string>
+    <string name="routing_rules">လမ်းကြောင်းသတ်မှတ်ချက်များ</string>
+    <string name="routing_rules_updated">လမ်းကြောင်းသတ်မှတ်ချက်များ အပ်ဒိတ်လုပ်ပြီးပါပြီ</string>
+    <string name="save">သိမ်းရန်</string>
+    <string name="scan_your_qr_code">သင့် QR ကုဒ်ကိုစကင်ဖတ်ပါ</string>
+    <string name="security">လုံခြုံရေး</string>
+    <string name="server">ဆာဗာ</string>
+    <string name="settings">ဆက်တင်များ</string>
+    <string name="tap_to_add_proxy">VLESS ပရောက်စီထည့်ရန် + ကိုနှိပ်ပါ။</string>
+    <string name="test_all">အားလုံးစမ်းသပ်</string>
+    <string name="test_latency">Latency စမ်းသပ်</string>
+    <string name="timeout">အချိန်ကုန်</string>
+    <string name="insecure">မလုံခြုံ</string>
+    <string name="trademarks">ကုန်အမှတ်တံဆိပ်များ</string>
+    <string name="transport">အပို့အဆောင်</string>
+    <string name="unknown">မသိ</string>
+    <string name="update">အပ်ဒိတ်</string>
+    <string name="update_failed">အပ်ဒိတ် မအောင်မြင်ပါ</string>
+    <string name="vpn_error">VPN အမှား</string>
+    <string name="latency_ms">%d ms</string>
+    <string name="routing_rules_reset">အောက်ပါ လမ်းကြောင်းသတ်မှတ်ချက်များတွင် အသုံးပြုထားသော ပရောက်စီကို ဖျက်လိုက်ပါပြီ။ ၎င်းတို့ကို မူရင်းသို့ ပြန်လည်သတ်မှတ်ထားပါသည်: %s</string>
+    <string name="doh_routing_warning">DNS over HTTPS ကိုဖွင့်ခြင်းသည် လမ်းကြောင်းသတ်မှတ်ချက်များ အလုပ်မလုပ်စေပါ။ ဒိုမိန်းအခြေခံ လမ်းကြောင်းသတ်မှတ်ခြင်းသည် DNS ရိုးရိုးဖြင့် မေးခွန်းများကို ကြားဖြတ်ရန် လိုအပ်ပါသည်။</string>
+    <string name="trademarks_notice">ကုန်အမှတ်တံဆိပ်များ၊ ဝန်ဆောင်မှုအမှတ်တံဆိပ်များနှင့် ကုမ္ပဏီအမည်များအားလုံးသည် သက်ဆိုင်ရာပိုင်ရှင်များ၏ ပိုင်ဆိုင်မှုဖြစ်ပါသည်။</string>
+    <string name="independent_project_notice">Mythaia သည် လွတ်လပ်သောပရောဂျက်တစ်ခုဖြစ်ပြီး အောက်တွင်ဖော်ပြထားသော ကုမ္ပဏီတစ်ခုခုနှင့် ဆက်စပ်ခြင်း၊ ထောက်ခံခြင်း သို့မဟုတ် ပံ့ပိုးကူညီခြင်းမရှိပါ။</string>
+    <string name="upload">အပ်လုဒ်</string>
+    <string name="download">ဒေါင်းလုဒ်</string>
+    <string name="invalid_url">URL မမှန်ကန်ပါ</string>
+    <string name="invalid_qr_code">QR ကုဒ် မမှန်ကန်ပါ</string>
+    <string name="qr_code_not_vless">QR ကုဒ်တွင် VLESS လင့်ခ် မပါဝင်ပါ</string>
+    <string name="unknown_error">အမည်မသိ အမှား</string>
+    <string name="subscription">စာရင်းသွင်းမှု</string>
+    <string name="open_source_libraries">အွပ်ပင်းဆို့စ် စာကြည့်တိုက်များ</string>
+    <string name="supports_vless_link">VLESS လင့်ခ်၊ စာရင်းသွင်းမှုလင့်ခ်နှင့် Clash လင့်ခ်ကို ပံ့ပိုးပါသည်</string>
+
+    <!-- Phase 9: Encrypted DNS -->
+    <string name="encrypted_dns">ကုဒ်ဝှက် DNS</string>
+    <string name="dns_protocol">ပရိုတိုကော</string>
+    <string name="dns_over_https">DNS over HTTPS</string>
+    <string name="dns_over_tls">DNS over TLS</string>
+    <string name="dns_server">DNS ဆာဗာ</string>
+    <string name="dns_server_footer">ကုဒ်ဝှက် DNS ဆာဗာများကို အလိုအလျောက်ရှာဖွေပြီး အဆင့်မြှင့်ရန် ဗလာထားပါ။</string>
+    <string name="encrypted_dns_warning">ကုဒ်ဝှက် DNS ကိုဖွင့်ခြင်းသည် ချိတ်ဆက်မှုစောင့်ဆိုင်းချိန်ကို တိုးစေပြီး လမ်းကြောင်းသတ်မှတ်ချက်များ အလုပ်မလုပ်စေပါ။</string>
+
+    <!-- Phase 9: IPv6 -->
+    <string name="ipv6">IPv6</string>
+    <string name="ipv6_dns_lookup">IPv6 DNS ရှာဖွေမှု</string>
+
+    <!-- Phase 9: Trusted Certificates -->
+    <string name="trusted_certificates">ယုံကြည်ရသော လက်မှတ်များ</string>
+    <string name="no_trusted_certificates">ယုံကြည်ရသော လက်မှတ်များ မရှိပါ</string>
+    <string name="add_certificate">လက်မှတ်ထည့်ရန်</string>
+    <string name="sha256_fingerprint">SHA-256 လက်ဗွေ</string>
+    <string name="sha256_fingerprint_prompt">ယုံကြည်ရမည့် လက်မှတ်၏ SHA-256 လက်ဗွေ (hex စာလုံး ၆၄ လုံး) ကို ထည့်ပါ။</string>
+    <string name="invalid_fingerprint">လက်ဗွေ မမှန်ကန်ပါ</string>
+    <string name="invalid_fingerprint_message">လက်ဗွေ မမှန်ကန်ပါ။ hex စာလုံး ၆၄ လုံးပါ စာတန်းဖြစ်ရမည်၊ သို့မဟုတ် ၎င်းသည် ရှိပြီးသားဖြစ်သည်။</string>
+    <string name="copy">ကူးယူ</string>
+
+    <!-- Phase 9: Security -->
+    <string name="allow_insecure_warning">၎င်းသည် TLS လက်မှတ်အတည်ပြုခြင်းကို ကျော်လွှားမည်ဖြစ်ပြီး သင့်ချိတ်ဆက်မှုများကို MITM တိုက်ခိုက်မှုများအတွက် ထိခိုက်လွယ်စေသည်။</string>
+    <string name="allow_anyway">ဘယ်လိုပဲဖြစ်ဖြစ် ခွင့်ပြုရန်</string>
+
+    <!-- Phase 9: Proxy Editor -->
+    <string name="protocol_label">ပရိုတိုကော</string>
+    <string name="password">စကားဝှက်</string>
+    <string name="username">အသုံးပြုသူအမည်</string>
+    <string name="method">နည်းလမ်း</string>
+
+    <!-- Phase 9: Proxy List -->
+    <string name="copy_link">လင့်ခ်ကူးယူ</string>
+    <string name="supports_proxy_link">VLESS၊ Shadowsocks၊ NaiveProxy၊ စာရင်းသွင်းမှုနှင့် Clash လင့်ခ်များကို ပံ့ပိုးပါသည်</string>
+
+    <!-- Phase 9: QR Code -->
+    <string name="qr_code_not_supported">QR ကုဒ်တွင် ပံ့ပိုးထားသော ပရောက်စီလင့်ခ် မပါဝင်ပါ</string>
+
+    <!-- Chains -->
+    <string name="chains">ချိန်းများ</string>
+    <string name="no_chains">ချိန်းမရှိပါ</string>
+    <string name="tap_to_add_chain">ပရောက်စီချိန်းဖန်တီးရန် + ကိုနှိပ်ပါ။</string>
+    <string name="new_chain">ချိန်းအသစ်</string>
+    <string name="edit_chain">ချိန်းတည်းဖြတ်</string>
+    <string name="chain_name">ချိန်းအမည်</string>
+    <string name="add_proxy_to_chain">ပရောက်စီထည့်ရန်</string>
+    <string name="proxies_in_chain">ပရောက်စီများ</string>
+    <string name="chain_min_proxies">ချိန်းဖန်တီးရန် ပရောက်စီ အနည်းဆုံး ၂ ခု ထည့်ပါ။</string>
+    <string name="not_enough_proxies">ပရောက်စီ မလုံလောက်ပါ</string>
+    <string name="not_enough_proxies_message">ပရောက်စီချိန်းတစ်ခုအတွက် ပရောက်စီ အနည်းဆုံး ၂ ခု လိုအပ်ပါသည်။</string>
+    <string name="invalid_chain">ချိန်းမမှန်ကန်ပါ — ပရောက်စီအချို့ ပျောက်ဆုံးနေသည်</string>
+    <string name="select_proxy">ပရောက်စီရွေးချယ်ရန်</string>
+    <string name="no_proxies_available">ပရောက်စီ မရနိုင်ပါ</string>
+    <string name="all_proxies_in_chain">ပရောက်စီအားလုံး ဤချိန်းတွင် ပါဝင်ပြီးသားဖြစ်သည်။</string>
+    <string name="entry">ဝင်ပေါက်</string>
+    <string name="exit">ထွက်ပေါက်</string>
+    <string name="route_preview">လမ်းကြောင်း အကြိုကြည့်ရှုမှု</string>
+    <string name="n_proxies">ပရောက်စီ %d ခု</string>
+
+    <!-- Missing general -->
+    <string name="join_telegram_group">Telegram အုပ်စုသို့ ဝင်ရောက်ရန်</string>
+    <string name="select_configuration">ပရောက်စီများ</string>
+    <string name="reject">ပိတ်ဆို့</string>
+
+    <!-- Onboarding -->
+    <string name="country_bypass_title">နိုင်ငံရှောင်ကွင်း</string>
+    <string name="country_bypass_description">ပိုမြန်သော ပြည်တွင်းဝင်ရောက်မှုအတွက် ပရောက်စီကို ကျော်ပြီး သင့်နိုင်ငံသို့ တိုက်ရိုက်လမ်းကြောင်းပေးပါ။</string>
+    <string name="ad_blocking_title">ကြော်ငြာပိတ်ဆို့ခြင်း</string>
+    <string name="ad_blocking_description">ကွန်ရက်အဆင့်တွင် ကြော်ငြာနှင့် ခြေရာခံများကို ပိတ်ဆို့ပြီး ပိုသန့်ရှင်းသော ဘရောက်ဆာအတွေ့အကြုံကို ရယူပါ။</string>
+    <string name="enable_ad_blocking">ကြော်ငြာပိတ်ဆို့ခြင်းကို ဖွင့်ရန်</string>
+    <string name="get_started">စတင်ရန်</string>
+    <string name="next">နောက်တစ်ခု</string>
+    <string name="back">နောက်သို့</string>
+
+    <!-- HTTP/3 -->
+    <string name="not_yet_supported">မပံ့ပိုးရသေးပါ</string>
+    <string name="disconnect">ချိတ်ဆက်မှုဖြတ်ရန်</string>
+    <string name="vpn_service">VPN ဝန်ဆောင်မှု</string>
+    <string name="vpn_channel_description">ဆက်သွယ်နေသော VPN အတွက် အသိပေးချက်</string>
+    <string name="route_preview_format">သင် → %1$s → ပစ်မှတ်</string>
+</resources>

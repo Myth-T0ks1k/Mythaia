@@ -1,0 +1,95 @@
+# ============================================================================
+# NativeBridge — JNI methods called from C and callback interface
+# ============================================================================
+-keep class com.argsment.anywhere.vpn.NativeBridge { *; }
+-keep interface com.argsment.anywhere.vpn.NativeBridge$LwipCallback { *; }
+
+# ============================================================================
+# VPN Service + Binder (accessed via reflection by Android framework)
+# ============================================================================
+-keep class com.argsment.anywhere.vpn.AnywhereVpnService { *; }
+-keep class com.argsment.anywhere.vpn.AnywhereVpnService$LocalBinder { *; }
+
+# ============================================================================
+# @Serializable data classes, enums, and custom serializers
+# ============================================================================
+-keep class com.argsment.anywhere.data.model.ProxyConfiguration { *; }
+-keep class com.argsment.anywhere.data.model.OutboundProtocol { *; }
+-keep class com.argsment.anywhere.data.model.NaiveProtocol { *; }
+-keep class com.argsment.anywhere.data.model.ProxyChain { *; }
+-keep class com.argsment.anywhere.data.model.TlsConfiguration { *; }
+-keep class com.argsment.anywhere.data.model.RealityConfiguration { *; }
+-keep class com.argsment.anywhere.data.model.WebSocketConfiguration { *; }
+-keep class com.argsment.anywhere.data.model.HttpUpgradeConfiguration { *; }
+-keep class com.argsment.anywhere.data.model.XHttpConfiguration { *; }
+-keep class com.argsment.anywhere.data.model.XHttpMode { *; }
+-keep class com.argsment.anywhere.data.model.TlsFingerprint { *; }
+-keep class com.argsment.anywhere.data.model.Subscription { *; }
+-keep class com.argsment.anywhere.data.model.DomainRule { *; }
+-keep class com.argsment.anywhere.data.model.DomainRuleType { *; }
+
+# Custom serializers
+-keep class com.argsment.anywhere.data.model.UuidSerializer { *; }
+-keep class com.argsment.anywhere.data.model.Base64UrlByteArraySerializer { *; }
+-keep class com.argsment.anywhere.data.model.HexByteArraySerializer { *; }
+
+# Generated $$serializer companion classes
+-keepclassmembers class com.argsment.anywhere.data.model.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.argsment.anywhere.data.model.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# ============================================================================
+# Compose Navigation route objects (serialized for type-safe nav)
+# ============================================================================
+-keep class com.argsment.anywhere.ui.navigation.HomeRoute { *; }
+-keep class com.argsment.anywhere.ui.navigation.ProxiesRoute { *; }
+-keep class com.argsment.anywhere.ui.navigation.ChainsRoute { *; }
+-keep class com.argsment.anywhere.ui.navigation.SettingsRoute { *; }
+
+# ============================================================================
+# kotlinx.serialization infrastructure
+# ============================================================================
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# ============================================================================
+# Standard enum keepclassmembers
+# ============================================================================
+-keepclassmembers enum com.argsment.anywhere.** {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+# ============================================================================
+# Crash reporting — preserve source file and line numbers
+# ============================================================================
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+
+# ============================================================================
+# javax.crypto.KEM (JDK 21 / Android 15+ API 35). Guarded by Build.VERSION
+# checks at runtime; not present in compile SDK stubs.
+# ============================================================================
+-dontwarn javax.crypto.KEM
+-dontwarn javax.crypto.KEM$Decapsulator
+-dontwarn javax.crypto.KEM$Encapsulator
+-dontwarn javax.crypto.KEM$Encapsulated
+
+# ============================================================================
+# ML Kit barcode scanner. The AAR ships consumer ProGuard rules, but the
+# Play-Services variant loads internal GMS classes by reflected name at
+# runtime. Explicit keeps defend against the scanner crashing with
+# `NoClassDefFoundError` / `ClassNotFoundException` on release builds.
+# ============================================================================
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keep class com.google.android.gms.vision.** { *; }
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.internal.mlkit_**

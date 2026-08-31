@@ -1,0 +1,235 @@
+<resources>
+    <string name="app_name">Mythaia</string>
+
+    <!-- Notifications -->
+    <string name="routing_rules_updated_title">Routing Rules Updated</string>
+    <string name="routing_rules_updated_message">The proxy used by the following routing rules was deleted. They have been reset to Default: %1$s</string>
+
+    <!-- General -->
+    <string name="about">About</string>
+    <string name="acknowledgements">Acknowledgements</string>
+    <string name="add">Add</string>
+    <string name="add_configuration">Add Configuration</string>
+    <string name="add_proxy">Add Proxy</string>
+    <string name="add_a_configuration">Add a Configuration</string>
+    <string name="address">Address</string>
+    <string name="allow_insecure">Allow Insecure</string>
+    <string name="auto">Auto</string>
+    <string name="cancel">Cancel</string>
+    <string name="connected">Connected</string>
+    <string name="connecting">Connecting…</string>
+    <string name="continue_action">Continue</string>
+    <string name="country_bypass">Country Bypass</string>
+    <string name="direct">DIRECT</string>
+    <string name="default_value">Default</string>
+    <string name="delete">Delete</string>
+    <string name="disable">Disable</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="disconnecting">Disconnecting…</string>
+    <string name="edit">Edit</string>
+    <string name="edit_configuration">Edit Configuration</string>
+    <string name="enable_anyway">Enable Anyway</string>
+    <string name="encryption">Encryption</string>
+    <string name="fingerprint">Fingerprint</string>
+    <string name="flow">Flow</string>
+    <string name="go_to_settings">Go to Settings</string>
+    <string name="home">Home</string>
+    <string name="host">Host</string>
+    <string name="import_failed">Import Failed</string>
+    <string name="link">Link</string>
+    <string name="join_telegram_group">Join Telegram Group</string>
+    <string name="manual">Manual</string>
+    <string name="mode">Mode</string>
+    <string name="name">Name</string>
+    <string name="network">Network</string>
+    <string name="no_proxies">No Proxies</string>
+    <string name="none">None</string>
+    <string name="not_configured">Not Configured</string>
+    <string name="ok">OK</string>
+    <string name="open_source_libraries">Open Source Libraries</string>
+    <string name="path">Path</string>
+    <string name="permission_denied">Permission denied</string>
+    <string name="port">Port</string>
+    <string name="proxies">Proxies</string>
+    <string name="public_key">Public Key</string>
+    <string name="qr_code">QR Code</string>
+    <string name="reconnecting">Reconnecting…</string>
+    <string name="select_configuration">Proxies</string>
+    <string name="routing">Routing</string>
+    <string name="routing_rules">Routing Rules</string>
+    <string name="global_mode">Global Mode</string>
+    <string name="proxy_mode_rule">Rule</string>
+    <string name="proxy_mode_global">Global</string>
+    <string name="rename">Rename</string>
+    <string name="rename_subscription">Rename Subscription</string>
+    <string name="routing_rules_updated">Routing Rules Updated</string>
+    <string name="save">Save</string>
+    <string name="scan_your_qr_code">Scan your QR code</string>
+    <string name="security">Security</string>
+    <string name="server">Server</string>
+    <string name="settings">Settings</string>
+    <string name="subscription">Subscription</string>
+    <string name="https_proxy">HTTPS Proxy</string>
+    <string name="http2_proxy">HTTP/2 Proxy</string>
+    <string name="link_type">Link Type</string>
+    <string name="supports_vless_link">Supports VLESS link, subscription link and Clash link</string>
+    <string name="tap_to_add_proxy">Tap + to add a VLESS proxy.</string>
+    <string name="test_all">Test All</string>
+    <string name="test_latency">Test Latency</string>
+    <string name="timeout">timeout</string>
+    <string name="insecure">insecure</string>
+    <string name="reject">REJECT</string>
+    <string name="trademarks">Trademarks</string>
+
+    <!-- Onboarding -->
+    <string name="country_bypass_title">Country Bypass</string>
+    <string name="country_bypass_description">Route traffic to your home country directly, bypassing the proxy for faster local access.</string>
+    <string name="ad_blocking_title">AD Blocking</string>
+    <string name="ad_blocking_description">Block ads and trackers at the network level for a cleaner browsing experience.</string>
+    <string name="enable_ad_blocking">Enable AD Blocking</string>
+    <string name="get_started">Get Started</string>
+    <string name="next">Next</string>
+    <string name="back">Back</string>
+
+    <!-- HTTP/3 -->
+    <string name="not_yet_supported">Not yet supported</string>
+    <string name="transport">Transport</string>
+    <string name="unknown">Unknown</string>
+    <string name="update">Update</string>
+    <string name="update_failed">Update Failed</string>
+    <string name="vpn_error">VPN Error</string>
+    <string name="upload">Upload</string>
+    <string name="download">Download</string>
+    <string name="invalid_url">Invalid URL</string>
+    <string name="invalid_qr_code">Invalid QR code</string>
+    <string name="qr_code_not_vless">QR code does not contain a VLESS link</string>
+    <string name="qr_code_not_supported">QR code does not contain a supported proxy link</string>
+    <string name="unknown_error">Unknown error</string>
+
+    <!-- Phase 9: Encrypted DNS -->
+    <string name="encrypted_dns">Encrypted DNS</string>
+    <string name="encrypted_dns_footer">Not recommended.</string>
+    <string name="dns_protocol">Protocol</string>
+    <string name="dns_over_https">DNS over HTTPS</string>
+    <string name="dns_over_tls">DNS over TLS</string>
+    <string name="dns_server">DNS Server</string>
+    <string name="dns_server_footer">Leave empty to automatically discover and upgrade to encrypted DNS servers.</string>
+    <string name="encrypted_dns_warning">Enabling Encrypted DNS will increase connection wait time and prevent routing rules from working.</string>
+
+    <!-- Phase 9: IPv6 -->
+    <string name="ipv6">IPv6</string>
+    <string name="ipv6_dns_lookup">IPv6 DNS Lookup</string>
+
+    <!-- Phase 9: Trusted Certificates -->
+    <string name="trusted_certificates">Trusted Certificates</string>
+    <string name="no_trusted_certificates">No trusted certificates</string>
+    <string name="add_certificate">Add Certificate</string>
+    <string name="sha256_fingerprint">SHA-256 Fingerprint</string>
+    <string name="sha256_fingerprint_prompt">Enter the SHA-256 fingerprint (64 hex characters) of the certificate to trust.</string>
+    <string name="invalid_fingerprint">Invalid Fingerprint</string>
+    <string name="invalid_fingerprint_message">Invalid fingerprint. Must be a 64-character hex string, or it already exists.</string>
+    <string name="copy">Copy</string>
+
+    <!-- Advanced Settings -->
+    <string name="advanced_settings">Advanced Settings</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="experimental">Experimental</string>
+    <string name="experimental_features">Experimental Features</string>
+    <string name="experimental_footer">Enables in-development features such as creating custom routing rule sets.</string>
+    <string name="other">Other</string>
+    <string name="remnawave_hwid">Remnawave HWID</string>
+    <string name="remnawave_hwid_prompt">Enable Remnawave HWID to continue.</string>
+    <string name="enable">Enable</string>
+    <string name="block_quic">Block QUIC</string>
+
+    <!-- Custom Rule Set -->
+    <string name="custom">Custom</string>
+    <string name="new_rule_set">New Rule Set</string>
+    <string name="rule_set">Rule Set</string>
+    <string name="rules">Rules</string>
+    <string name="rules_count">%1$d rule(s)</string>
+    <string name="rename_rule_set">Rename Rule Set</string>
+    <string name="add_rule">Add Rule</string>
+    <string name="import_rules">Import Rules</string>
+    <string name="route_to">Route To</string>
+    <string name="domain_suffix">Domain Suffix</string>
+    <string name="domain_keyword">Domain Keyword</string>
+    <string name="ipv4_cidr">IPv4 CIDR</string>
+    <string name="ipv6_cidr">IPv6 CIDR</string>
+    <string name="type_label">Type</string>
+    <string name="name_label">Name</string>
+    <string name="value_label">Value</string>
+    <string name="more">More</string>
+    <string name="reset">Reset</string>
+    <string name="download_from_internet">Download From Internet</string>
+    <string name="rule_list_url">Mythaia Rule List URL</string>
+    <string name="unknown_content">Unknown content.</string>
+    <string name="import_action">Import</string>
+    <string name="parsed_rules">%1$d rule(s)</string>
+    <string name="example_domain">example.com</string>
+    <string name="example_keyword">example</string>
+    <string name="example_ipv4">10.0.0.0/8</string>
+    <string name="example_ipv6">2001:db8::/32</string>
+
+    <!-- Chain editor -->
+    <string name="move_up">Move Up</string>
+    <string name="move_down">Move Down</string>
+    <string name="standalone">Standalone</string>
+
+    <!-- Logs -->
+    <string name="logs">Logs</string>
+    <string name="select">Select</string>
+    <string name="copy_count">Copy (%1$d)</string>
+    <string name="no_recent_logs">No Recent Logs</string>
+
+    <!-- Phase 9: Security -->
+    <string name="allow_insecure_warning">This will skip TLS certificate validation, making your connections vulnerable to MITM attacks.</string>
+    <string name="allow_anyway">Allow Anyway</string>
+
+    <!-- Phase 9: Proxy Editor -->
+    <string name="protocol_label">Protocol</string>
+    <string name="password">Password</string>
+    <string name="username">Username</string>
+    <string name="method">Method</string>
+    <string name="grpc_service_name">Service Name</string>
+    <string name="grpc_authority">Authority</string>
+    <string name="user_agent">User Agent</string>
+
+    <!-- Phase 9: Proxy List -->
+    <string name="copy_link">Copy Link</string>
+    <string name="supports_proxy_link">Supports VLESS, Shadowsocks, NaiveProxy, subscription, and Clash links</string>
+
+    <!-- Formatted strings -->
+    <string name="latency_ms">%d ms</string>
+    <string name="routing_rules_reset">The proxy used by the following routing rules was deleted. They have been reset to Default: %1$s</string>
+
+    <!-- Chains -->
+    <string name="chains">Chains</string>
+    <string name="no_chains">No Chains</string>
+    <string name="tap_to_add_chain">Tap + to create a proxy chain.</string>
+    <string name="new_chain">New Chain</string>
+    <string name="edit_chain">Edit Chain</string>
+    <string name="chain_name">Chain Name</string>
+    <string name="add_proxy_to_chain">Add Proxy</string>
+    <string name="proxies_in_chain">Proxies</string>
+    <string name="chain_min_proxies">Add at least 2 proxies to form a chain.</string>
+    <string name="not_enough_proxies">Not Enough Proxies</string>
+    <string name="not_enough_proxies_message">A proxy chain needs at least 2 proxies.</string>
+    <string name="invalid_chain">Invalid chain — some proxies are missing</string>
+    <string name="select_proxy">Select Proxy</string>
+    <string name="no_proxies_available">No Proxies Available</string>
+    <string name="all_proxies_in_chain">All proxies are already in this chain.</string>
+    <string name="entry">Entry</string>
+    <string name="exit">Exit</string>
+    <string name="route_preview">Route Preview</string>
+    <string name="n_proxies">%d proxies</string>
+
+    <!-- Notices -->
+    <string name="doh_routing_warning">Enabling DNS over HTTPS will prevent routing rules from working. Domain-based routing requires plain DNS to intercept queries.</string>
+    <string name="trademarks_notice">All trademarks, service marks, and company names are the property of their respective owners.</string>
+    <string name="independent_project_notice">Mythaia is an independent project and is not affiliated with, endorsed by, or sponsored by any of the companies listed below.</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="vpn_service">VPN Service</string>
+    <string name="vpn_channel_description">Notification for the active VPN connection</string>
+    <string name="route_preview_format">You → %1$s → Target</string>
+</resources>
