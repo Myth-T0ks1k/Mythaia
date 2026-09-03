@@ -210,4 +210,13 @@
     <string name="auto_select_testing">Serwerler ölçenýär…</string>
     <string name="auto_select_footer">Ähli serwerleri ölçäp, iň çaltyna birigýär. Her birikmä birnäçe sekunt goşýar we ähli serweriňize ýüzlenýär.</string>
     <string name="connection">Birikme</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">Birikdi</string>
+    <string name="per_second">%1$s/sek</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%2$s-dan %1$s</string>
+    <string name="subscription_expires">Möhleti %1$s</string>
+    <string name="subscription_expired">Möhleti gutardy</string>
 </resources>

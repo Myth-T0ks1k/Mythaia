@@ -210,4 +210,13 @@
     <string name="auto_select_testing">جارٍ قياس الخوادم…</string>
     <string name="auto_select_footer">يقيس كل الخوادم ويتصل بأسرعها. يضيف بضع ثوانٍ إلى كل اتصال، ويتواصل مع كل خوادمك.</string>
     <string name="connection">الاتصال</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">متصل منذ</string>
+    <string name="per_second">%1$s/ث</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s من %2$s</string>
+    <string name="subscription_expires">ينتهي %1$s</string>
+    <string name="subscription_expired">منتهٍ</string>
 </resources>

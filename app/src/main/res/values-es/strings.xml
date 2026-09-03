@@ -210,4 +210,13 @@
     <string name="auto_select_testing">Midiendo servidores…</string>
     <string name="auto_select_footer">Mide todos los servidores y se conecta al más rápido. Añade unos segundos a cada conexión y contacta con todos tus servidores.</string>
     <string name="connection">Conexión</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">Conectado desde hace</string>
+    <string name="per_second">%1$s/s</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s de %2$s</string>
+    <string name="subscription_expires">Caduca %1$s</string>
+    <string name="subscription_expired">Caducada</string>
 </resources>

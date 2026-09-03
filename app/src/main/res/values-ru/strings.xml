@@ -210,4 +210,13 @@
     <string name="auto_select_testing">Проверка серверов…</string>
     <string name="auto_select_footer">Замеряет все серверы и подключается к самому быстрому. Добавляет несколько секунд к каждому подключению и обращается ко всем вашим серверам.</string>
     <string name="connection">Подключение</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">На связи</string>
+    <string name="per_second">%1$s/с</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s из %2$s</string>
+    <string name="subscription_expires">Истекает %1$s</string>
+    <string name="subscription_expired">Истекла</string>
 </resources>

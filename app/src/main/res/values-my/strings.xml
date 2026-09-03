@@ -210,4 +210,13 @@
     <string name="auto_select_testing">ဆာဗာများကို တိုင်းတာနေသည်…</string>
     <string name="auto_select_footer">ဆာဗာအားလုံးကို တိုင်းတာပြီး အမြန်ဆုံးသို့ ချိတ်ဆက်ပါသည်။ ချိတ်ဆက်မှုတိုင်းတွင် စက္ကန့်အနည်းငယ် ပိုကြာပြီး သင့်ဆာဗာအားလုံးထံ ဆက်သွယ်ပါသည်။</string>
     <string name="connection">ချိတ်ဆက်မှု</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">ချိတ်ဆက်ထားသည်မှာ</string>
+    <string name="per_second">%1$s/စက္ကန့်</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%2$s မှ %1$s</string>
+    <string name="subscription_expires">%1$s သက်တမ်းကုန်</string>
+    <string name="subscription_expired">သက်တမ်းကုန်ပြီ</string>
 </resources>

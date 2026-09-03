@@ -74,6 +74,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _bytesOut = MutableStateFlow(0L)
     val bytesOut: StateFlow<Long> = _bytesOut.asStateFlow()
 
+    /**
+     * Throughput over the last poll, in bytes per second.
+     *
+     * Derived from the difference between two cumulative readings rather than
+     * measured directly, so it is only as granular as the poll interval — which
+     * is what a rate readout needs to be anyway.
+     */
+    private val _downloadSpeed = MutableStateFlow(0L)
+    val downloadSpeed: StateFlow<Long> = _downloadSpeed.asStateFlow()
+
+    private val _uploadSpeed = MutableStateFlow(0L)
+    val uploadSpeed: StateFlow<Long> = _uploadSpeed.asStateFlow()
+
+    /** How long the tunnel has been up, in seconds. 0 when it is not. */
+    private val _uptimeSeconds = MutableStateFlow(0L)
+    val uptimeSeconds: StateFlow<Long> = _uptimeSeconds.asStateFlow()
+
     private val _selectedConfigId = MutableStateFlow<UUID?>(null)
     val selectedConfigId: StateFlow<UUID?> = _selectedConfigId.asStateFlow()
 
@@ -472,19 +489,38 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private fun startStatsPolling() {
         if (statsJob != null) return
         statsJob = viewModelScope.launch {
+            // Seeded from the first reading rather than zero: rebinding to a
+            // tunnel that has been up for hours must not report all of its
+            // traffic as one second's worth.
+            var lastIn = -1L
+            var lastOut = -1L
+
             while (true) {
-                delay(1000)
+                delay(STATS_POLL_MS)
                 val service = vpnService
                 if (service != null && service.isRunning) {
                     val (bytesIn, bytesOut) = service.getStats()
+
+                    if (lastIn >= 0) {
+                        val seconds = STATS_POLL_MS / 1000.0
+                        // A counter that went backwards means the stack
+                        // restarted; report nothing rather than a negative rate.
+                        _downloadSpeed.value =
+                            ((bytesIn - lastIn).coerceAtLeast(0L) / seconds).toLong()
+                        _uploadSpeed.value =
+                            ((bytesOut - lastOut).coerceAtLeast(0L) / seconds).toLong()
+                    }
+                    lastIn = bytesIn
+                    lastOut = bytesOut
+
                     _bytesIn.value = bytesIn
                     _bytesOut.value = bytesOut
+                    _uptimeSeconds.value = service.uptimeSeconds
                 } else if (service != null && !service.isRunning &&
                     _vpnStatus.value == VpnStatus.CONNECTED) {
                     // Service is bound but no longer running — it actually died
                     _vpnStatus.value = VpnStatus.DISCONNECTED
-                    _bytesIn.value = 0
-                    _bytesOut.value = 0
+                    resetStats()
                     break
                 }
                 // If service is null, binding is still in progress — keep polling
@@ -492,9 +528,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Zeroes every live readout so a stale rate cannot linger on screen. */
+    private fun resetStats() {
+        _bytesIn.value = 0
+        _bytesOut.value = 0
+        _downloadSpeed.value = 0
+        _uploadSpeed.value = 0
+        _uptimeSeconds.value = 0
+    }
+
     private fun stopStatsPolling() {
         statsJob?.cancel()
         statsJob = null
+        resetStats()
     }
 
     /**
@@ -945,5 +991,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _orphanedRuleSetNames.value = orphaned
             syncRoutingConfigurationToNE()
         }
+    }
+
+    private companion object {
+        /** One second: fast enough to read as live, slow enough to cost nothing. */
+        const val STATS_POLL_MS = 1000L
     }
 }

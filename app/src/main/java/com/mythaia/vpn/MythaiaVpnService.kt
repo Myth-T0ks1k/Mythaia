@@ -230,6 +230,9 @@ class MythaiaVpnService : VpnService() {
 
         val stack = LwipStack(this)
         lwipStack = stack
+        // Stamped here rather than in the view model so the uptime survives the
+        // UI going away and rebinding to a tunnel that never stopped.
+        sessionStartedAt = android.os.SystemClock.elapsedRealtime()
 
         // Wire logger sink so logger.info/.warning/.error forward to the
         // user-facing log buffer.
@@ -261,6 +264,7 @@ class MythaiaVpnService : VpnService() {
 
         val stack = lwipStack
         lwipStack = null
+        sessionStartedAt = 0L
         // Capture the fd now — a subsequent startVpn() assigns a fresh tunFd
         // and the deferred finishStopVpn() must never close that new one.
         val fdToClose = tunFd
@@ -699,6 +703,25 @@ class MythaiaVpnService : VpnService() {
 
     /** Returns whether the VPN is currently running. */
     val isRunning: Boolean get() = lwipStack != null
+
+    /**
+     * When the current session started, on the monotonic clock, or 0 when there
+     * is none.
+     *
+     * elapsedRealtime rather than wall time: a clock adjustment or a timezone
+     * change must not make the session look hours long or negative.
+     */
+    @Volatile
+    var sessionStartedAt: Long = 0L
+        private set
+
+    /** How long the tunnel has been up, in seconds; 0 when it is not. */
+    val uptimeSeconds: Long
+        get() {
+            val started = sessionStartedAt
+            if (started == 0L || lwipStack == null) return 0L
+            return (android.os.SystemClock.elapsedRealtime() - started) / 1000L
+        }
 
     companion object {
         private const val TAG = "MythaiaVPN"

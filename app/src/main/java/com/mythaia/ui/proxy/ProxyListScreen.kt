@@ -71,6 +71,7 @@ import com.mythaia.data.network.SubscriptionDomainHelper
 import com.mythaia.ui.components.ProxyCardContent
 import com.mythaia.ui.components.WingMark
 import com.mythaia.ui.components.wingTextFieldColors
+import com.mythaia.ui.components.SubscriptionUsageCard
 import com.mythaia.viewmodel.VpnViewModel
 import kotlinx.coroutines.launch
 import android.content.ClipData
@@ -449,6 +450,7 @@ private fun SubscriptionHeader(
         targetValue = if (isCollapsed) 0f else 90f, label = "chevron"
     )
 
+    Column(modifier = Modifier.fillMaxWidth()) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -533,6 +535,17 @@ private fun SubscriptionHeader(
                 )
             }
         }
+    }
+
+    // The panel's quota and expiry, under the group it belongs to. Hidden
+    // while the group is collapsed, where the point is to take up less room,
+    // and silent when the panel reported neither.
+    if (!isCollapsed) {
+        SubscriptionUsageCard(
+            subscription = subscription,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+        )
+    }
     }
 }
 

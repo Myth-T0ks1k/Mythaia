@@ -210,4 +210,13 @@
     <string name="auto_select_testing">正在测速…</string>
     <string name="auto_select_footer">测量所有服务器并连接最快的一个。每次连接会多花几秒，并会联系你的全部服务器。</string>
     <string name="connection">连接</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">已连接</string>
+    <string name="per_second">%1$s/秒</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s / %2$s</string>
+    <string name="subscription_expires">%1$s到期</string>
+    <string name="subscription_expired">已到期</string>
 </resources>

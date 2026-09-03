@@ -210,4 +210,13 @@
     <string name="auto_select_testing">در حال سنجش سرورها…</string>
     <string name="auto_select_footer">همهٔ سرورها را می‌سنجد و به سریع‌ترین وصل می‌شود. چند ثانیه به هر اتصال می‌افزاید و با همهٔ سرورهای شما تماس می‌گیرد.</string>
     <string name="connection">اتصال</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">مدت اتصال</string>
+    <string name="per_second">%1$s/ثانیه</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s از %2$s</string>
+    <string name="subscription_expires">پایان %1$s</string>
+    <string name="subscription_expired">منقضی</string>
 </resources>

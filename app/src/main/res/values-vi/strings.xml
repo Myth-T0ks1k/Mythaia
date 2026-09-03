@@ -210,4 +210,13 @@
     <string name="auto_select_testing">Đang đo máy chủ…</string>
     <string name="auto_select_footer">Đo mọi máy chủ rồi kết nối tới máy nhanh nhất. Mỗi lần kết nối lâu thêm vài giây và có liên hệ tới tất cả máy chủ của bạn.</string>
     <string name="connection">Kết nối</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">Đã kết nối</string>
+    <string name="per_second">%1$s/giây</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s trên %2$s</string>
+    <string name="subscription_expires">Hết hạn %1$s</string>
+    <string name="subscription_expired">Đã hết hạn</string>
 </resources>

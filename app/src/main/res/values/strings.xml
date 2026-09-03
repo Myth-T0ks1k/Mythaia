@@ -279,4 +279,13 @@
     <string name="auto_select_testing">Measuring servers…</string>
     <string name="auto_select_footer">Measures every server and connects to the fastest one. Adds a few seconds to each connection, and contacts every server you have.</string>
     <string name="connection">Connection</string>
+
+    <!-- Session readout -->
+    <string name="connected_for">Connected for</string>
+    <string name="per_second">%1$s/s</string>
+
+    <!-- Subscription usage -->
+    <string name="subscription_used">%1$s of %2$s</string>
+    <string name="subscription_expires">Expires %1$s</string>
+    <string name="subscription_expired">Expired</string>
 </resources>

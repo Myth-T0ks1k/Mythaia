@@ -58,6 +58,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.isSystemInDarkTheme
 import com.mythaia.R
+import com.mythaia.ui.components.SessionStatsRow
+import com.mythaia.ui.components.LatencyBadge
+import com.mythaia.ui.components.SubscriptionUsageCard
 import com.mythaia.ui.components.PowerButton
 import com.mythaia.ui.components.TrafficStatsRow
 import com.mythaia.ui.theme.GradientConnectedEndDark
@@ -86,6 +89,11 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
     val chains by viewModel.chainRepository.chains.collectAsState()
     val subscriptions by viewModel.subscriptionRepository.subscriptions.collectAsState()
     val startError by viewModel.startError.collectAsState()
+    val downloadSpeed by viewModel.downloadSpeed.collectAsState()
+    val uploadSpeed by viewModel.uploadSpeed.collectAsState()
+    val uptimeSeconds by viewModel.uptimeSeconds.collectAsState()
+    val latencyResults by viewModel.latencyResults.collectAsState()
+    val autoSelecting by viewModel.autoSelecting.collectAsState()
 
     val isConnected = vpnStatus == VpnStatus.CONNECTED
     val isTransitioning = vpnStatus == VpnStatus.CONNECTING ||
@@ -98,6 +106,15 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
             selectedConfigId != null -> configurations.find { it.id == selectedConfigId }?.name
             else -> null
         }
+    }
+
+    // Only when the selected server belongs to a subscription: a standalone
+    // server has no quota to report.
+    val activeSubscription = remember(selectedConfigId, configurations, subscriptions) {
+        val subId = selectedConfigId
+            ?.let { id -> configurations.find { it.id == id } }
+            ?.subscriptionId
+        subId?.let { id -> subscriptions.find { it.id == id } }
     }
 
     var showingAddSheet by remember { mutableStateOf(false) }
@@ -229,14 +246,21 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
                 // TrafficStatsRow draws its own paper tiles (outline border,
                 // slate labels, ink/bone monospaced numerals) — no frosted
                 // wrapper card on the gradient any more.
-                TrafficStatsRow(
-                    bytesIn = bytesIn,
-                    bytesOut = bytesOut,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 20.dp)
-                )
+                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
+                    SessionStatsRow(
+                        bytesIn = bytesIn,
+                        bytesOut = bytesOut,
+                        downloadSpeed = downloadSpeed,
+                        uploadSpeed = uploadSpeed,
+                        uptimeSeconds = uptimeSeconds,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    activeSubscription?.let { subscription ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        SubscriptionUsageCard(subscription = subscription)
+                    }
+                }
             }
 
             // Server chooser: a paper compact row (14dp radius, hairline
@@ -274,6 +298,15 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        // The last measurement for this server, when there is
+                        // one. Shown here so the number sits next to the choice
+                        // it describes rather than only on the Proxies list.
+                        selectedConfigId?.let { id ->
+                            latencyResults[id]?.let { result ->
+                                LatencyBadge(latency = result)
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                        }
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
                             contentDescription = null,
