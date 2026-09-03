@@ -64,6 +64,7 @@ object ClashProxyParser {
         if (proxyType == "trojan") return parseTrojanProxy(node)
         if (proxyType == "hysteria2" || proxyType == "hy2") return parseHysteria2Proxy(node)
         if (proxyType == "anytls") return parseAnyTlsProxy(node)
+        if (proxyType == "vmess") return parseVmessProxy(node)
         if (proxyType != "vless") return null
 
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
@@ -324,6 +325,78 @@ object ClashProxyParser {
             obfuscation = node.optString("obfs", "").takeIf { it.isNotEmpty() }?.lowercase(),
             obfuscationPassword = node.optJSONObject("obfs-password")?.toString()
                 ?: node.optString("obfs-password", "").takeIf { it.isNotEmpty() }
+        )
+    }
+
+    /**
+     * Clash `type: vmess`.
+     *
+     * `alterId` must be 0. A non-zero value selects the legacy
+     * MD5-authenticated header that v2ray removed in 2022; importing such a
+     * node would produce an entry that can never authenticate, so it is
+     * skipped instead.
+     */
+    private fun parseVmessProxy(node: JSONObject): ProxyConfiguration? {
+        val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
+        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val uuidString = node.optString("uuid").takeIf { it.isNotEmpty() } ?: return null
+        val uuid = parseXrayUuid(uuidString) ?: return null
+
+        val portInt = node.optInt("port", -1)
+        if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
+        val port = portInt.toUShort()
+
+        if (node.optInt("alterId", 0) != 0) return null
+
+        val network = node.optString("network", "tcp")
+        val transport = when (network) {
+            "ws" -> "ws"
+            "tcp" -> "tcp"
+            else -> return null
+        }
+
+        val useTls = node.optBoolean("tls", false)
+        val wsOpts = node.optJSONObject("ws-opts")
+        val wsHeaders = wsOpts?.optJSONObject("headers")
+        val wsHost = wsHeaders?.optString("Host")?.takeIf { it.isNotEmpty() }
+            ?: wsHeaders?.optString("host")?.takeIf { it.isNotEmpty() }
+
+        val websocket = if (transport == "ws") {
+            WebSocketConfiguration(
+                host = wsHost ?: server,
+                path = wsOpts?.optString("path")?.takeIf { it.isNotEmpty() } ?: "/"
+            )
+        } else {
+            null
+        }
+
+        val tls = if (useTls) {
+            TlsConfiguration(
+                serverName = node.optString("servername", "").takeIf { it.isNotEmpty() }
+                    ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
+                    ?: wsHost
+                    ?: server,
+                allowInsecure = node.optBoolean("skip-cert-verify", false),
+                fingerprint = TlsFingerprint.fromRaw(
+                    mapFingerprint(node.optString("client-fingerprint", "").takeIf { it.isNotEmpty() })
+                )
+            )
+        } else {
+            null
+        }
+
+        return ProxyConfiguration(
+            name = name,
+            serverAddress = server,
+            serverPort = port,
+            uuid = uuid,
+            encryption = "none",
+            transport = transport,
+            security = if (useTls) "tls" else "none",
+            tls = tls,
+            websocket = websocket,
+            outboundProtocol = OutboundProtocol.VMESS,
+            vmessSecurity = node.optString("cipher", "").takeIf { it.isNotEmpty() && it != "auto" }
         )
     }
 

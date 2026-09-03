@@ -530,7 +530,8 @@ enum class OutboundProtocol(val raw: String) {
     NAIVE_HTTP11("http11"),
     NAIVE_HTTP2("http2"),
     HYSTERIA2("hysteria2"),
-    ANYTLS("anytls");
+    ANYTLS("anytls"),
+    VMESS("vmess");
 
     val isNaive: Boolean get() = this == NAIVE_HTTP11 || this == NAIVE_HTTP2
 
@@ -553,6 +554,7 @@ enum class OutboundProtocol(val raw: String) {
             NAIVE_HTTP2 -> "HTTP/2"
             HYSTERIA2 -> "Hysteria2"
             ANYTLS -> "AnyTLS"
+            VMESS -> "VMess"
         }
 
     /**
@@ -567,7 +569,7 @@ enum class OutboundProtocol(val raw: String) {
      * ACKs them back to the local app, the app times out and sends RST.
      */
     val handshakeCarriesInitialData: Boolean
-        get() = this == VLESS
+        get() = this == VLESS || this == VMESS
 }
 
 object OutboundProtocolSerializer : KSerializer<OutboundProtocol> {
@@ -588,6 +590,7 @@ object OutboundProtocolSerializer : KSerializer<OutboundProtocol> {
             "http2", "naive_http2" -> OutboundProtocol.NAIVE_HTTP2
             "hysteria2", "hy2" -> OutboundProtocol.HYSTERIA2
             "anytls" -> OutboundProtocol.ANYTLS
+            "vmess" -> OutboundProtocol.VMESS
             else -> throw SerializationException("Unknown outbound protocol: $raw")
         }
     }
@@ -643,6 +646,11 @@ data class ProxyConfiguration(
     val hysteriaDownMbps: Int? = null,
     /** Hysteria2 obfuscation, currently only `salamander`. */
     val obfuscation: String? = null,
+    /**
+     * VMess body cipher: `aes-128-gcm`, `chacha20-poly1305`, `none` or
+     * `zero`. Null means the link said `auto`, or said nothing.
+     */
+    val vmessSecurity: String? = null,
     val obfuscationPassword: String? = null,
     val chain: List<ProxyConfiguration>? = null
 ) {
@@ -684,6 +692,7 @@ data class ProxyConfiguration(
                 hysteriaUpMbps == other.hysteriaUpMbps &&
                 hysteriaDownMbps == other.hysteriaDownMbps &&
                 obfuscation == other.obfuscation &&
+                vmessSecurity == other.vmessSecurity &&
                 obfuscationPassword == other.obfuscationPassword &&
                 chain == other.chain
 
@@ -697,6 +706,7 @@ data class ProxyConfiguration(
         OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> toNaiveUrl()
         OutboundProtocol.HYSTERIA2 -> toHysteria2Url()
         OutboundProtocol.ANYTLS -> toAnyTlsUrl()
+        OutboundProtocol.VMESS -> toVmessUrl()
     }
 
     /**
@@ -716,6 +726,41 @@ data class ProxyConfiguration(
         val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
         return "hysteria2://${urlEncode(password ?: "")}@$bracketedServerAddress:$serverPort" +
             "$query#${urlEncode(name)}"
+    }
+
+    /**
+     * `vmess://` + base64 of the v2rayN JSON object.
+     *
+     * `v` is the object's own format version and is always 2; `aid` is always
+     * 0, because that is the only header this client speaks.
+     */
+    private fun toVmessUrl(): String {
+        val json = JSONObject()
+        json.put("v", "2")
+        json.put("ps", name)
+        json.put("add", serverAddress)
+        json.put("port", serverPort.toString())
+        json.put("id", uuid.toString())
+        json.put("aid", "0")
+        json.put("scy", vmessSecurity ?: "auto")
+        json.put("net", transport)
+        json.put("type", "none")
+        websocket?.let {
+            json.put("path", it.path)
+            json.put("host", it.host)
+        }
+        tls?.let {
+            json.put("tls", "tls")
+            json.put("sni", it.serverName)
+            it.alpn?.takeIf { alpn -> alpn.isNotEmpty() }?.let { alpn ->
+                json.put("alpn", alpn.joinToString(","))
+            }
+            json.put("fp", it.fingerprint.raw)
+        } ?: json.put("tls", "")
+
+        val encoded = java.util.Base64.getEncoder()
+            .encodeToString(json.toString().toByteArray(Charsets.UTF_8))
+        return "vmess://$encoded"
     }
 
     /** `anytls://password@host:port?sni=…&alpn=…&fp=…#name`. */
@@ -869,7 +914,7 @@ data class ProxyConfiguration(
         /** URL scheme prefixes [fromUrl] recognises. */
         val parsableUrlPrefixes = listOf(
             "vless://", "trojan://", "ss://",
-            "hysteria2://", "hy2://", "anytls://",
+            "hysteria2://", "hy2://", "anytls://", "vmess://",
             "socks5://", "socks://", "https://"
         )
 
@@ -886,8 +931,9 @@ data class ProxyConfiguration(
             url.startsWith("hysteria2://") -> fromHysteria2Url(url, "hysteria2://")
             url.startsWith("hy2://") -> fromHysteria2Url(url, "hy2://")
             url.startsWith("anytls://") -> fromAnyTlsUrl(url)
+            url.startsWith("vmess://") -> fromVmessUrl(url)
             else -> throw ProxyError.InvalidUrl(
-                "URL must start with vless://, trojan://, ss://, hysteria2://, hy2://, anytls://, socks5://, or https://"
+                "URL must start with vless://, trojan://, ss://, vmess://, hysteria2://, hy2://, anytls://, socks5://, or https://"
             )
         }
 
@@ -1006,6 +1052,112 @@ data class ProxyConfiguration(
                 params = parseQueryParams(queryString),
                 name = fragmentName?.takeIf { it.isNotEmpty() }
             )
+        }
+
+        /**
+         * `vmess://` + base64 of a JSON object — the "v2rayN" form every panel
+         * writes. There is also a query-string spelling in the wild; it is rare
+         * enough, and ambiguous enough, that only the JSON form is accepted.
+         *
+         * `aid` (alterId) must be 0: the legacy MD5-authenticated header it
+         * selects was removed from v2ray in 2022, and pretending to support it
+         * would produce a connection that silently never authenticates.
+         */
+        private fun fromVmessUrl(url: String): ProxyConfiguration {
+            val payload = url.removePrefix("vmess://").trim()
+            if (payload.isEmpty()) throw ProxyError.InvalidUrl("Empty vmess:// link")
+
+            val decoded = decodeBase64Flexible(payload)
+                ?: throw ProxyError.InvalidUrl("vmess:// payload is not base64")
+
+            val json = runCatching { JSONObject(decoded) }.getOrNull()
+                ?: throw ProxyError.InvalidUrl("vmess:// payload is not JSON")
+
+            val host = json.optString("add").takeIf { it.isNotEmpty() }
+                ?: throw ProxyError.InvalidUrl("vmess: missing add")
+            val portValue = json.opt("port")?.toString()?.trim()?.toIntOrNull()
+                ?: throw ProxyError.InvalidUrl("vmess: missing or malformed port")
+            if (portValue !in 1..65535) throw ProxyError.InvalidUrl("vmess: port out of range")
+
+            val idText = json.optString("id").takeIf { it.isNotEmpty() }
+                ?: throw ProxyError.InvalidUrl("vmess: missing id")
+            val id = runCatching { UUID.fromString(idText) }.getOrNull()
+                ?: throw ProxyError.InvalidUrl("vmess: id is not a UUID")
+
+            // aid may be a number or a string depending on who wrote the link.
+            val alterId = json.opt("aid")?.toString()?.trim()?.toIntOrNull() ?: 0
+            if (alterId != 0) {
+                throw ProxyError.InvalidUrl(
+                    "vmess: alterId $alterId is the removed legacy header; only alterId 0 (AEAD) is supported"
+                )
+            }
+
+            val network = json.optString("net").ifEmpty { "tcp" }
+            val transport = when (network) {
+                "ws" -> "ws"
+                "tcp" -> "tcp"
+                else -> throw ProxyError.InvalidUrl("vmess: $network transport is not supported yet")
+            }
+
+            val tlsField = json.optString("tls")
+            val useTls = tlsField == "tls" || tlsField == "1" || tlsField == "true"
+            val sni = json.optString("sni").takeIf { it.isNotEmpty() }
+                ?: json.optString("host").takeIf { it.isNotEmpty() }
+                ?: host
+            val alpn = json.optString("alpn").takeIf { it.isNotEmpty() }?.split(",")
+            val tls = if (useTls) {
+                TlsConfiguration(
+                    serverName = sni,
+                    alpn = alpn,
+                    fingerprint = TlsFingerprint.fromRaw(
+                        json.optString("fp").ifEmpty { "chrome_133" }
+                    )
+                )
+            } else {
+                null
+            }
+
+            val websocket = if (transport == "ws") {
+                WebSocketConfiguration(
+                    host = json.optString("host").takeIf { it.isNotEmpty() } ?: host,
+                    path = json.optString("path").ifEmpty { "/" }
+                )
+            } else {
+                null
+            }
+
+            return ProxyConfiguration(
+                name = json.optString("ps").takeIf { it.isNotEmpty() } ?: host,
+                serverAddress = host,
+                serverPort = portValue.toUShort(),
+                uuid = id,
+                encryption = "none",
+                transport = transport,
+                security = if (useTls) "tls" else "none",
+                tls = tls,
+                websocket = websocket,
+                outboundProtocol = OutboundProtocol.VMESS,
+                vmessSecurity = json.optString("scy").takeIf { it.isNotEmpty() && it != "auto" }
+            )
+        }
+
+        /**
+         * Base64 that may or may not be padded, and may be either alphabet.
+         *
+         * Panels are inconsistent about all three, and a link that fails to
+         * decode over punctuation is the most avoidable kind of import failure.
+         */
+        private fun decodeBase64Flexible(text: String): String? {
+            val normalised = text.replace('-', '+').replace('_', '/').trim()
+            val padded = when (normalised.length % 4) {
+                2 -> "$normalised=="
+                3 -> "$normalised="
+                0 -> normalised
+                else -> return null
+            }
+            return runCatching {
+                String(java.util.Base64.getDecoder().decode(padded), Charsets.UTF_8)
+            }.getOrNull()
         }
 
         /**

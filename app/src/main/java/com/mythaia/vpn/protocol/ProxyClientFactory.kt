@@ -8,6 +8,7 @@ import com.mythaia.vpn.protocol.shadowsocks.ShadowsocksClient
 import com.mythaia.vpn.protocol.socks5.SocksClient
 import com.mythaia.vpn.protocol.trojan.TrojanClient
 import com.mythaia.vpn.protocol.vless.VlessClient
+import com.mythaia.vpn.protocol.vmess.VmessClient
 
 /** Factory for creating proxy connections based on protocol configuration. */
 object ProxyClientFactory {
@@ -26,6 +27,7 @@ object ProxyClientFactory {
             OutboundProtocol.SOCKS5 -> SocksClient(config, tunnel).connect(host, port, initialData)
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 ->
                 NaiveClient(config, tunnel).connect(host, port, initialData)
+            OutboundProtocol.VMESS -> VmessClient(config, tunnel).connect(host, port, initialData)
             // Parsed, stored and exported, but not yet dialable — both wait on
             // the QUIC stack and the AnyTLS implementation. Failing here with
             // the protocol named beats a silent timeout.
@@ -52,6 +54,7 @@ object ProxyClientFactory {
             OutboundProtocol.VLESS -> VlessClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.TROJAN -> TrojanClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.SOCKS5 -> SocksClient(config, tunnel).connectUDP(host, port)
+            OutboundProtocol.VMESS -> VmessClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> throw ProxyError.Dropped()
             OutboundProtocol.SHADOWSOCKS -> throw ProxyError.ProtocolError(
                 "UDP not supported through TCP factory for Shadowsocks"

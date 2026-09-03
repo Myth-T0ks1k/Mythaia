@@ -117,7 +117,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     com.mythaia.data.model.percentDecode(raw)
                 }.getOrDefault(raw)
             }
-            "vless", "trojan", "ss", "socks5", "socks", "hysteria2", "hy2", "anytls" -> {
+            "vless", "trojan", "ss", "socks5", "socks", "vmess", "hysteria2", "hy2", "anytls" -> {
                 _pendingDeepLinkUrl.value = uri.toString()
             }
             else -> {}
