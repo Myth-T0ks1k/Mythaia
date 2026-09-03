@@ -62,6 +62,8 @@ object ClashProxyParser {
         if (proxyType == "ss") return parseShadowsocksProxy(node)
         if (proxyType == "socks5" || proxyType == "socks") return parseSocks5Proxy(node)
         if (proxyType == "trojan") return parseTrojanProxy(node)
+        if (proxyType == "hysteria2" || proxyType == "hy2") return parseHysteria2Proxy(node)
+        if (proxyType == "anytls") return parseAnyTlsProxy(node)
         if (proxyType != "vless") return null
 
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
@@ -278,6 +280,113 @@ object ClashProxyParser {
             trojanPassword = password,
             trojanTls = tls
         )
+    }
+
+    /**
+     * Clash `type: hysteria2`.
+     *
+     * Hysteria2 runs over QUIC, so there is no `network` to honour and TLS is
+     * not optional.
+     */
+    private fun parseHysteria2Proxy(node: JSONObject): ProxyConfiguration? {
+        val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
+        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val password = node.optString("password").takeIf { it.isNotEmpty() }
+            ?: node.optString("auth").takeIf { it.isNotEmpty() }
+            ?: return null
+
+        val portInt = node.optInt("port", -1)
+        if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
+        val port = portInt.toUShort()
+
+        // A port range means the server hops between ports, which needs the
+        // QUIC path this client does not have yet. Better skipped than
+        // imported as something that cannot connect.
+        if (node.optString("ports", "").isNotEmpty()) return null
+
+        val tls = passwordProtocolTls(node, server)
+
+        // Clash spells these `up`/`down` and allows a unit suffix; only a plain
+        // number is meaningful to us, and absence stays absence.
+        return ProxyConfiguration(
+            name = name,
+            serverAddress = server,
+            serverPort = port,
+            uuid = UUID.randomUUID(), // placeholder; Hysteria2 authenticates by password
+            encryption = "none",
+            transport = "tcp",
+            security = "tls",
+            tls = tls,
+            outboundProtocol = OutboundProtocol.HYSTERIA2,
+            password = password,
+            hysteriaUpMbps = bandwidthMbps(node, "up"),
+            hysteriaDownMbps = bandwidthMbps(node, "down"),
+            obfuscation = node.optString("obfs", "").takeIf { it.isNotEmpty() }?.lowercase(),
+            obfuscationPassword = node.optJSONObject("obfs-password")?.toString()
+                ?: node.optString("obfs-password", "").takeIf { it.isNotEmpty() }
+        )
+    }
+
+    /** Clash `type: anytls`. TLS is mandatory. */
+    private fun parseAnyTlsProxy(node: JSONObject): ProxyConfiguration? {
+        val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
+        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val password = node.optString("password").takeIf { it.isNotEmpty() } ?: return null
+
+        val portInt = node.optInt("port", -1)
+        if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
+        val port = portInt.toUShort()
+
+        return ProxyConfiguration(
+            name = name,
+            serverAddress = server,
+            serverPort = port,
+            uuid = UUID.randomUUID(), // placeholder; AnyTLS authenticates by password
+            encryption = "none",
+            transport = "tcp",
+            security = "tls",
+            tls = passwordProtocolTls(node, server),
+            outboundProtocol = OutboundProtocol.ANYTLS,
+            password = password
+        )
+    }
+
+    /** The TLS block the password-authenticated Clash types share. */
+    private fun passwordProtocolTls(node: JSONObject, server: String): TlsConfiguration {
+        val sni = node.optString("sni", "").takeIf { it.isNotEmpty() }
+            ?: node.optString("servername", "").takeIf { it.isNotEmpty() }
+            ?: server
+        val alpn = node.optJSONArray("alpn")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
+        }?.takeIf { it.isNotEmpty() }
+        val clientFP = node.optString("client-fingerprint", "").takeIf { it.isNotEmpty() }
+
+        return TlsConfiguration(
+            serverName = sni,
+            alpn = alpn,
+            allowInsecure = node.optBoolean("skip-cert-verify", false),
+            fingerprint = TlsFingerprint.fromRaw(mapFingerprint(clientFP))
+        )
+    }
+
+    /**
+     * Clash writes Hysteria2 bandwidth as a bare number or with a unit
+     * (`100 mbps`, `50mbps`). Anything else is left null, which is what tells
+     * the client to use BBR rather than Brutal.
+     */
+    private fun bandwidthMbps(node: JSONObject, key: String): Int? {
+        val raw = node.opt(key) ?: return null
+        if (raw is Number) return raw.toInt().takeIf { it > 0 }
+        val text = raw.toString().trim().lowercase()
+        val digits = text.takeWhile { it.isDigit() }
+        if (digits.isEmpty()) return null
+        val value = digits.toIntOrNull()?.takeIf { it > 0 } ?: return null
+        return when (text.removePrefix(digits).trim()) {
+            "", "m", "mb", "mbps" -> value
+            "g", "gb", "gbps" -> value * 1000
+            "k", "kb", "kbps" -> (value / 1000).takeIf { it > 0 }
+            else -> null
+        }
     }
 
     private fun parseSocks5Proxy(node: JSONObject): ProxyConfiguration? {

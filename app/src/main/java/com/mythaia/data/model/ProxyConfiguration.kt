@@ -528,9 +528,21 @@ enum class OutboundProtocol(val raw: String) {
     SHADOWSOCKS("shadowsocks"),
     SOCKS5("socks5"),
     NAIVE_HTTP11("http11"),
-    NAIVE_HTTP2("http2");
+    NAIVE_HTTP2("http2"),
+    HYSTERIA2("hysteria2"),
+    ANYTLS("anytls");
 
     val isNaive: Boolean get() = this == NAIVE_HTTP11 || this == NAIVE_HTTP2
+
+    /**
+     * Whether an outbound can actually be dialled yet.
+     *
+     * Links for these parse, round-trip and survive a subscription refresh, so
+     * a subscription carrying them is not silently truncated — but dialling one
+     * fails with a clear message instead of pretending.
+     */
+    val isImplemented: Boolean get() = this != HYSTERIA2 && this != ANYTLS
+
     val displayName: String
         get() = when (this) {
             VLESS -> "VLESS"
@@ -539,6 +551,8 @@ enum class OutboundProtocol(val raw: String) {
             SOCKS5 -> "SOCKS5"
             NAIVE_HTTP11 -> "HTTPS"
             NAIVE_HTTP2 -> "HTTP/2"
+            HYSTERIA2 -> "Hysteria2"
+            ANYTLS -> "AnyTLS"
         }
 
     /**
@@ -572,6 +586,8 @@ object OutboundProtocolSerializer : KSerializer<OutboundProtocol> {
             "socks5" -> OutboundProtocol.SOCKS5
             "http11", "naive_http11" -> OutboundProtocol.NAIVE_HTTP11
             "http2", "naive_http2" -> OutboundProtocol.NAIVE_HTTP2
+            "hysteria2", "hy2" -> OutboundProtocol.HYSTERIA2
+            "anytls" -> OutboundProtocol.ANYTLS
             else -> throw SerializationException("Unknown outbound protocol: $raw")
         }
     }
@@ -616,6 +632,18 @@ data class ProxyConfiguration(
     val trojanPassword: String? = null,
     /** Trojan's mandatory TLS configuration. */
     val trojanTls: TlsConfiguration? = null,
+    /** Hysteria2 and AnyTLS both authenticate with a single password. */
+    val password: String? = null,
+    /**
+     * Hysteria2's declared bandwidth. Their presence is what selects Brutal
+     * congestion control over BBR, so absence is information — left null
+     * rather than defaulted.
+     */
+    val hysteriaUpMbps: Int? = null,
+    val hysteriaDownMbps: Int? = null,
+    /** Hysteria2 obfuscation, currently only `salamander`. */
+    val obfuscation: String? = null,
+    val obfuscationPassword: String? = null,
     val chain: List<ProxyConfiguration>? = null
 ) {
     val connectAddress: String get() = resolvedIP ?: serverAddress
@@ -652,6 +680,11 @@ data class ProxyConfiguration(
                 naiveProtocol == other.naiveProtocol &&
                 trojanPassword == other.trojanPassword &&
                 trojanTls == other.trojanTls &&
+                password == other.password &&
+                hysteriaUpMbps == other.hysteriaUpMbps &&
+                hysteriaDownMbps == other.hysteriaDownMbps &&
+                obfuscation == other.obfuscation &&
+                obfuscationPassword == other.obfuscationPassword &&
                 chain == other.chain
 
     fun withChain(chain: List<ProxyConfiguration>?): ProxyConfiguration = copy(chain = chain)
@@ -662,6 +695,52 @@ data class ProxyConfiguration(
         OutboundProtocol.SHADOWSOCKS -> toShadowsocksUrl()
         OutboundProtocol.SOCKS5 -> toSocks5Url()
         OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> toNaiveUrl()
+        OutboundProtocol.HYSTERIA2 -> toHysteria2Url()
+        OutboundProtocol.ANYTLS -> toAnyTlsUrl()
+    }
+
+    /**
+     * `hysteria2://password@host:port?…#name`.
+     *
+     * Always the long spelling: `hy2://` is an accepted alias on the way in,
+     * and emitting the canonical scheme keeps a round trip stable.
+     */
+    private fun toHysteria2Url(): String {
+        val params = mutableListOf<String>()
+        tls?.let { appendPasswordProtocolTlsParams(params, it) }
+        hysteriaUpMbps?.let { params.add("upmbps=$it") }
+        hysteriaDownMbps?.let { params.add("downmbps=$it") }
+        obfuscation?.let { params.add("obfs=$it") }
+        obfuscationPassword?.let { params.add("obfs-password=${urlEncode(it)}") }
+
+        val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
+        return "hysteria2://${urlEncode(password ?: "")}@$bracketedServerAddress:$serverPort" +
+            "$query#${urlEncode(name)}"
+    }
+
+    /** `anytls://password@host:port?sni=…&alpn=…&fp=…#name`. */
+    private fun toAnyTlsUrl(): String {
+        val params = mutableListOf<String>()
+        tls?.let { appendPasswordProtocolTlsParams(params, it) }
+
+        val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
+        return "anytls://${urlEncode(password ?: "")}@$bracketedServerAddress:$serverPort" +
+            "$query#${urlEncode(name)}"
+    }
+
+    /**
+     * The TLS query shared by the password-authenticated schemes.
+     *
+     * Separate from [appendTlsParams] because these links spell "do not verify"
+     * `insecure=1`, not `allowInsecure=1`, and carry no version bounds.
+     */
+    private fun appendPasswordProtocolTlsParams(params: MutableList<String>, tls: TlsConfiguration) {
+        if (tls.serverName != serverAddress) params.add("sni=${tls.serverName}")
+        tls.alpn?.takeIf { it.isNotEmpty() }?.let {
+            params.add("alpn=${urlEncode(it.joinToString(","))}")
+        }
+        if (tls.fingerprint != TlsFingerprint.CHROME_133) params.add("fp=${tls.fingerprint.raw}")
+        if (tls.allowInsecure) params.add("insecure=1")
     }
 
     private fun toTrojanUrl(): String {
@@ -790,6 +869,7 @@ data class ProxyConfiguration(
         /** URL scheme prefixes [fromUrl] recognises. */
         val parsableUrlPrefixes = listOf(
             "vless://", "trojan://", "ss://",
+            "hysteria2://", "hy2://", "anytls://",
             "socks5://", "socks://", "https://"
         )
 
@@ -803,7 +883,12 @@ data class ProxyConfiguration(
             url.startsWith("https://") -> fromNaiveUrl(url, naiveProtocol)
             url.startsWith("vless://") -> fromVlessUrl(url)
             url.startsWith("trojan://") -> fromTrojanUrl(url)
-            else -> throw ProxyError.InvalidUrl("URL must start with vless://, trojan://, ss://, socks5://, or https://")
+            url.startsWith("hysteria2://") -> fromHysteria2Url(url, "hysteria2://")
+            url.startsWith("hy2://") -> fromHysteria2Url(url, "hy2://")
+            url.startsWith("anytls://") -> fromAnyTlsUrl(url)
+            else -> throw ProxyError.InvalidUrl(
+                "URL must start with vless://, trojan://, ss://, hysteria2://, hy2://, anytls://, socks5://, or https://"
+            )
         }
 
         /**
@@ -867,6 +952,128 @@ data class ProxyConfiguration(
                 outboundProtocol = OutboundProtocol.TROJAN,
                 trojanPassword = password,
                 trojanTls = tls
+            )
+        }
+
+        /**
+         * The parts every `password@host:port?query#name` link shares.
+         *
+         * Trojan predates this helper and keeps its own copy; the newer schemes
+         * are all this shape.
+         */
+        private data class UserInfoLink(
+            val password: String,
+            val host: String,
+            val port: UShort,
+            val params: Map<String, String>,
+            val name: String?
+        )
+
+        private fun decomposeUserInfoLink(url: String, scheme: String): UserInfoLink {
+            var remaining = url.removePrefix(scheme)
+
+            var fragmentName: String? = null
+            val hashIndex = remaining.lastIndexOf('#')
+            if (hashIndex >= 0) {
+                fragmentName = percentDecode(remaining.substring(hashIndex + 1))
+                remaining = remaining.substring(0, hashIndex)
+            }
+
+            var queryString: String? = null
+            val qIndex = remaining.indexOf('?')
+            if (qIndex >= 0) {
+                queryString = remaining.substring(qIndex + 1)
+                remaining = remaining.substring(0, qIndex)
+            }
+
+            // lastIndexOf: a password may itself contain '@'.
+            val atIndex = remaining.lastIndexOf('@')
+            if (atIndex < 0) {
+                throw ProxyError.InvalidUrl("Missing @ separator in ${scheme.removeSuffix("://")} URL")
+            }
+
+            val password = percentDecode(remaining.substring(0, atIndex))
+            var serverPart = remaining.substring(atIndex + 1)
+            if (serverPart.endsWith("/")) serverPart = serverPart.dropLast(1)
+            val slashIdx = serverPart.indexOf('/')
+            if (slashIdx >= 0) serverPart = serverPart.substring(0, slashIdx)
+
+            val (host, port) = parseHostPort(serverPart)
+            return UserInfoLink(
+                password = password,
+                host = host,
+                port = port,
+                params = parseQueryParams(queryString),
+                name = fragmentName?.takeIf { it.isNotEmpty() }
+            )
+        }
+
+        /**
+         * `hysteria2://password@host:port?sni=…&upmbps=…&downmbps=…&obfs=salamander&obfs-password=…#name`,
+         * and the `hy2://` spelling of the same thing.
+         *
+         * TLS is mandatory; Hysteria2 runs over QUIC and has no plaintext form.
+         */
+        private fun fromHysteria2Url(url: String, scheme: String): ProxyConfiguration {
+            val link = decomposeUserInfoLink(url, scheme)
+            val params = link.params
+
+            val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
+            val alpn = params["alpn"]?.takeIf { it.isNotEmpty() }?.split(",")
+            val insecure = params["insecure"] == "1" || params["allowInsecure"] == "1"
+            val tls = TlsConfiguration(
+                serverName = sni,
+                alpn = alpn,
+                allowInsecure = insecure,
+                fingerprint = TlsFingerprint.fromRaw(params["fp"] ?: "chrome_133")
+            )
+
+            return ProxyConfiguration(
+                name = link.name ?: link.host,
+                serverAddress = link.host,
+                serverPort = link.port,
+                uuid = UUID.randomUUID(),   // placeholder; Hysteria2 authenticates by password
+                encryption = "none",
+                transport = "tcp",
+                security = "tls",
+                tls = tls,
+                outboundProtocol = OutboundProtocol.HYSTERIA2,
+                password = link.password,
+                // Absence is information: the bandwidth pair is what selects
+                // Brutal over BBR, so no default is filled in here.
+                hysteriaUpMbps = params["upmbps"]?.toIntOrNull(),
+                hysteriaDownMbps = params["downmbps"]?.toIntOrNull(),
+                obfuscation = params["obfs"]?.takeIf { it.isNotEmpty() }?.lowercase(),
+                obfuscationPassword = params["obfs-password"]?.takeIf { it.isNotEmpty() }
+            )
+        }
+
+        /** `anytls://password@host:port?sni=…&alpn=…&fp=…#name`. TLS is mandatory. */
+        private fun fromAnyTlsUrl(url: String): ProxyConfiguration {
+            val link = decomposeUserInfoLink(url, "anytls://")
+            val params = link.params
+
+            val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
+            val alpn = params["alpn"]?.takeIf { it.isNotEmpty() }?.split(",")
+            val insecure = params["insecure"] == "1" || params["allowInsecure"] == "1"
+            val tls = TlsConfiguration(
+                serverName = sni,
+                alpn = alpn,
+                allowInsecure = insecure,
+                fingerprint = TlsFingerprint.fromRaw(params["fp"] ?: "chrome_133")
+            )
+
+            return ProxyConfiguration(
+                name = link.name ?: link.host,
+                serverAddress = link.host,
+                serverPort = link.port,
+                uuid = UUID.randomUUID(),   // placeholder; AnyTLS authenticates by password
+                encryption = "none",
+                transport = "tcp",
+                security = "tls",
+                tls = tls,
+                outboundProtocol = OutboundProtocol.ANYTLS,
+                password = link.password
             )
         }
 

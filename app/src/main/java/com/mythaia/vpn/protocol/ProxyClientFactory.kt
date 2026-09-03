@@ -26,6 +26,12 @@ object ProxyClientFactory {
             OutboundProtocol.SOCKS5 -> SocksClient(config, tunnel).connect(host, port, initialData)
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 ->
                 NaiveClient(config, tunnel).connect(host, port, initialData)
+            // Parsed, stored and exported, but not yet dialable — both wait on
+            // the QUIC stack and the AnyTLS implementation. Failing here with
+            // the protocol named beats a silent timeout.
+            OutboundProtocol.HYSTERIA2, OutboundProtocol.ANYTLS -> throw ProxyError.ProtocolError(
+                "${config.outboundProtocol.displayName} is not supported yet"
+            )
         }
     }
 
@@ -49,6 +55,9 @@ object ProxyClientFactory {
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> throw ProxyError.Dropped()
             OutboundProtocol.SHADOWSOCKS -> throw ProxyError.ProtocolError(
                 "UDP not supported through TCP factory for Shadowsocks"
+            )
+            OutboundProtocol.HYSTERIA2, OutboundProtocol.ANYTLS -> throw ProxyError.ProtocolError(
+                "${config.outboundProtocol.displayName} is not supported yet"
             )
         }
     }
