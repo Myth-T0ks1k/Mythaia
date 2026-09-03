@@ -30,6 +30,7 @@ import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.MythaiaVpnService
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.util.DnsCache
+import com.mythaia.vpn.util.EncryptedDnsPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -182,6 +183,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // values so TLS validation has a fresh snapshot before the first connection.
         CertificatePolicy.reload(application)
         FragmentPolicy.reload(application)
+        EncryptedDnsPolicy.reload(application)
 
         // React to trusted-certificate changes: update the singleton immediately and
         // notify the tunnel so live TLS connections tear down and reconnect under the

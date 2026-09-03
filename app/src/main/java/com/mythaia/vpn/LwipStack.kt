@@ -7,6 +7,7 @@ import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.FragmentPolicy
+import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.MythaiaLogger
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -300,6 +301,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         encryptedDnsEnabled = prefs.getBoolean("encryptedDnsEnabled", false)
         encryptedDnsProtocol = prefs.getString("encryptedDnsProtocol", "doh") ?: "doh"
         encryptedDnsServer = prefs.getString("encryptedDnsServer", "") ?: ""
+        // Publish to the resolver DnsCache consults. Every path that changes
+        // these prefs comes through here, on start and on restart alike.
+        EncryptedDnsPolicy.reload(context)
     }
 
     private fun loadBlockQuicSetting() {

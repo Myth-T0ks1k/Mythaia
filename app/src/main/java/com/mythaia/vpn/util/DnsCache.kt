@@ -143,10 +143,20 @@ object DnsCache {
     }
 
     private fun resolveAndCache(key: String, bare: String): List<String> {
+        val network = underlyingNetwork
+
+        // Encrypted DNS first when the user has configured it, falling back to
+        // the platform resolver rather than failing the dial: an unreachable
+        // resolver should cost latency, not connectivity.
+        val encrypted = resolveEncrypted(bare, network)
+        if (encrypted.isNotEmpty()) {
+            cache[key] = CacheEntry(encrypted, System.currentTimeMillis() + DEFAULT_TTL_MS)
+            return encrypted
+        }
+
         val ips = try {
             // Resolve through the underlying physical network when available,
             // bypassing the VPN tunnel.
-            val network = underlyingNetwork
             val addresses = if (network != null) {
                 network.getAllByName(bare)
             } else {
@@ -163,5 +173,27 @@ object DnsCache {
         }
 
         return ips
+    }
+
+    /**
+     * The encrypted-DNS answer for [bare], or an empty list when the feature is
+     * off or the resolver did not answer.
+     *
+     * The resolver's own hostname is deliberately excluded: resolving it
+     * through itself is the one lookup that cannot work, and it would recurse
+     * back into this method. That name goes to the platform resolver on the
+     * physical network, which is the bootstrap every encrypted resolver needs.
+     */
+    private fun resolveEncrypted(bare: String, network: android.net.Network?): List<String> {
+        val upstream = EncryptedDnsPolicy.upstream
+        if (upstream is DnsUpstream.System) return emptyList()
+        if (upstream.bootstrapHost?.equals(bare, ignoreCase = true) == true) return emptyList()
+
+        return try {
+            DnsUpstreamClient.resolve(bare, upstream, network)
+        } catch (e: Exception) {
+            logger.warning("[DNS] Encrypted resolution failed for $bare: ${e.message ?: e}")
+            emptyList()
+        }
     }
 }
