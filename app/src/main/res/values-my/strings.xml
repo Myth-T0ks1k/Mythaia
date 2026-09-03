@@ -191,4 +191,15 @@
     <string name="every_week">အပတ်စဉ်</string>
     <string name="every_n_hours">%1$d နာရီတိုင်း</string>
     <string name="subscription_refresh_footer">ချိတ်ဆက်မှုရှိချိန်တွင် စာရင်းသွင်းမှုအားလုံးကို နောက်ခံမှ ပြန်လည်ဆွဲယူပါသည်။ မူရင်းအတိုင်း ပိတ်ထားသဖြင့် သင်မတောင်းဆိုမချင်း ကွန်ရက်သို့ မည်သည့်အရာမျှ မထွက်ပါ။</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">နိုင်ငံ (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">GeoIP ဒေတာဘေ့စ်</string>
+    <string name="geoip_import">.mmdb တင်သွင်းရန်</string>
+    <string name="geoip_remove">ဖယ်ရှားရန်</string>
+    <string name="geoip_loaded">တင်ပြီး</string>
+    <string name="geoip_none">မတင်သွင်းရသေး</string>
+    <string name="geoip_footer">နိုင်ငံအလိုက် စည်းမျဉ်းများအတွက် MaxMind .mmdb ဒေတာဘေ့စ် လိုအပ်ပါသည်။ အက်ပ်တွင် ပါဝင်ခြင်းမရှိပါ — MaxMind မှ GeoLite2-Country ကို ဒေါင်းလုဒ်ဆွဲပြီး ဤနေရာတွင် တင်သွင်းပါ။ ၎င်းမပါဘဲ နိုင်ငံအလိုက် စည်းမျဉ်းများ လုံးဝ ကိုက်ညီမည်မဟုတ်ပါ။</string>
+    <string name="geoip_import_failed">ထိုဖိုင်သည် MaxMind ဒေတာဘေ့စ် မဟုတ်ပါ။</string>
 </resources>

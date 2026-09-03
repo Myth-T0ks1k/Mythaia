@@ -191,4 +191,15 @@
     <string name="every_week">Her hepde</string>
     <string name="every_n_hours">Her %1$d sagatdan</string>
     <string name="subscription_refresh_footer">Birikme bar wagty ähli abunalary arka fonda täzeleýär. Öňünden öçük, şonuň üçin siz islemänkäňiz tora hiç zat gitmeýär.</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">Ýurt (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">GeoIP maglumat binýady</string>
+    <string name="geoip_import">mmdb import et</string>
+    <string name="geoip_remove">Aýyr</string>
+    <string name="geoip_loaded">Ýüklenen</string>
+    <string name="geoip_none">Import edilmedik</string>
+    <string name="geoip_footer">Ýurt düzgünleri üçin MaxMind mmdb binýady gerek. Programma bilen gelmeýär — GeoLite2-Country-ni MaxMind-dan ýükläp, şu ýerde import ediň. Onsuz ýurt düzgünleri asla gabat gelmeýär.</string>
+    <string name="geoip_import_failed">Bu faýl MaxMind binýady däl.</string>
 </resources>

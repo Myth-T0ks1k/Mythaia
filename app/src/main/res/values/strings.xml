@@ -260,4 +260,15 @@
     <string name="every_week">Every week</string>
     <string name="every_n_hours">Every %1$d hours</string>
     <string name="subscription_refresh_footer">Refreshes every subscription in the background when the device has a connection. Off by default, so nothing goes out over the network until you ask for it.</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">Country (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">GeoIP database</string>
+    <string name="geoip_import">Import .mmdb</string>
+    <string name="geoip_remove">Remove</string>
+    <string name="geoip_loaded">Loaded</string>
+    <string name="geoip_none">None imported</string>
+    <string name="geoip_footer">Country rules need a MaxMind .mmdb database. None is bundled — download GeoLite2-Country from MaxMind and import it here. Without one, country rules simply do not match.</string>
+    <string name="geoip_import_failed">That file is not a MaxMind database.</string>
 </resources>

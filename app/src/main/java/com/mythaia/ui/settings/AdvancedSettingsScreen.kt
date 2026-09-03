@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Shield
@@ -72,14 +73,16 @@ fun AdvancedSettingsScreen(
     var showLogs by remember { mutableStateOf(false) }
     var showFragment by remember { mutableStateOf(false) }
     var showSplitTunnel by remember { mutableStateOf(false) }
+    var showGeoIp by remember { mutableStateOf(false) }
 
-    val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment || showSplitTunnel
+    val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment || showSplitTunnel || showGeoIp
     BackHandler(enabled = activeSubScreen) {
         showIpv6Settings = false
         showEncryptedDns = false
         showLogs = false
         showFragment = false
         showSplitTunnel = false
+        showGeoIp = false
     }
 
     val currentRoute = when {
@@ -88,6 +91,7 @@ fun AdvancedSettingsScreen(
         showLogs -> "logs"
         showFragment -> "fragment"
         showSplitTunnel -> "split"
+        showGeoIp -> "geoip"
         else -> "root"
     }
 
@@ -98,6 +102,7 @@ fun AdvancedSettingsScreen(
             "logs" -> LogListScreen(onBack = { showLogs = false })
             "fragment" -> FragmentSettingsScreen(viewModel = viewModel, onBack = { showFragment = false })
             "split" -> SplitTunnelScreen(viewModel = viewModel, onBack = { showSplitTunnel = false })
+            "geoip" -> GeoIpSettingsScreen(viewModel = viewModel, onBack = { showGeoIp = false })
             else -> AdvancedSettingsRoot(
                 viewModel = viewModel,
                 onBack = onBack,
@@ -105,7 +110,8 @@ fun AdvancedSettingsScreen(
                 onOpenEncryptedDns = { showEncryptedDns = true },
                 onOpenLogs = { showLogs = true },
                 onOpenFragment = { showFragment = true },
-                onOpenSplitTunnel = { showSplitTunnel = true }
+                onOpenSplitTunnel = { showSplitTunnel = true },
+                onOpenGeoIp = { showGeoIp = true }
             )
         }
     }
@@ -120,7 +126,8 @@ private fun AdvancedSettingsRoot(
     onOpenEncryptedDns: () -> Unit,
     onOpenLogs: () -> Unit,
     onOpenFragment: () -> Unit,
-    onOpenSplitTunnel: () -> Unit
+    onOpenSplitTunnel: () -> Unit,
+    onOpenGeoIp: () -> Unit
 ) {
     var experimentalEnabled by remember { mutableStateOf(viewModel.experimentalEnabled) }
     var remnawaveHWIDEnabled by remember { mutableStateOf(viewModel.remnawaveHWIDEnabled) }
@@ -189,6 +196,12 @@ private fun AdvancedSettingsRoot(
                     icon = Icons.Filled.Apps,
                     label = stringResource(R.string.split_tunnel),
                     onClick = onOpenSplitTunnel
+                )
+                WingRowDivider()
+                WingNavRow(
+                    icon = Icons.Filled.Flag,
+                    label = stringResource(R.string.geoip_database),
+                    onClick = onOpenGeoIp
                 )
             }
 

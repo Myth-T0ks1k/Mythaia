@@ -191,4 +191,15 @@
     <string name="every_week">Mỗi tuần</string>
     <string name="every_n_hours">Mỗi %1$d giờ</string>
     <string name="subscription_refresh_footer">Cập nhật mọi đăng ký ở nền khi máy có kết nối. Mặc định tắt, nên không có gì gửi ra mạng cho tới khi bạn yêu cầu.</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">Quốc gia (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">Cơ sở dữ liệu GeoIP</string>
+    <string name="geoip_import">Nhập .mmdb</string>
+    <string name="geoip_remove">Gỡ</string>
+    <string name="geoip_loaded">Đã nạp</string>
+    <string name="geoip_none">Chưa nhập</string>
+    <string name="geoip_footer">Quy tắc theo quốc gia cần cơ sở dữ liệu MaxMind .mmdb. Ứng dụng không kèm sẵn — tải GeoLite2-Country từ MaxMind rồi nhập tại đây. Không có nó, quy tắc theo quốc gia đơn giản là không khớp.</string>
+    <string name="geoip_import_failed">Tệp đó không phải cơ sở dữ liệu MaxMind.</string>
 </resources>

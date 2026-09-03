@@ -191,4 +191,15 @@
     <string name="every_week">每周</string>
     <string name="every_n_hours">每 %1$d 小时</string>
     <string name="subscription_refresh_footer">在设备有网络时于后台刷新所有订阅。默认关闭，在你要求之前不会有任何数据发往网络。</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">国家/地区 (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">GeoIP 数据库</string>
+    <string name="geoip_import">导入 .mmdb</string>
+    <string name="geoip_remove">移除</string>
+    <string name="geoip_loaded">已加载</string>
+    <string name="geoip_none">未导入</string>
+    <string name="geoip_footer">按国家/地区的规则需要 MaxMind .mmdb 数据库。应用不附带——请从 MaxMind 下载 GeoLite2-Country 并在此导入。没有它，这类规则不会匹配。</string>
+    <string name="geoip_import_failed">该文件不是 MaxMind 数据库。</string>
 </resources>

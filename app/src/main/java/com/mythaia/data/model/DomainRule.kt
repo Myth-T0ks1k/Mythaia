@@ -22,7 +22,14 @@ enum class DomainRuleType(val rawValue: Int) {
     IP_CIDR(0),
     IP_CIDR6(1),
     DOMAIN_SUFFIX(2),
-    DOMAIN_KEYWORD(3);
+    DOMAIN_KEYWORD(3),
+
+    /**
+     * `geoip:xx` — every address the imported MaxMind database places in that
+     * country. Matched at lookup time rather than expanded into CIDRs, so a
+     * rule stays one entry however many ranges the country owns.
+     */
+    GEOIP(4);
 
     companion object {
         fun fromRawValue(value: Int): DomainRuleType? = entries.firstOrNull { it.rawValue == value }
@@ -32,6 +39,7 @@ enum class DomainRuleType(val rawValue: Int) {
             "ipCIDR6" -> IP_CIDR6
             "domain", "domainSuffix" -> DOMAIN_SUFFIX
             "domainKeyword" -> DOMAIN_KEYWORD
+            "geoip" -> GEOIP
             else -> null
         }
     }

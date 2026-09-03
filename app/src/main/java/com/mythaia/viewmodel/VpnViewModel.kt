@@ -674,6 +674,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    /**
+     * Asks a running tunnel to reload its routing rules.
+     *
+     * For changes that alter how existing rules resolve rather than the rules
+     * themselves — importing or removing the GeoIP database, say — where
+     * rewriting routing.json would be beside the point.
+     */
+    fun signalRoutingChanged() {
+        if (_vpnStatus.value == VpnStatus.CONNECTED) {
+            prefs.edit().putLong("routingChanged", System.currentTimeMillis()).apply()
+        }
+    }
+
     /** Collects all proxy server addresses (domains + resolved IPs) from all
      *  configurations and sends them to the VPN service. This prevents routing
      *  loops when proxy server domains match routing rules. */

@@ -234,7 +234,11 @@ class RuleSetRepository(private val context: Context) {
                     put("value", rule.value)
                 }
                 when (rule.type) {
-                    DomainRuleType.IP_CIDR, DomainRuleType.IP_CIDR6 -> ipRulesArray.put(entry)
+                    // geoip answers a question about an address, so the router
+                    // reads it from the same list as the CIDR rules.
+                    DomainRuleType.IP_CIDR,
+                    DomainRuleType.IP_CIDR6,
+                    DomainRuleType.GEOIP -> ipRulesArray.put(entry)
                     DomainRuleType.DOMAIN_SUFFIX,
                     DomainRuleType.DOMAIN_KEYWORD -> domainRulesArray.put(entry)
                 }

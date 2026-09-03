@@ -191,4 +191,15 @@
     <string name="every_week">كل أسبوع</string>
     <string name="every_n_hours">كل %1$d ساعة</string>
     <string name="subscription_refresh_footer">يحدّث كل الاشتراكات في الخلفية عند توفّر اتصال. مُعطَّل افتراضيًا، فلا يخرج شيء إلى الشبكة حتى تطلب ذلك.</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">البلد (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">قاعدة بيانات GeoIP</string>
+    <string name="geoip_import">استيراد mmdb.</string>
+    <string name="geoip_remove">إزالة</string>
+    <string name="geoip_loaded">محمَّلة</string>
+    <string name="geoip_none">لم تُستورد</string>
+    <string name="geoip_footer">تحتاج قواعد البلدان إلى قاعدة بيانات MaxMind بصيغة mmdb. لا تأتي مع التطبيق — نزّل GeoLite2-Country من MaxMind واستوردها هنا. وبدونها لا تتطابق قواعد البلدان أصلًا.</string>
+    <string name="geoip_import_failed">هذا الملف ليس قاعدة بيانات MaxMind.</string>
 </resources>

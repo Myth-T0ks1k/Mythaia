@@ -191,4 +191,15 @@
     <string name="every_week">Каждую неделю</string>
     <string name="every_n_hours">Каждые %1$d ч.</string>
     <string name="subscription_refresh_footer">Обновляет все подписки в фоне, когда есть соединение. По умолчанию выключено — без вашего запроса ничего в сеть не уходит.</string>
+
+    <!-- GeoIP -->
+    <string name="geoip_country">Страна (GeoIP)</string>
+    <string name="example_country">US</string>
+    <string name="geoip_database">База GeoIP</string>
+    <string name="geoip_import">Импорт .mmdb</string>
+    <string name="geoip_remove">Удалить</string>
+    <string name="geoip_loaded">Загружена</string>
+    <string name="geoip_none">Не импортирована</string>
+    <string name="geoip_footer">Правила по странам требуют базы MaxMind .mmdb. В приложение она не входит — скачайте GeoLite2-Country у MaxMind и импортируйте здесь. Без неё правила по странам просто не срабатывают.</string>
+    <string name="geoip_import_failed">Это не база MaxMind.</string>
 </resources>

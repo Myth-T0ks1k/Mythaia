@@ -3,6 +3,7 @@ package com.mythaia.vpn
 import android.content.Context
 import com.mythaia.data.model.DomainRuleType
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.vpn.util.GeoIpDatabase
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
@@ -68,6 +69,7 @@ class DomainRouter(private val context: Context) {
         keywordRules.clear()
         ipv4Trie = CIDRTrie()
         ipv6Trie = CIDRTrie()
+        geoipRules.clear()
         configurationMap.clear()
         domainRuleCount = 0
         ipRuleCount = 0
@@ -79,6 +81,10 @@ class DomainRouter(private val context: Context) {
      */
     fun loadRoutingConfiguration() {
         reset()
+
+        // Opened here so a database imported since the last load is picked up
+        // by the same signal that reloads the rules referring to it.
+        GeoIpDatabase.load(context)
 
         val routingFile = File(context.filesDir, "routing.json")
         if (!routingFile.exists()) {
@@ -115,6 +121,10 @@ class DomainRouter(private val context: Context) {
                     }
                     DomainRuleType.IP_CIDR6 -> parseIPv6CIDR(value)?.let { (net, prefix) ->
                         ipv6Trie.insert(net, prefix, RouteAction.Direct)
+                        bypassIPCount++
+                    }
+                    DomainRuleType.GEOIP -> {
+                        insertGeoipRule(value, RouteAction.Direct)
                         bypassIPCount++
                     }
                 }
@@ -175,7 +185,9 @@ class DomainRouter(private val context: Context) {
                             insertKeywordRule(value.lowercase(), action)
                             domainRuleCount++
                         }
-                        DomainRuleType.IP_CIDR, DomainRuleType.IP_CIDR6 -> Unit
+                        DomainRuleType.IP_CIDR,
+                        DomainRuleType.IP_CIDR6,
+                        DomainRuleType.GEOIP -> Unit
                     }
                 }
             }
@@ -192,6 +204,10 @@ class DomainRouter(private val context: Context) {
                         }
                         DomainRuleType.IP_CIDR6 -> parseIPv6CIDR(value)?.let { (net, prefix) ->
                             ipv6Trie.insert(net, prefix, action)
+                            ipRuleCount++
+                        }
+                        DomainRuleType.GEOIP -> {
+                            insertGeoipRule(value, action)
                             ipRuleCount++
                         }
                         DomainRuleType.DOMAIN_SUFFIX,
@@ -218,20 +234,50 @@ class DomainRouter(private val context: Context) {
         return trieLookup(lowered) ?: lookupKeywordRule(lowered)
     }
 
-    /** Matches an IP against CIDR rules. O(32) IPv4 / O(128) IPv6. */
+    /**
+     * Matches an IP against CIDR rules first, then `geoip:` rules.
+     *
+     * CIDR wins: it is the more specific statement, and a user who wrote out an
+     * exact range meant it to beat "anything in that country". A geoip rule
+     * costs one database lookup, and only when no CIDR matched.
+     */
     fun matchIP(ip: String): RouteAction? {
         if (ip.isEmpty()) return null
-        return if (ip.contains(':')) {
+
+        val cidrMatch = if (ip.contains(':')) {
             parseIPv6Address(ip)?.let { ipv6Trie.lookup(it) }
         } else {
             parseIPv4(ip)?.let { ipv4Trie.lookup(it) }
         }
+        if (cidrMatch != null) return cidrMatch
+
+        if (geoipRules.isEmpty()) return null
+        val country = GeoIpDatabase.countryCode(ip) ?: return null
+        return geoipRules[country]
     }
 
     /** Resolves a [RouteAction.Proxy] to its [ProxyConfiguration]; null for Direct/Reject. */
     fun resolveConfiguration(action: RouteAction): ProxyConfiguration? = when (action) {
         RouteAction.Direct, RouteAction.Reject -> null
         is RouteAction.Proxy -> configurationMap[action.configId]
+    }
+
+    /**
+     * Country code (uppercase) to action.
+     *
+     * A map rather than a list: a country names at most one action, and the
+     * last rule written for it is the one that stands — the same
+     * overwrite-on-conflict behaviour the domain trie has.
+     */
+    private val geoipRules = HashMap<String, RouteAction>()
+
+    private fun insertGeoipRule(value: String, action: RouteAction) {
+        val code = value.removePrefix("geoip:").trim().uppercase()
+        // Two letters, per ISO 3166-1 alpha-2, which is what the database
+        // stores. Anything else would never match and is more likely a typo
+        // than an intention.
+        if (code.length != 2 || !code.all { it in 'A'..'Z' }) return
+        geoipRules[code] = action
     }
 
     private fun trieInsert(suffix: String, action: RouteAction) {

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -353,6 +354,7 @@ private fun ruleTypeIcon(type: DomainRuleType) = when (type) {
     DomainRuleType.DOMAIN_SUFFIX -> Icons.Filled.Public
     DomainRuleType.DOMAIN_KEYWORD -> Icons.Filled.Search
     DomainRuleType.IP_CIDR, DomainRuleType.IP_CIDR6 -> Icons.Filled.Lan
+    DomainRuleType.GEOIP -> Icons.Filled.Flag
 }
 
 @Composable
@@ -361,6 +363,7 @@ private fun ruleTypeLabel(type: DomainRuleType): String = when (type) {
     DomainRuleType.DOMAIN_KEYWORD -> stringResource(R.string.domain_keyword)
     DomainRuleType.IP_CIDR -> stringResource(R.string.ipv4_cidr)
     DomainRuleType.IP_CIDR6 -> stringResource(R.string.ipv6_cidr)
+    DomainRuleType.GEOIP -> stringResource(R.string.geoip_country)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -457,6 +460,7 @@ private fun AddRuleSheet(
         DomainRuleType.DOMAIN_KEYWORD -> stringResource(R.string.example_keyword)
         DomainRuleType.IP_CIDR -> stringResource(R.string.example_ipv4)
         DomainRuleType.IP_CIDR6 -> stringResource(R.string.example_ipv6)
+        DomainRuleType.GEOIP -> stringResource(R.string.example_country)
     }
 
     ModalBottomSheet(
@@ -519,6 +523,10 @@ private fun AddRuleSheet(
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.ipv6_cidr)) },
                         onClick = { type = DomainRuleType.IP_CIDR6; typeMenuOpen = false }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.geoip_country)) },
+                        onClick = { type = DomainRuleType.GEOIP; typeMenuOpen = false }
                     )
                 }
             }
@@ -751,6 +759,9 @@ internal object RuleParser {
     private fun normalize(value: String, type: DomainRuleType): String = when (type) {
         DomainRuleType.IP_CIDR -> if ("/" in value) value else "$value/32"
         DomainRuleType.IP_CIDR6 -> if ("/" in value) value else "$value/128"
+        // Stored bare and uppercase; the router compares it to what the
+        // database returns, which is ISO 3166-1 alpha-2.
+        DomainRuleType.GEOIP -> value.removePrefix("geoip:").trim().uppercase()
         DomainRuleType.DOMAIN_SUFFIX,
         DomainRuleType.DOMAIN_KEYWORD -> value
     }
