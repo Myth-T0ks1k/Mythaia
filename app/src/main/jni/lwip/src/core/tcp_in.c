@@ -66,7 +66,7 @@
 #endif
 
 /** Initial CWND calculation as defined RFC 2581 */
-/* Anywhere patch: added #ifndef guard so lwipopts.h can override (e.g. IW10 per RFC 6928) */
+/* Mythaia patch: added #ifndef guard so lwipopts.h can override (e.g. IW10 per RFC 6928) */
 #ifndef LWIP_TCP_CALC_INITIAL_CWND
 #define LWIP_TCP_CALC_INITIAL_CWND(mss) ((tcpwnd_size_t)LWIP_MIN((4U * (mss)), LWIP_MAX((2U * (mss)), 4380U)))
 #endif
@@ -360,7 +360,7 @@ tcp_input(struct pbuf *p, struct netif *inp)
       prev = lpcb_prev;
     }
 #endif /* SO_REUSE */
-    /* Anywhere patch: fallback to wildcard listener with local_port == 0 */
+    /* Mythaia patch: fallback to wildcard listener with local_port == 0 */
     if (lpcb == NULL) {
       for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
         if (lpcb->local_port == 0 &&
@@ -690,7 +690,7 @@ tcp_listen_input(struct tcp_pcb_listen *pcb)
     /* Set up the new PCB. */
     ip_addr_copy(npcb->local_ip, *ip_current_dest_addr());
     ip_addr_copy(npcb->remote_ip, *ip_current_src_addr());
-    /* Anywhere patch: use actual destination port from SYN when listener is wildcard (port 0) */
+    /* Mythaia patch: use actual destination port from SYN when listener is wildcard (port 0) */
     npcb->local_port = (pcb->local_port == 0) ? tcphdr->dest : pcb->local_port;
     npcb->remote_port = tcphdr->src;
     npcb->state = SYN_RCVD;

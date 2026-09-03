@@ -253,7 +253,7 @@ static void jni_udp_recv_cb(const void *src_ip, uint16_t src_port,
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
+Java_com_mythaia_vpn_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
     LOGI("nativeInit: starting");
 
     /* For @JvmStatic methods in a Kotlin object the second JNI parameter
@@ -323,7 +323,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeInit(JNIEnv *env, jclass clazz
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeInput(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeInput(JNIEnv *env, jobject thiz,
                                                         jbyteArray packet, jint length) {
     (void)thiz;
 
@@ -344,7 +344,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeInput(JNIEnv *env, jobject thi
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTimerPoll(JNIEnv *env, jobject thiz) {
+Java_com_mythaia_vpn_NativeBridge_nativeTimerPoll(JNIEnv *env, jobject thiz) {
     (void)env;
     (void)thiz;
     lwip_bridge_check_timeouts();
@@ -354,14 +354,14 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTimerPoll(JNIEnv *env, jobject
  * Used on device wake / underlying-network change to invalidate outbound
  * proxy sockets the kernel killed during sleep. */
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeAbortAllTcp(JNIEnv *env, jobject thiz) {
+Java_com_mythaia_vpn_NativeBridge_nativeAbortAllTcp(JNIEnv *env, jobject thiz) {
     (void)env;
     (void)thiz;
     lwip_bridge_abort_all_tcp();
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeShutdown(JNIEnv *env, jobject thiz) {
+Java_com_mythaia_vpn_NativeBridge_nativeShutdown(JNIEnv *env, jobject thiz) {
     (void)thiz;
     LOGI("nativeShutdown: starting");
 
@@ -396,7 +396,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeShutdown(JNIEnv *env, jobject 
 }
 
 JNIEXPORT jint JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpWrite(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpWrite(JNIEnv *env, jobject thiz,
                                                            jlong pcb, jbyteArray data,
                                                            jint offset, jint length) {
     (void)thiz;
@@ -421,7 +421,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpWrite(JNIEnv *env, jobject 
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpOutput(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpOutput(JNIEnv *env, jobject thiz,
                                                             jlong pcb) {
     (void)env;
     (void)thiz;
@@ -429,7 +429,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpOutput(JNIEnv *env, jobject
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpRecved(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpRecved(JNIEnv *env, jobject thiz,
                                                             jlong pcb, jint length) {
     (void)env;
     (void)thiz;
@@ -437,7 +437,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpRecved(JNIEnv *env, jobject
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpClose(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpClose(JNIEnv *env, jobject thiz,
                                                            jlong pcb) {
     (void)env;
     (void)thiz;
@@ -445,7 +445,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpClose(JNIEnv *env, jobject 
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpAbort(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpAbort(JNIEnv *env, jobject thiz,
                                                            jlong pcb) {
     (void)env;
     (void)thiz;
@@ -453,7 +453,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpAbort(JNIEnv *env, jobject 
 }
 
 JNIEXPORT jint JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpSndbuf(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpSndbuf(JNIEnv *env, jobject thiz,
                                                             jlong pcb) {
     (void)env;
     (void)thiz;
@@ -461,7 +461,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpSndbuf(JNIEnv *env, jobject
 }
 
 JNIEXPORT jint JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpSndQueuelen(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeTcpSndQueuelen(JNIEnv *env, jobject thiz,
                                                                  jlong pcb) {
     (void)env;
     (void)thiz;
@@ -469,7 +469,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeTcpSndQueuelen(JNIEnv *env, jo
 }
 
 JNIEXPORT void JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeUdpSendto(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeUdpSendto(JNIEnv *env, jobject thiz,
                                                             jbyteArray srcIp, jint srcPort,
                                                             jbyteArray dstIp, jint dstPort,
                                                             jboolean isIpv6,
@@ -504,7 +504,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeUdpSendto(JNIEnv *env, jobject
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeIpToString(JNIEnv *env, jobject thiz,
+Java_com_mythaia_vpn_NativeBridge_nativeIpToString(JNIEnv *env, jobject thiz,
                                                              jbyteArray addr,
                                                              jboolean isIpv6) {
     (void)thiz;

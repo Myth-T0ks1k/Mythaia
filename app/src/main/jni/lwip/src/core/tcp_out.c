@@ -1263,7 +1263,7 @@ tcp_output(struct tcp_pcb *pcb)
     return ERR_OK;
   }
 
-  /* --- BEGIN Anywhere Patch: disable cwnd for TUN deployment ---
+  /* --- BEGIN Mythaia Patch: disable cwnd for TUN deployment ---
    * Original: wnd = LWIP_MIN(pcb->snd_wnd, pcb->cwnd);
    *
    * The peer on this PCB is the local Android kernel TCP stack reached via an
@@ -1273,10 +1273,10 @@ tcp_output(struct tcp_pcb *pcb)
    * spurious timeout, and fast-retransmit halving on dupacks. snd_wnd (the
    * app's advertised receive window) alone provides correct flow control.
    * Retransmissions still fire off pcb->unacked / TF_INFR, not cwnd.
-   * See lwip/ANYWHERE_PATCHES.md.
+   * See lwip/MYTHAIA_PATCHES.md.
    */
   wnd = pcb->snd_wnd;
-  /* --- END Anywhere Patch --- */
+  /* --- END Mythaia Patch --- */
 
   seg = pcb->unsent;
 

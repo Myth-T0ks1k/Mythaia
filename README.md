@@ -1,6 +1,6 @@
 <div align="center">
 
-# Mythaia for Android
+# Mythaia Pro for Android
 
 **Reach anywhere.**
 
@@ -58,7 +58,7 @@ Most Android proxy clients wrap sing-box or Xray-core in a Go/C++ bridge. Mythai
 - **Minimal dependencies** — Android frameworks, vendored C libraries (lwIP, ngtcp2, blake3, libyaml)
 - **Native VPN Service** — system-wide VPN via `VpnService` with a userspace TCP/IP stack
 - **Fake-IP DNS** — transparent domain-based routing for all apps
-- **Vendored native code** — lwIP (TCP/IP), ngtcp2 (QUIC), BLAKE3 (keyed hashing), libyaml (Clash parsing); bundled into a single native library
+- **Vendored native code** — lwIP (TCP/IP), BLAKE3 (keyed hashing), libyaml (Clash parsing); bundled into a single native library
 - **Jetpack Compose** UI with Material 3 and the Mythaia "Wing" theme
 - **arm64-v8a** native binaries
 
@@ -68,7 +68,7 @@ Most Android proxy clients wrap sing-box or Xray-core in a Go/C++ bridge. Mythai
 
 ```bash
 git clone <your-fork-url>
-cd Anywhere-Android-main
+cd mythaia-android
 ```
 
 Open the project in Android Studio, sync Gradle, select the `app` configuration, choose your device, and hit Run. Building a release requires a signing keystore configured via `local.properties` (`KEYSTORE_FILE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).

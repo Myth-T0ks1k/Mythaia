@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Anywhere"
+rootProject.name = "Mythaia"
 include(":app")

@@ -442,7 +442,7 @@ void tcp_segs_free(struct tcp_seg *seg);
 void tcp_seg_free(struct tcp_seg *seg);
 struct tcp_seg *tcp_seg_copy(struct tcp_seg *seg);
 
-/* --- BEGIN Anywhere Patch: disable delayed ACK for TUN deployment ---
+/* --- BEGIN Mythaia Patch: disable delayed ACK for TUN deployment ---
  * Original: stretch-ACK every other received segment; fall back to
  * tcp_fasttmr tick for the tail segment of an odd-count burst.
  *
@@ -454,10 +454,10 @@ struct tcp_seg *tcp_seg_copy(struct tcp_seg *seg);
  * short request/response flows (HTTP GET headers, TLS handshake tail).
  * Always ACK immediately; TF_ACK_DELAY still exists so the ERR_MEM
  * retry path in tcp_send_empty_ack / tcp_fasttmr keeps working.
- * See lwip/ANYWHERE_PATCHES.md.
+ * See lwip/MYTHAIA_PATCHES.md.
  */
 #define tcp_ack(pcb)  tcp_set_flags(pcb, TF_ACK_NOW)
-/* --- END Anywhere Patch --- */
+/* --- END Mythaia Patch --- */
 
 #define tcp_ack_now(pcb)                           \
   tcp_set_flags(pcb, TF_ACK_NOW)

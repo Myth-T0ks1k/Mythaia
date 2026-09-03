@@ -237,7 +237,7 @@ void lwip_bridge_init(void) {
     static int initialized = 0;
 
     if (!initialized) {
-        s_log = os_log_create("com.argsment.Anywhere.Network-Extension", "LWIP-Bridge");
+        s_log = os_log_create("com.mythaia.Tunnel", "LWIP-Bridge");
         lwip_init();
         initialized = 1;
     } else {
@@ -262,7 +262,7 @@ void lwip_bridge_init(void) {
     netif_ip6_addr_set(&tun_netif, 0, &ip6any);
     netif_ip6_addr_set_state(&tun_netif, 0, IP6_ADDR_VALID);
 
-    /* TCP catch-all listener on port 0 (wildcard, see ANYWHERE_PATCHES.md). */
+    /* TCP catch-all listener on port 0 (wildcard, see MYTHAIA_PATCHES.md). */
     tcp_listen_pcb_v4 = tcp_new();
     if (tcp_listen_pcb_v4) {
         tcp_bind(tcp_listen_pcb_v4, IP4_ADDR_ANY, 0);
@@ -292,7 +292,7 @@ void lwip_bridge_init(void) {
         os_log_error(s_log, "[Bridge] TCP v6 tcp_new_ip_type() failed!");
     }
 
-    /* UDP catch-all listener on port 0 (wildcard, see ANYWHERE_PATCHES.md). */
+    /* UDP catch-all listener on port 0 (wildcard, see MYTHAIA_PATCHES.md). */
     udp_listen_pcb_v4 = udp_new();
     if (udp_listen_pcb_v4) {
         udp_bind(udp_listen_pcb_v4, IP4_ADDR_ANY, 0);

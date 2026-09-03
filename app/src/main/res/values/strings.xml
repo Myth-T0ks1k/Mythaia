@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Mythaia</string>
+    <string name="app_name">Mythaia Pro</string>
 
     <!-- Notifications -->
     <string name="routing_rules_updated_title">Routing Rules Updated</string>

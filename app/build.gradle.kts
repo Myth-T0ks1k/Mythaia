@@ -12,7 +12,7 @@ plugins {
 }
 
 android {
-    namespace = "com.argsment.anywhere"
+    namespace = "com.mythaia"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.mythaia.android"
+        applicationId = "com.mythaia"
         minSdk = 26
         targetSdk = 36
         versionCode = 21

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project("anywhere_native" C)
+project("mythaia_native" C)
 
 # --------------------------------------------------------------------------
 # lwIP source files
@@ -77,7 +77,7 @@ set(JNI_BRIDGE_SOURCES
 # --------------------------------------------------------------------------
 # Build single shared library
 # --------------------------------------------------------------------------
-add_library(anywhere_native SHARED
+add_library(mythaia_native SHARED
     ${LWIP_SOURCES}
     ${BLAKE3_SOURCES}
     ${LIBYAML_SOURCES}
@@ -87,7 +87,7 @@ add_library(anywhere_native SHARED
 # --------------------------------------------------------------------------
 # Include paths
 # --------------------------------------------------------------------------
-target_include_directories(anywhere_native PRIVATE
+target_include_directories(mythaia_native PRIVATE
     ${LWIP_INCLUDE_DIRS}
     ${LIBYAML_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/compat
@@ -97,7 +97,7 @@ target_include_directories(anywhere_native PRIVATE
 # --------------------------------------------------------------------------
 # libyaml needs YAML_DECLARE_STATIC and HAVE_CONFIG_H
 # --------------------------------------------------------------------------
-target_compile_definitions(anywhere_native PRIVATE
+target_compile_definitions(mythaia_native PRIVATE
     YAML_DECLARE_STATIC
     HAVE_CONFIG_H
 )
@@ -105,14 +105,14 @@ target_compile_definitions(anywhere_native PRIVATE
 # --------------------------------------------------------------------------
 # Link libraries
 # --------------------------------------------------------------------------
-target_link_libraries(anywhere_native
+target_link_libraries(mythaia_native
     log
 )
 
 # --------------------------------------------------------------------------
 # Compiler flags
 # --------------------------------------------------------------------------
-target_compile_options(anywhere_native PRIVATE
+target_compile_options(mythaia_native PRIVATE
     -Wall
     -Wno-unused-variable
     -Wno-unused-function

@@ -21,7 +21,7 @@ static void throw_runtime(JNIEnv *env, const char *msg)
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeBlake3Hash(
+Java_com_mythaia_vpn_NativeBridge_nativeBlake3Hash(
     JNIEnv *env,
     jclass  clazz,
     jbyteArray input)
@@ -58,7 +58,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeBlake3Hash(
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeBlake3KeyedHash(
+Java_com_mythaia_vpn_NativeBridge_nativeBlake3KeyedHash(
     JNIEnv *env,
     jclass  clazz,
     jbyteArray key,
@@ -116,7 +116,7 @@ Java_com_argsment_anywhere_vpn_NativeBridge_nativeBlake3KeyedHash(
 /* BLAKE3 key derivation mode: context string for domain separation.
  * Used by Shadowsocks 2022 for session key and identity subkey derivation. */
 JNIEXPORT jbyteArray JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeBlake3DeriveKey(
+Java_com_mythaia_vpn_NativeBridge_nativeBlake3DeriveKey(
     JNIEnv *env,
     jclass  clazz,
     jstring context,

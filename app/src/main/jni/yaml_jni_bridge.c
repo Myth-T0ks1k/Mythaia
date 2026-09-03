@@ -272,7 +272,7 @@ static int yaml_to_json(const char *yaml_str, size_t yaml_len, strbuf_t *sb) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_argsment_anywhere_vpn_NativeBridge_nativeParseYaml(
+Java_com_mythaia_vpn_NativeBridge_nativeParseYaml(
         JNIEnv *env, jclass clazz, jstring yamlContent) {
     if (yamlContent == NULL) return NULL;
 

@@ -1,53 +1,53 @@
 # ============================================================================
 # NativeBridge — JNI methods called from C and callback interface
 # ============================================================================
--keep class com.argsment.anywhere.vpn.NativeBridge { *; }
--keep interface com.argsment.anywhere.vpn.NativeBridge$LwipCallback { *; }
+-keep class com.mythaia.vpn.NativeBridge { *; }
+-keep interface com.mythaia.vpn.NativeBridge$LwipCallback { *; }
 
 # ============================================================================
 # VPN Service + Binder (accessed via reflection by Android framework)
 # ============================================================================
--keep class com.argsment.anywhere.vpn.AnywhereVpnService { *; }
--keep class com.argsment.anywhere.vpn.AnywhereVpnService$LocalBinder { *; }
+-keep class com.mythaia.vpn.MythaiaVpnService { *; }
+-keep class com.mythaia.vpn.MythaiaVpnService$LocalBinder { *; }
 
 # ============================================================================
 # @Serializable data classes, enums, and custom serializers
 # ============================================================================
--keep class com.argsment.anywhere.data.model.ProxyConfiguration { *; }
--keep class com.argsment.anywhere.data.model.OutboundProtocol { *; }
--keep class com.argsment.anywhere.data.model.NaiveProtocol { *; }
--keep class com.argsment.anywhere.data.model.ProxyChain { *; }
--keep class com.argsment.anywhere.data.model.TlsConfiguration { *; }
--keep class com.argsment.anywhere.data.model.RealityConfiguration { *; }
--keep class com.argsment.anywhere.data.model.WebSocketConfiguration { *; }
--keep class com.argsment.anywhere.data.model.HttpUpgradeConfiguration { *; }
--keep class com.argsment.anywhere.data.model.XHttpConfiguration { *; }
--keep class com.argsment.anywhere.data.model.XHttpMode { *; }
--keep class com.argsment.anywhere.data.model.TlsFingerprint { *; }
--keep class com.argsment.anywhere.data.model.Subscription { *; }
--keep class com.argsment.anywhere.data.model.DomainRule { *; }
--keep class com.argsment.anywhere.data.model.DomainRuleType { *; }
+-keep class com.mythaia.data.model.ProxyConfiguration { *; }
+-keep class com.mythaia.data.model.OutboundProtocol { *; }
+-keep class com.mythaia.data.model.NaiveProtocol { *; }
+-keep class com.mythaia.data.model.ProxyChain { *; }
+-keep class com.mythaia.data.model.TlsConfiguration { *; }
+-keep class com.mythaia.data.model.RealityConfiguration { *; }
+-keep class com.mythaia.data.model.WebSocketConfiguration { *; }
+-keep class com.mythaia.data.model.HttpUpgradeConfiguration { *; }
+-keep class com.mythaia.data.model.XHttpConfiguration { *; }
+-keep class com.mythaia.data.model.XHttpMode { *; }
+-keep class com.mythaia.data.model.TlsFingerprint { *; }
+-keep class com.mythaia.data.model.Subscription { *; }
+-keep class com.mythaia.data.model.DomainRule { *; }
+-keep class com.mythaia.data.model.DomainRuleType { *; }
 
 # Custom serializers
--keep class com.argsment.anywhere.data.model.UuidSerializer { *; }
--keep class com.argsment.anywhere.data.model.Base64UrlByteArraySerializer { *; }
--keep class com.argsment.anywhere.data.model.HexByteArraySerializer { *; }
+-keep class com.mythaia.data.model.UuidSerializer { *; }
+-keep class com.mythaia.data.model.Base64UrlByteArraySerializer { *; }
+-keep class com.mythaia.data.model.HexByteArraySerializer { *; }
 
 # Generated $$serializer companion classes
--keepclassmembers class com.argsment.anywhere.data.model.** {
+-keepclassmembers class com.mythaia.data.model.** {
     *** Companion;
 }
--keepclasseswithmembers class com.argsment.anywhere.data.model.** {
+-keepclasseswithmembers class com.mythaia.data.model.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
 
 # ============================================================================
 # Compose Navigation route objects (serialized for type-safe nav)
 # ============================================================================
--keep class com.argsment.anywhere.ui.navigation.HomeRoute { *; }
--keep class com.argsment.anywhere.ui.navigation.ProxiesRoute { *; }
--keep class com.argsment.anywhere.ui.navigation.ChainsRoute { *; }
--keep class com.argsment.anywhere.ui.navigation.SettingsRoute { *; }
+-keep class com.mythaia.ui.navigation.HomeRoute { *; }
+-keep class com.mythaia.ui.navigation.ProxiesRoute { *; }
+-keep class com.mythaia.ui.navigation.ChainsRoute { *; }
+-keep class com.mythaia.ui.navigation.SettingsRoute { *; }
 
 # ============================================================================
 # kotlinx.serialization infrastructure
@@ -62,7 +62,7 @@
 # ============================================================================
 # Standard enum keepclassmembers
 # ============================================================================
--keepclassmembers enum com.argsment.anywhere.** {
+-keepclassmembers enum com.mythaia.** {
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }

@@ -34,12 +34,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Deep links: anywhere://add-proxy?link=… and bare proxy URL schemes. Mirrors iOS DeepLinkManager. -->
+            <!-- Deep links: mythaia://add-proxy?link=… and bare proxy URL schemes. Mirrors iOS DeepLinkManager. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="anywhere" />
+                <data android:scheme="mythaia" />
                 <data android:scheme="vless" />
                 <data android:scheme="ss" />
                 <data android:scheme="socks5" />
@@ -49,7 +49,7 @@
         </activity>
 
         <service
-            android:name=".vpn.AnywhereVpnService"
+            android:name=".vpn.MythaiaVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:foregroundServiceType="specialUse"
             android:exported="false"
