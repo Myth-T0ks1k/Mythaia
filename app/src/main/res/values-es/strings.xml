@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">Las apps que marques se conectan directamente. El resto pasa por el túnel.</string>
     <string name="search_apps">Buscar apps</string>
     <string name="no_apps_found">No se encontraron apps</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">Suscripciones</string>
+    <string name="auto_update">Actualización automática</string>
+    <string name="off">Desactivado</string>
+    <string name="every_day">Cada día</string>
+    <string name="every_week">Cada semana</string>
+    <string name="every_n_hours">Cada %1$d horas</string>
+    <string name="subscription_refresh_footer">Actualiza todas las suscripciones en segundo plano cuando hay conexión. Desactivado por defecto: no sale nada a la red hasta que lo pidas.</string>
 </resources>

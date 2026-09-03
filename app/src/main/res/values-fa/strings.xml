@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">برنامه‌هایی که علامت می‌زنید مستقیم وصل می‌شوند؛ بقیه از تونل می‌گذرند.</string>
     <string name="search_apps">جست‌وجوی برنامه‌ها</string>
     <string name="no_apps_found">برنامه‌ای پیدا نشد</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">اشتراک‌ها</string>
+    <string name="auto_update">به‌روزرسانی خودکار</string>
+    <string name="off">خاموش</string>
+    <string name="every_day">هر روز</string>
+    <string name="every_week">هر هفته</string>
+    <string name="every_n_hours">هر %1$d ساعت</string>
+    <string name="subscription_refresh_footer">همهٔ اشتراک‌ها را در پس‌زمینه و هنگام وجود اتصال به‌روز می‌کند. به‌طور پیش‌فرض خاموش است؛ تا نخواهید چیزی به شبکه نمی‌رود.</string>
 </resources>

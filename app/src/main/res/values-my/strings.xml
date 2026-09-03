@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">အမှန်ခြစ်ထားသော အက်ပ်များ တိုက်ရိုက်ချိတ်ဆက်ပြီး၊ ကျန်များမှာ ဥမင်လမ်းကြောင်းမှ ဖြတ်သွားပါသည်။</string>
     <string name="search_apps">အက်ပ်များ ရှာရန်</string>
     <string name="no_apps_found">အက်ပ် မတွေ့ပါ</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">စာရင်းသွင်းမှုများ</string>
+    <string name="auto_update">အလိုအလျောက် အပ်ဒိတ်</string>
+    <string name="off">ပိတ်</string>
+    <string name="every_day">နေ့စဉ်</string>
+    <string name="every_week">အပတ်စဉ်</string>
+    <string name="every_n_hours">%1$d နာရီတိုင်း</string>
+    <string name="subscription_refresh_footer">ချိတ်ဆက်မှုရှိချိန်တွင် စာရင်းသွင်းမှုအားလုံးကို နောက်ခံမှ ပြန်လည်ဆွဲယူပါသည်။ မူရင်းအတိုင်း ပိတ်ထားသဖြင့် သင်မတောင်းဆိုမချင်း ကွန်ရက်သို့ မည်သည့်အရာမျှ မထွက်ပါ။</string>
 </resources>

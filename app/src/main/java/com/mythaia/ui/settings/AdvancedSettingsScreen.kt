@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Fingerprint
@@ -30,7 +31,10 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +58,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mythaia.R
+import com.mythaia.data.network.SubscriptionRefreshScheduler
 import com.mythaia.viewmodel.VpnViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,6 +125,7 @@ private fun AdvancedSettingsRoot(
     var experimentalEnabled by remember { mutableStateOf(viewModel.experimentalEnabled) }
     var remnawaveHWIDEnabled by remember { mutableStateOf(viewModel.remnawaveHWIDEnabled) }
     var blockQuicEnabled by remember { mutableStateOf(viewModel.blockQuicEnabled) }
+    var refreshHours by remember { mutableStateOf(viewModel.subscriptionRefreshHours) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -188,6 +194,25 @@ private fun AdvancedSettingsRoot(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            WingSectionLabel(stringResource(R.string.subscriptions))
+            WingGroupCard {
+                RefreshIntervalRow(
+                    hours = refreshHours,
+                    onHoursChange = {
+                        refreshHours = it
+                        viewModel.subscriptionRefreshHours = it
+                    }
+                )
+            }
+            Text(
+                text = stringResource(R.string.subscription_refresh_footer),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             WingSectionLabel(stringResource(R.string.diagnostics))
             WingGroupCard {
                 WingNavRow(
@@ -234,6 +259,68 @@ private fun AdvancedSettingsRoot(
             )
         }
     }
+}
+
+/**
+ * How often subscriptions refresh on their own. "Off" is a real choice and the
+ * default, so nothing goes out over the network until the user asks for it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RefreshIntervalRow(hours: Int, onHoursChange: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        WingIconTile(Icons.Filled.Autorenew)
+        Text(
+            text = stringResource(R.string.auto_update),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 16.dp)
+        )
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it }
+        ) {
+            Text(
+                text = intervalLabel(hours),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    .padding(vertical = 8.dp)
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                for (choice in SubscriptionRefreshScheduler.INTERVAL_CHOICES) {
+                    DropdownMenuItem(
+                        text = { Text(intervalLabel(choice)) },
+                        onClick = {
+                            expanded = false
+                            onHoursChange(choice)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun intervalLabel(hours: Int): String = when (hours) {
+    0 -> stringResource(R.string.off)
+    168 -> stringResource(R.string.every_week)
+    24 -> stringResource(R.string.every_day)
+    else -> stringResource(R.string.every_n_hours, hours)
 }
 
 @Composable

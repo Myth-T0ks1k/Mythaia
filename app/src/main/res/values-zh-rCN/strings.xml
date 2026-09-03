@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">勾选的应用直连，其余经过隧道。</string>
     <string name="search_apps">搜索应用</string>
     <string name="no_apps_found">未找到应用</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">订阅</string>
+    <string name="auto_update">自动更新</string>
+    <string name="off">关闭</string>
+    <string name="every_day">每天</string>
+    <string name="every_week">每周</string>
+    <string name="every_n_hours">每 %1$d 小时</string>
+    <string name="subscription_refresh_footer">在设备有网络时于后台刷新所有订阅。默认关闭，在你要求之前不会有任何数据发往网络。</string>
 </resources>

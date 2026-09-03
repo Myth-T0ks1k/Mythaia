@@ -20,6 +20,8 @@ import com.mythaia.data.network.LatencyResult
 import com.mythaia.data.network.LatencyTester
 import com.mythaia.data.network.SubscriptionDomainHelper
 import com.mythaia.data.network.SubscriptionFetcher
+import com.mythaia.data.network.SubscriptionRefreshScheduler
+import com.mythaia.data.network.SubscriptionUpdater
 import com.mythaia.data.repository.CertificateRepository
 import com.mythaia.data.repository.ChainRepository
 import com.mythaia.data.repository.ConfigRepository
@@ -184,6 +186,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         CertificatePolicy.reload(application)
         FragmentPolicy.reload(application)
         EncryptedDnsPolicy.reload(application)
+        // Periodic work survives process death on its own; this only covers
+        // a first run, or a reinstall that kept the preferences.
+        SubscriptionRefreshScheduler.ensureScheduled(application)
 
         // React to trusted-certificate changes: update the singleton immediately and
         // notify the tunnel so live TLS connections tear down and reconnect under the
@@ -519,47 +524,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val hwid = if (remnawaveHWIDEnabled &&
             SubscriptionDomainHelper.shouldRequireRemnawaveHWID(subscription.url)
         ) deviceIdentifier else null
-        val result = SubscriptionFetcher.fetch(subscription.url, remnawaveHWID = hwid)
 
-        // Match new configurations against old ones by name to preserve IDs (and routing rules).
-        // When multiple configs share the same name, they are matched positionally within that group.
-        val oldConfigs = configRepository.getAll().filter { it.subscriptionId == subscription.id }
-
-        val oldByName = mutableMapOf<String, MutableList<ProxyConfiguration>>()
-        for (old in oldConfigs) {
-            oldByName.getOrPut(old.name) { mutableListOf() }.add(old)
-        }
-        val oldNameCursor = mutableMapOf<String, Int>()
-
-        val newConfigs = result.configurations.map { newConfig ->
-            val name = newConfig.name
-            val cursor = oldNameCursor.getOrDefault(name, 0)
-            val group = oldByName[name]
-            val id = if (group != null && cursor < group.size) {
-                oldNameCursor[name] = cursor + 1
-                group[cursor].id
-            } else {
-                newConfig.id
-            }
-            newConfig.copy(id = id, subscriptionId = subscription.id)
-        }
-
-        // Atomically replace old configurations with new ones (single StateFlow emission)
-        configRepository.replaceBySubscription(subscription.id, newConfigs)
-
-        // Preserve old metadata when new values are null and respect user-customized names.
-        val updated = subscription.copy(
-            lastUpdate = System.currentTimeMillis(),
-            name = if (subscription.isNameCustomized) subscription.name else (result.name ?: subscription.name),
-            upload = result.upload ?: subscription.upload,
-            download = result.download ?: subscription.download,
-            total = result.total ?: subscription.total,
-            expire = result.expire ?: subscription.expire
+        SubscriptionUpdater.update(
+            subscription = subscription,
+            subscriptionRepository = subscriptionRepository,
+            configRepository = configRepository,
+            remnawaveHWID = hwid
         )
-        subscriptionRepository.update(updated)
 
         ensureValidSelection()
     }
+
+    /**
+     * How often subscriptions refresh on their own, in hours; 0 is off.
+     *
+     * Writing it reschedules the WorkManager job immediately, so the setting
+     * takes effect without waiting for the next app start.
+     */
+    var subscriptionRefreshHours: Int
+        get() = SubscriptionRefreshScheduler.intervalHours(getApplication())
+        set(value) = SubscriptionRefreshScheduler.setIntervalHours(getApplication(), value)
 
     fun testLatency(forConfig: ProxyConfiguration) {
         syncProxyServerAddresses(forConfig)

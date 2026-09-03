@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">Belländikleriňiz gönüden birigýär, galanlary tunnelden geçýär.</string>
     <string name="search_apps">Programmalary gözle</string>
     <string name="no_apps_found">Programma tapylmady</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">Abunalar</string>
+    <string name="auto_update">Awtomatik täzelenme</string>
+    <string name="off">Öçük</string>
+    <string name="every_day">Her gün</string>
+    <string name="every_week">Her hepde</string>
+    <string name="every_n_hours">Her %1$d sagatdan</string>
+    <string name="subscription_refresh_footer">Birikme bar wagty ähli abunalary arka fonda täzeleýär. Öňünden öçük, şonuň üçin siz islemänkäňiz tora hiç zat gitmeýär.</string>
 </resources>

@@ -86,6 +86,7 @@ dependencies {
     implementation(libs.mlkit.barcode)
     implementation(libs.coroutines.android)
     implementation(libs.bouncycastle.bcprov)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation("org.brotli:dec:0.1.2")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

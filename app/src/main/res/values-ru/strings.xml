@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">Отмеченные приложения подключаются напрямую. Остальные идут через туннель.</string>
     <string name="search_apps">Поиск приложений</string>
     <string name="no_apps_found">Приложения не найдены</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">Подписки</string>
+    <string name="auto_update">Автообновление</string>
+    <string name="off">Выкл.</string>
+    <string name="every_day">Каждый день</string>
+    <string name="every_week">Каждую неделю</string>
+    <string name="every_n_hours">Каждые %1$d ч.</string>
+    <string name="subscription_refresh_footer">Обновляет все подписки в фоне, когда есть соединение. По умолчанию выключено — без вашего запроса ничего в сеть не уходит.</string>
 </resources>

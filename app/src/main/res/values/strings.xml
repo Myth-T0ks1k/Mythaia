@@ -251,4 +251,13 @@
     <string name="split_tunnel_disallow_footer">The apps you tick connect directly. Everything else goes through the tunnel.</string>
     <string name="search_apps">Search apps</string>
     <string name="no_apps_found">No apps found</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">Subscriptions</string>
+    <string name="auto_update">Auto-update</string>
+    <string name="off">Off</string>
+    <string name="every_day">Every day</string>
+    <string name="every_week">Every week</string>
+    <string name="every_n_hours">Every %1$d hours</string>
+    <string name="subscription_refresh_footer">Refreshes every subscription in the background when the device has a connection. Off by default, so nothing goes out over the network until you ask for it.</string>
 </resources>

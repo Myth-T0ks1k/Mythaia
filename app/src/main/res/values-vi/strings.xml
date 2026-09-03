@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">Những ứng dụng bạn đánh dấu kết nối trực tiếp. Số còn lại đi qua đường hầm.</string>
     <string name="search_apps">Tìm ứng dụng</string>
     <string name="no_apps_found">Không tìm thấy ứng dụng</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">Đăng ký</string>
+    <string name="auto_update">Tự động cập nhật</string>
+    <string name="off">Tắt</string>
+    <string name="every_day">Mỗi ngày</string>
+    <string name="every_week">Mỗi tuần</string>
+    <string name="every_n_hours">Mỗi %1$d giờ</string>
+    <string name="subscription_refresh_footer">Cập nhật mọi đăng ký ở nền khi máy có kết nối. Mặc định tắt, nên không có gì gửi ra mạng cho tới khi bạn yêu cầu.</string>
 </resources>

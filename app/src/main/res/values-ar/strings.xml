@@ -182,4 +182,13 @@
     <string name="split_tunnel_disallow_footer">تتصل التطبيقات التي تحدّدها مباشرة، ويمر ما عداها عبر النفق.</string>
     <string name="search_apps">البحث في التطبيقات</string>
     <string name="no_apps_found">لم يُعثر على تطبيقات</string>
+
+    <!-- Subscription auto-update -->
+    <string name="subscriptions">الاشتراكات</string>
+    <string name="auto_update">تحديث تلقائي</string>
+    <string name="off">مُعطَّل</string>
+    <string name="every_day">كل يوم</string>
+    <string name="every_week">كل أسبوع</string>
+    <string name="every_n_hours">كل %1$d ساعة</string>
+    <string name="subscription_refresh_footer">يحدّث كل الاشتراكات في الخلفية عند توفّر اتصال. مُعطَّل افتراضيًا، فلا يخرج شيء إلى الشبكة حتى تطلب ذلك.</string>
 </resources>
