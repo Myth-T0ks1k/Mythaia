@@ -233,6 +233,7 @@ class MythaiaVpnService : VpnService() {
         // Stamped here rather than in the view model so the uptime survives the
         // UI going away and rebinding to a tunnel that never stopped.
         sessionStartedAt = android.os.SystemClock.elapsedRealtime()
+        setActive(true)
 
         // Wire logger sink so logger.info/.warning/.error forward to the
         // user-facing log buffer.
@@ -265,6 +266,7 @@ class MythaiaVpnService : VpnService() {
         val stack = lwipStack
         lwipStack = null
         sessionStartedAt = 0L
+        setActive(false)
         // Capture the fd now — a subsequent startVpn() assigns a fresh tunFd
         // and the deferred finishStopVpn() must never close that new one.
         val fdToClose = tunFd
@@ -730,6 +732,38 @@ class MythaiaVpnService : VpnService() {
         const val ACTION_STOP = "com.mythaia.STOP"
         const val ACTION_SWITCH_CONFIG = "com.mythaia.SWITCH_CONFIG"
         const val EXTRA_CONFIG = "config"
+
+        /**
+         * Whether a tunnel is up, readable without binding to the service.
+         *
+         * The Quick Settings tile and the home-screen widget both need the
+         * state and neither can hold a binding: a tile is created and destroyed
+         * around each glance, and a widget update runs in a broadcast.
+         */
+        @Volatile
+        var isActive: Boolean = false
+            private set
+
+        /** Callbacks fired when [isActive] changes, for the tile and widget. */
+        private val stateListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+        fun addStateListener(listener: () -> Unit) {
+            stateListeners.add(listener)
+        }
+
+        fun removeStateListener(listener: () -> Unit) {
+            stateListeners.remove(listener)
+        }
+
+        private fun setActive(active: Boolean) {
+            if (isActive == active) return
+            isActive = active
+            // A listener that throws must not stop the others, nor take the
+            // tunnel down with it.
+            for (listener in stateListeners) {
+                runCatching { listener() }
+            }
+        }
 
         /** Wake-from-sleep restart threshold. */
         private val WAKE_RESTART_THRESHOLD_SECS: Long = TunnelConstants.wakeRestartThresholdSec

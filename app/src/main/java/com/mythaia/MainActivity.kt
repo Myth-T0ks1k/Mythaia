@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import com.mythaia.ui.navigation.AppNavigation
 import com.mythaia.ui.onboarding.OnboardingScreen
 import com.mythaia.ui.theme.MythaiaTheme
+import com.mythaia.viewmodel.VpnStatus
 import com.mythaia.viewmodel.VpnViewModel
 
 class MainActivity : ComponentActivity() {
@@ -39,6 +40,7 @@ class MainActivity : ComponentActivity() {
         }
 
         handleDeepLinkIntent(intent)
+        handleConnectIntent(intent)
 
         setContent {
             MythaiaTheme {
@@ -60,7 +62,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleDeepLinkIntent(intent)
+        handleConnectIntent(intent)
     }
 
     private fun handleDeepLinkIntent(intent: Intent?) {
@@ -69,8 +73,29 @@ class MainActivity : ComponentActivity() {
         viewModel.onDeepLink(uri)
     }
 
+    /**
+     * Connects on behalf of the Quick Settings tile or the widget, which can
+     * neither show the VPN consent dialog nor run the routing sync a connect
+     * needs.
+     *
+     * The action is cleared once handled so a configuration change — a rotation,
+     * a theme switch — does not replay it.
+     */
+    private fun handleConnectIntent(intent: Intent?) {
+        if (intent?.action != ACTION_CONNECT) return
+        intent.action = null
+        if (viewModel.vpnStatus.value == VpnStatus.DISCONNECTED) {
+            viewModel.connect()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         viewModel.onRequestVpnPermission = null
+    }
+
+    companion object {
+        /** Asks the app to bring the tunnel up, from outside the app. */
+        const val ACTION_CONNECT = "com.mythaia.CONNECT"
     }
 }
