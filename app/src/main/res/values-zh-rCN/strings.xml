@@ -219,4 +219,10 @@
     <string name="subscription_used">%1$s / %2$s</string>
     <string name="subscription_expires">%1$s到期</string>
     <string name="subscription_expired">已到期</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">搜索服务器</string>
+    <string name="sort_by_latency">按延迟排序</string>
+    <string name="no_matching_proxies">没有匹配的服务器</string>
+    <string name="clear">清除</string>
 </resources>

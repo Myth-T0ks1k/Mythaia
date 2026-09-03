@@ -219,4 +219,10 @@
     <string name="subscription_used">%1$s de %2$s</string>
     <string name="subscription_expires">Caduca %1$s</string>
     <string name="subscription_expired">Caducada</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">Buscar servidores</string>
+    <string name="sort_by_latency">Ordenar por latencia</string>
+    <string name="no_matching_proxies">Ningún servidor coincide</string>
+    <string name="clear">Borrar</string>
 </resources>

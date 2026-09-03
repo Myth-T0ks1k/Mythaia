@@ -219,4 +219,10 @@
     <string name="subscription_used">%1$s trên %2$s</string>
     <string name="subscription_expires">Hết hạn %1$s</string>
     <string name="subscription_expired">Đã hết hạn</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">Tìm máy chủ</string>
+    <string name="sort_by_latency">Sắp xếp theo độ trễ</string>
+    <string name="no_matching_proxies">Không máy chủ nào khớp</string>
+    <string name="clear">Xóa</string>
 </resources>

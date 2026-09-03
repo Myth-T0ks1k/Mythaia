@@ -219,4 +219,10 @@
     <string name="subscription_used">%1$s из %2$s</string>
     <string name="subscription_expires">Истекает %1$s</string>
     <string name="subscription_expired">Истекла</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">Поиск серверов</string>
+    <string name="sort_by_latency">Сортировать по задержке</string>
+    <string name="no_matching_proxies">Серверы не найдены</string>
+    <string name="clear">Очистить</string>
 </resources>

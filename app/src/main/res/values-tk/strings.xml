@@ -219,4 +219,10 @@
     <string name="subscription_used">%2$s-dan %1$s</string>
     <string name="subscription_expires">Möhleti %1$s</string>
     <string name="subscription_expired">Möhleti gutardy</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">Serwerleri gözle</string>
+    <string name="sort_by_latency">Gijikme boýunça tertiple</string>
+    <string name="no_matching_proxies">Gabat gelýän serwer ýok</string>
+    <string name="clear">Arassala</string>
 </resources>

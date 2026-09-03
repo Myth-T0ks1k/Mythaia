@@ -219,4 +219,10 @@
     <string name="subscription_used">%2$s မှ %1$s</string>
     <string name="subscription_expires">%1$s သက်တမ်းကုန်</string>
     <string name="subscription_expired">သက်တမ်းကုန်ပြီ</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">ဆာဗာများ ရှာရန်</string>
+    <string name="sort_by_latency">နှောင့်နှေးချိန်အလိုက် စဉ်ရန်</string>
+    <string name="no_matching_proxies">ကိုက်ညီသော ဆာဗာ မရှိပါ</string>
+    <string name="clear">ရှင်းရန်</string>
 </resources>

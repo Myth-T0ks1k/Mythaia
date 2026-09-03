@@ -219,4 +219,10 @@
     <string name="subscription_used">%1$s از %2$s</string>
     <string name="subscription_expires">پایان %1$s</string>
     <string name="subscription_expired">منقضی</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">جست‌وجوی سرورها</string>
+    <string name="sort_by_latency">چینش بر پایهٔ تأخیر</string>
+    <string name="no_matching_proxies">سروری با جست‌وجوی شما همخوان نیست</string>
+    <string name="clear">پاک کردن</string>
 </resources>

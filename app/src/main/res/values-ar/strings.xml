@@ -219,4 +219,10 @@
     <string name="subscription_used">%1$s من %2$s</string>
     <string name="subscription_expires">ينتهي %1$s</string>
     <string name="subscription_expired">منتهٍ</string>
+
+    <!-- Proxy list search and sort -->
+    <string name="search_proxies">البحث في الخوادم</string>
+    <string name="sort_by_latency">الترتيب حسب زمن الاستجابة</string>
+    <string name="no_matching_proxies">لا خوادم تطابق بحثك</string>
+    <string name="clear">مسح</string>
 </resources>

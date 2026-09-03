@@ -72,6 +72,13 @@ import com.mythaia.ui.components.ProxyCardContent
 import com.mythaia.ui.components.WingMark
 import com.mythaia.ui.components.wingTextFieldColors
 import com.mythaia.ui.components.SubscriptionUsageCard
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.FilledIconToggleButton
+import androidx.compose.material3.IconButtonDefaults
+import com.mythaia.data.network.LatencyResult
 import com.mythaia.viewmodel.VpnViewModel
 import kotlinx.coroutines.launch
 import android.content.ClipData
@@ -110,16 +117,47 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
 
     val scope = rememberCoroutineScope()
 
-    val standaloneConfigs = remember(configurations) {
-        configurations.filter { it.subscriptionId == null }
+    var searchQuery by remember { mutableStateOf("") }
+    var sortByLatency by remember { mutableStateOf(false) }
+
+    /**
+     * Name or address, case-insensitively. A subscription can carry hundreds of
+     * servers whose names differ by one word, so matching the address too is
+     * what makes the search usable on them.
+     */
+    fun matchesQuery(config: ProxyConfiguration): Boolean {
+        if (searchQuery.isBlank()) return true
+        return config.name.contains(searchQuery, ignoreCase = true) ||
+            config.serverAddress.contains(searchQuery, ignoreCase = true)
     }
 
-    val subscribedGroups = remember(configurations, subscriptions) {
+    /**
+     * Fastest first when sorting by latency; anything unmeasured or failed
+     * sinks below everything that answered, keeping its original order.
+     */
+    fun ordered(configs: List<ProxyConfiguration>): List<ProxyConfiguration> {
+        if (!sortByLatency) return configs
+        return configs.sortedBy { config ->
+            (latencyResults[config.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
+        }
+    }
+
+    val standaloneConfigs = remember(configurations, searchQuery, sortByLatency, latencyResults) {
+        ordered(configurations.filter { it.subscriptionId == null && matchesQuery(it) })
+    }
+
+    val subscribedGroups = remember(configurations, subscriptions, searchQuery, sortByLatency, latencyResults) {
         subscriptions.mapNotNull { subscription ->
-            val configs = configurations.filter { it.subscriptionId == subscription.id }
+            val configs = ordered(
+                configurations.filter { it.subscriptionId == subscription.id && matchesQuery(it) }
+            )
+            // A group with nothing left after filtering disappears rather than
+            // showing an empty header.
             if (configs.isEmpty()) null else subscription to configs
         }
     }
+
+    val hasResults = standaloneConfigs.isNotEmpty() || subscribedGroups.isNotEmpty()
 
     val autoSelecting by viewModel.autoSelecting.collectAsState()
 
@@ -170,6 +208,65 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                         }
                     }
                 )
+                if (configurations.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text(stringResource(R.string.search_proxies)) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            trailingIcon = if (searchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = stringResource(R.string.clear),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                null
+                            },
+                            singleLine = true,
+                            colors = wingTextFieldColors(),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        // Sorting is a view of the same list, so it is a toggle
+                        // rather than a menu: one tap on, one tap off.
+                        FilledIconToggleButton(
+                            checked = sortByLatency,
+                            onCheckedChange = { sortByLatency = it },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = IconButtonDefaults.filledIconToggleButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                checkedContainerColor = MaterialTheme.colorScheme.primary,
+                                checkedContentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Sort,
+                                contentDescription = stringResource(R.string.sort_by_latency),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
                 HorizontalDivider(
                     thickness = 1.dp,
                     color = MaterialTheme.colorScheme.outline
@@ -221,6 +318,19 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        } else if (!hasResults) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.no_matching_proxies),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         } else {
             LazyColumn(
