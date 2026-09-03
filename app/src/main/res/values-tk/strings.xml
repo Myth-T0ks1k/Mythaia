@@ -171,4 +171,15 @@
     <string name="fragment_length">Her ýazgydaky baýt</string>
     <string name="fragment_interval">Arakesme (ms)</string>
     <string name="fragment_range_footer">Her ýazgy birinji aralykdan tötänleýin ölçeg alýar, indikisinden öňki arakesme bolsa ikinjiden alynýar. Salgysynda öz bölekleýiş sazlamasy bolan serwer bu bahalara üns bermeýär.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">Bölünen tunnel</string>
+    <string name="split_tunnel_off">Ähli programmalar</string>
+    <string name="split_tunnel_allow">Diňe saýlananlar</string>
+    <string name="split_tunnel_disallow">Saýlananlardan başga</string>
+    <string name="split_tunnel_off_footer">Ähli programmalar tunnelden geçýär.</string>
+    <string name="split_tunnel_allow_footer">Diňe belländiklerşiňiz tunnelden geçýär, galanlary gönüden birigýär.</string>
+    <string name="split_tunnel_disallow_footer">Belländikleriňiz gönüden birigýär, galanlary tunnelden geçýär.</string>
+    <string name="search_apps">Programmalary gözle</string>
+    <string name="no_apps_found">Programma tapylmady</string>
 </resources>

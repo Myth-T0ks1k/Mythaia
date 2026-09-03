@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.ParcelFileDescriptor
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.util.MythaiaLogger
@@ -67,6 +68,13 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         private set
     /** Proxy mode: "global" sends all traffic through proxy, "rule" applies routing rules. */
     var proxyMode: String = "rule"
+        private set
+    /**
+     * Which apps the TUN carries. Tracked here only so a change can be
+     * detected; applying it is MythaiaVpnService's job, since it lives on
+     * VpnService.Builder.
+     */
+    var splitTunnel: SplitTunnelSettings = SplitTunnelSettings()
         private set
     private var running = false
     @Volatile
@@ -172,6 +180,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             "encryptedDnsProtocol",
             "encryptedDnsServer",
             "blockQuicEnabled",
+            "splitTunnelMode",
+            "splitTunnelPackages",
             "proxyMode" -> settingsThrottler.submit(::handleSettingsChanged)
             // `routingChanged` restarts the lwIP stack so all in-flight connections re-evaluate
             // against the new rules (matching iOS LWIPStack+Lifecycle.swift:325-331).
@@ -300,6 +310,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         proxyMode = prefs.getString("proxyMode", "rule") ?: "rule"
     }
 
+    private fun loadSplitTunnelSetting() {
+        splitTunnel = SplitTunnelSettings.read(prefs)
+    }
+
     private fun loadRoutingConfigurationForMode() {
         if (proxyMode == "global") {
             domainRouter.reset()
@@ -385,6 +399,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             loadEncryptedDnsSettings()
             loadBlockQuicSetting()
             loadProxyModeSetting()
+            loadSplitTunnelSetting()
 
             // Create MuxManager when Vision+Mux is active (VLESS only)
             if (config.outboundProtocol == com.mythaia.data.model.OutboundProtocol.VLESS && config.muxEnabled && (config.flow == "xtls-rprx-vision" || config.flow == "xtls-rprx-vision-udp443")) {
@@ -645,6 +660,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         loadEncryptedDnsSettings()
         loadBlockQuicSetting()
         loadProxyModeSetting()
+        loadSplitTunnelSetting()
 
         if (config.outboundProtocol == com.mythaia.data.model.OutboundProtocol.VLESS &&
             config.muxEnabled &&
@@ -750,6 +766,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             val newEncryptedDnsServer = prefs.getString("encryptedDnsServer", "") ?: ""
             val newBlockQuicEnabled = prefs.getBoolean("blockQuicEnabled", true)
             val newProxyMode = prefs.getString("proxyMode", "rule") ?: "rule"
+            val newSplitTunnel = SplitTunnelSettings.read(prefs)
 
             val ipv6DnsChanged = newIpv6Dns != ipv6DNSEnabled
             val bypassChanged = newBypassCode != bypassCountryCode
@@ -758,6 +775,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             val encryptedDnsServerChanged = newEncryptedDnsServer != encryptedDnsServer
             val blockQuicChanged = newBlockQuicEnabled != blockQuicEnabled
             val proxyModeChanged = newProxyMode != proxyMode
+            val splitTunnelChanged = newSplitTunnel != splitTunnel
 
             if (!ipv6DnsChanged &&
                 !bypassChanged &&
@@ -765,17 +783,22 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
                 !encryptedDnsProtocolChanged &&
                 !encryptedDnsServerChanged &&
                 !blockQuicChanged &&
-                !proxyModeChanged
+                !proxyModeChanged &&
+                !splitTunnelChanged
             ) return@execute
 
             // Re-apply the tunnel network settings whenever IPv6 changes
             // (adds/removes IPv6 routes and IPv6 DNS servers) or encrypted DNS
             // changes (switches between DoH/DoT).
+            // A split-tunnel change is only expressible on VpnService.Builder,
+            // so like the IPv6 and DNS changes it needs the TUN re-established.
             if (ipv6DnsChanged ||
                 encryptedDnsEnabledChanged ||
                 encryptedDnsProtocolChanged ||
-                encryptedDnsServerChanged
+                encryptedDnsServerChanged ||
+                splitTunnelChanged
             ) {
+                splitTunnel = newSplitTunnel
                 onTunnelSettingsNeedReapply?.invoke()
             }
 

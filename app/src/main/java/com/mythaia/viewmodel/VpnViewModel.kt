@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.mythaia.R
 import com.mythaia.data.model.FragmentSettings
 import com.mythaia.data.model.ProxyChain
+import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.network.LatencyResult
@@ -779,6 +780,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     var fragmentSettings: FragmentSettings
         get() = FragmentPolicy.read(prefs)
         set(value) = FragmentPolicy.write(prefs, value)
+
+    /**
+     * Which apps the tunnel carries. Writing it makes LwipStack re-establish the
+     * TUN, since the selection is only expressible on VpnService.Builder.
+     */
+    var splitTunnelSettings: SplitTunnelSettings
+        get() = SplitTunnelSettings.read(prefs)
+        set(value) = SplitTunnelSettings.write(prefs, value)
 
     /** UI-only flag gating experimental features (e.g. custom rule set creation). */
     var experimentalEnabled: Boolean

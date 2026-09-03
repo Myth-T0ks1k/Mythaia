@@ -171,4 +171,15 @@
     <string name="fragment_length">Байт в записи</string>
     <string name="fragment_interval">Пауза (мс)</string>
     <string name="fragment_range_footer">Размер каждой записи выбирается случайно из первого диапазона, а пауза перед следующей — из второго. Сервер, ссылка которого содержит собственную настройку фрагментации, эти значения игнорирует.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">Раздельный туннель</string>
+    <string name="split_tunnel_off">Все приложения</string>
+    <string name="split_tunnel_allow">Только выбранные</string>
+    <string name="split_tunnel_disallow">Кроме выбранных</string>
+    <string name="split_tunnel_off_footer">Через туннель идут все приложения.</string>
+    <string name="split_tunnel_allow_footer">Через туннель идут только отмеченные приложения. Остальные подключаются напрямую.</string>
+    <string name="split_tunnel_disallow_footer">Отмеченные приложения подключаются напрямую. Остальные идут через туннель.</string>
+    <string name="search_apps">Поиск приложений</string>
+    <string name="no_apps_found">Приложения не найдены</string>
 </resources>

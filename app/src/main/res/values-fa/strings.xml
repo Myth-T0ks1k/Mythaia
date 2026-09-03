@@ -171,4 +171,15 @@
     <string name="fragment_length">بایت در هر رکورد</string>
     <string name="fragment_interval">مکث (میلی‌ثانیه)</string>
     <string name="fragment_range_footer">اندازهٔ هر رکورد به‌تصادف از بازهٔ نخست و مکث پیش از رکورد بعدی از بازهٔ دوم برداشته می‌شود. سروری که پیوندش تنظیم تکه‌تکه کردن خودش را دارد این مقادیر را نادیده می‌گیرد.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">تونل تفکیک‌شده</string>
+    <string name="split_tunnel_off">همهٔ برنامه‌ها</string>
+    <string name="split_tunnel_allow">فقط انتخاب‌شده‌ها</string>
+    <string name="split_tunnel_disallow">جز انتخاب‌شده‌ها</string>
+    <string name="split_tunnel_off_footer">همهٔ برنامه‌ها از تونل می‌گذرند.</string>
+    <string name="split_tunnel_allow_footer">فقط برنامه‌هایی که علامت می‌زنید از تونل می‌گذرند؛ بقیه مستقیم وصل می‌شوند.</string>
+    <string name="split_tunnel_disallow_footer">برنامه‌هایی که علامت می‌زنید مستقیم وصل می‌شوند؛ بقیه از تونل می‌گذرند.</string>
+    <string name="search_apps">جست‌وجوی برنامه‌ها</string>
+    <string name="no_apps_found">برنامه‌ای پیدا نشد</string>
 </resources>

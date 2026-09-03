@@ -22,6 +22,9 @@ import android.os.ParcelFileDescriptor
 import com.mythaia.MainActivity
 import com.mythaia.R
 import com.mythaia.data.model.ProxyConfiguration
+import android.content.pm.PackageManager
+import com.mythaia.data.model.SplitTunnelMode
+import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.util.MythaiaLogger
@@ -351,6 +354,8 @@ class MythaiaVpnService : VpnService() {
             builder.addRoute(route.address, route.prefixLength)
         }
 
+        applySplitTunnel(builder, prefs)
+
         // Session name for system UI
         builder.setSession("Mythaia VPN")
 
@@ -359,6 +364,44 @@ class MythaiaVpnService : VpnService() {
         } catch (e: Exception) {
             logger.error("[VPN] Failed to set tunnel settings: ${e.message ?: e}")
             null
+        }
+    }
+
+    /**
+     * Restricts the tunnel to (or excludes it from) the user's chosen apps.
+     *
+     * Each package is added on its own and a package that is no longer
+     * installed is skipped: `addAllowedApplication` throws
+     * `NameNotFoundException`, and letting that escape would fail
+     * `establish()` outright, taking the whole tunnel down because the user
+     * uninstalled one app from a list.
+     *
+     * If every selected package has gone away the selection is ignored rather
+     * than applied empty — an allow-list that matched nothing would establish
+     * a tunnel no app could use.
+     */
+    private fun applySplitTunnel(builder: Builder, prefs: android.content.SharedPreferences) {
+        val settings = SplitTunnelSettings.read(prefs)
+        if (!settings.isActive) return
+
+        var applied = 0
+        for (pkg in settings.packages) {
+            try {
+                when (settings.mode) {
+                    SplitTunnelMode.ALLOW -> builder.addAllowedApplication(pkg)
+                    SplitTunnelMode.DISALLOW -> builder.addDisallowedApplication(pkg)
+                    SplitTunnelMode.OFF -> return
+                }
+                applied++
+            } catch (e: PackageManager.NameNotFoundException) {
+                logger.info("[VPN] Split tunnel: skipping uninstalled package $pkg")
+            }
+        }
+
+        if (applied == 0) {
+            logger.info("[VPN] Split tunnel: no selected package is still installed; carrying all apps")
+        } else {
+            logger.debug("[VPN] Split tunnel: ${settings.mode.raw} for $applied app(s)")
         }
     }
 

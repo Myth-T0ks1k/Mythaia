@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Fingerprint
@@ -65,13 +66,15 @@ fun AdvancedSettingsScreen(
     var showEncryptedDns by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
     var showFragment by remember { mutableStateOf(false) }
+    var showSplitTunnel by remember { mutableStateOf(false) }
 
-    val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment
+    val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment || showSplitTunnel
     BackHandler(enabled = activeSubScreen) {
         showIpv6Settings = false
         showEncryptedDns = false
         showLogs = false
         showFragment = false
+        showSplitTunnel = false
     }
 
     val currentRoute = when {
@@ -79,6 +82,7 @@ fun AdvancedSettingsScreen(
         showEncryptedDns -> "dns"
         showLogs -> "logs"
         showFragment -> "fragment"
+        showSplitTunnel -> "split"
         else -> "root"
     }
 
@@ -88,13 +92,15 @@ fun AdvancedSettingsScreen(
             "dns" -> EncryptedDnsSettingsScreen(viewModel = viewModel, onBack = { showEncryptedDns = false })
             "logs" -> LogListScreen(onBack = { showLogs = false })
             "fragment" -> FragmentSettingsScreen(viewModel = viewModel, onBack = { showFragment = false })
+            "split" -> SplitTunnelScreen(viewModel = viewModel, onBack = { showSplitTunnel = false })
             else -> AdvancedSettingsRoot(
                 viewModel = viewModel,
                 onBack = onBack,
                 onOpenIpv6 = { showIpv6Settings = true },
                 onOpenEncryptedDns = { showEncryptedDns = true },
                 onOpenLogs = { showLogs = true },
-                onOpenFragment = { showFragment = true }
+                onOpenFragment = { showFragment = true },
+                onOpenSplitTunnel = { showSplitTunnel = true }
             )
         }
     }
@@ -108,7 +114,8 @@ private fun AdvancedSettingsRoot(
     onOpenIpv6: () -> Unit,
     onOpenEncryptedDns: () -> Unit,
     onOpenLogs: () -> Unit,
-    onOpenFragment: () -> Unit
+    onOpenFragment: () -> Unit,
+    onOpenSplitTunnel: () -> Unit
 ) {
     var experimentalEnabled by remember { mutableStateOf(viewModel.experimentalEnabled) }
     var remnawaveHWIDEnabled by remember { mutableStateOf(viewModel.remnawaveHWIDEnabled) }
@@ -170,6 +177,12 @@ private fun AdvancedSettingsRoot(
                     icon = Icons.Filled.ContentCut,
                     label = stringResource(R.string.fragment_hello),
                     onClick = onOpenFragment
+                )
+                WingRowDivider()
+                WingNavRow(
+                    icon = Icons.Filled.Apps,
+                    label = stringResource(R.string.split_tunnel),
+                    onClick = onOpenSplitTunnel
                 )
             }
 

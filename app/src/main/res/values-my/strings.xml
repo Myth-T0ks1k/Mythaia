@@ -171,4 +171,15 @@
     <string name="fragment_length">မှတ်တမ်းတစ်ခုလျှင် ဘိုက်</string>
     <string name="fragment_interval">ခေတ္တရပ်နားချိန် (ms)</string>
     <string name="fragment_range_footer">မှတ်တမ်းတစ်ခုစီသည် ပထမအပိုင်းအခြားမှ ကျပန်းအရွယ်အစားကို ယူပြီး၊ နောက်တစ်ခုမတိုင်မီ ခေတ္တရပ်နားချိန်ကို ဒုတိယအပိုင်းအခြားမှ ယူပါသည်။ မျှဝေလင့်ခ်တွင် ကိုယ်ပိုင် အပိုင်းပိုင်းခွဲခြင်း ဆက်တင်ပါရှိသော ဆာဗာသည် ဤတန်ဖိုးများကို လျစ်လျူရှုပါသည်။</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">အက်ပ်လိုက် ခွဲခြားလမ်းကြောင်း</string>
+    <string name="split_tunnel_off">အက်ပ်အားလုံး</string>
+    <string name="split_tunnel_allow">ရွေးထားသည်များသာ</string>
+    <string name="split_tunnel_disallow">ရွေးထားသည်များမှလွဲ၍</string>
+    <string name="split_tunnel_off_footer">အက်ပ်အားလုံး ဥမင်လမ်းကြောင်းမှ ဖြတ်သွားပါသည်။</string>
+    <string name="split_tunnel_allow_footer">အမှန်ခြစ်ထားသော အက်ပ်များသာ ဥမင်လမ်းကြောင်းမှ ဖြတ်သွားပြီး၊ ကျန်များမှာ တိုက်ရိုက်ချိတ်ဆက်ပါသည်။</string>
+    <string name="split_tunnel_disallow_footer">အမှန်ခြစ်ထားသော အက်ပ်များ တိုက်ရိုက်ချိတ်ဆက်ပြီး၊ ကျန်များမှာ ဥမင်လမ်းကြောင်းမှ ဖြတ်သွားပါသည်။</string>
+    <string name="search_apps">အက်ပ်များ ရှာရန်</string>
+    <string name="no_apps_found">အက်ပ် မတွေ့ပါ</string>
 </resources>

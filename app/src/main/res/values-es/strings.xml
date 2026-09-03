@@ -171,4 +171,15 @@
     <string name="fragment_length">Bytes por registro</string>
     <string name="fragment_interval">Pausa (ms)</string>
     <string name="fragment_range_footer">Cada registro toma un tamaño aleatorio del primer intervalo, y la pausa antes del siguiente se toma del segundo. Un servidor cuyo enlace lleva su propia configuración de fragmentación ignora estos valores.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">Túnel dividido</string>
+    <string name="split_tunnel_off">Todas las apps</string>
+    <string name="split_tunnel_allow">Solo las elegidas</string>
+    <string name="split_tunnel_disallow">Salvo las elegidas</string>
+    <string name="split_tunnel_off_footer">Todas las apps pasan por el túnel.</string>
+    <string name="split_tunnel_allow_footer">Solo las apps que marques pasan por el túnel. El resto se conecta directamente.</string>
+    <string name="split_tunnel_disallow_footer">Las apps que marques se conectan directamente. El resto pasa por el túnel.</string>
+    <string name="search_apps">Buscar apps</string>
+    <string name="no_apps_found">No se encontraron apps</string>
 </resources>

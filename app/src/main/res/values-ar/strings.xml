@@ -171,4 +171,15 @@
     <string name="fragment_length">بايت لكل سجل</string>
     <string name="fragment_interval">التوقّف (مللي ثانية)</string>
     <string name="fragment_range_footer">يأخذ كل سجل حجمًا عشوائيًا من النطاق الأول، ويُؤخذ التوقّف قبل السجل التالي من النطاق الثاني. أما الخادم الذي يحمل رابطه إعداد تجزئة خاصًا به فيتجاهل هذه القيم.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">النفق المقسَّم</string>
+    <string name="split_tunnel_off">كل التطبيقات</string>
+    <string name="split_tunnel_allow">المحدَّدة فقط</string>
+    <string name="split_tunnel_disallow">ما عدا المحدَّدة</string>
+    <string name="split_tunnel_off_footer">تمر كل التطبيقات عبر النفق.</string>
+    <string name="split_tunnel_allow_footer">تمر عبر النفق التطبيقات التي تحدّدها فقط، ويتصل ما عداها مباشرة.</string>
+    <string name="split_tunnel_disallow_footer">تتصل التطبيقات التي تحدّدها مباشرة، ويمر ما عداها عبر النفق.</string>
+    <string name="search_apps">البحث في التطبيقات</string>
+    <string name="no_apps_found">لم يُعثر على تطبيقات</string>
 </resources>

@@ -171,4 +171,15 @@
     <string name="fragment_length">Byte mỗi bản ghi</string>
     <string name="fragment_interval">Khoảng dừng (ms)</string>
     <string name="fragment_range_footer">Mỗi bản ghi lấy kích thước ngẫu nhiên từ khoảng thứ nhất, còn khoảng dừng trước bản ghi kế tiếp lấy từ khoảng thứ hai. Máy chủ có liên kết mang thiết lập phân mảnh riêng sẽ bỏ qua các giá trị này.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">Chia đường hầm</string>
+    <string name="split_tunnel_off">Mọi ứng dụng</string>
+    <string name="split_tunnel_allow">Chỉ ứng dụng đã chọn</string>
+    <string name="split_tunnel_disallow">Trừ ứng dụng đã chọn</string>
+    <string name="split_tunnel_off_footer">Mọi ứng dụng đều đi qua đường hầm.</string>
+    <string name="split_tunnel_allow_footer">Chỉ những ứng dụng bạn đánh dấu đi qua đường hầm. Số còn lại kết nối trực tiếp.</string>
+    <string name="split_tunnel_disallow_footer">Những ứng dụng bạn đánh dấu kết nối trực tiếp. Số còn lại đi qua đường hầm.</string>
+    <string name="search_apps">Tìm ứng dụng</string>
+    <string name="no_apps_found">Không tìm thấy ứng dụng</string>
 </resources>

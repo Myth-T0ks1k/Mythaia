@@ -171,4 +171,15 @@
     <string name="fragment_length">每条记录字节数</string>
     <string name="fragment_interval">停顿（毫秒）</string>
     <string name="fragment_range_footer">每条记录的大小从第一个区间中随机取值，下一条记录前的停顿从第二个区间中取值。分享链接自带分片设置的服务器会忽略这些值。</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">分应用代理</string>
+    <string name="split_tunnel_off">所有应用</string>
+    <string name="split_tunnel_allow">仅所选应用</string>
+    <string name="split_tunnel_disallow">除所选应用</string>
+    <string name="split_tunnel_off_footer">所有应用都经过隧道。</string>
+    <string name="split_tunnel_allow_footer">只有勾选的应用经过隧道，其余直连。</string>
+    <string name="split_tunnel_disallow_footer">勾选的应用直连，其余经过隧道。</string>
+    <string name="search_apps">搜索应用</string>
+    <string name="no_apps_found">未找到应用</string>
 </resources>

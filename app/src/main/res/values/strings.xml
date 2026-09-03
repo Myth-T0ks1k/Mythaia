@@ -240,4 +240,15 @@
     <string name="fragment_length">Bytes per record</string>
     <string name="fragment_interval">Pause (ms)</string>
     <string name="fragment_range_footer">Each record takes a random size from the first range, and the pause before the next one is drawn from the second. A server whose share link carries its own fragment setting ignores these values.</string>
+
+    <!-- Per-app split tunnel -->
+    <string name="split_tunnel">Split tunnel</string>
+    <string name="split_tunnel_off">All apps</string>
+    <string name="split_tunnel_allow">Only selected</string>
+    <string name="split_tunnel_disallow">Except selected</string>
+    <string name="split_tunnel_off_footer">Every app goes through the tunnel.</string>
+    <string name="split_tunnel_allow_footer">Only the apps you tick go through the tunnel. Everything else connects directly.</string>
+    <string name="split_tunnel_disallow_footer">The apps you tick connect directly. Everything else goes through the tunnel.</string>
+    <string name="search_apps">Search apps</string>
+    <string name="no_apps_found">No apps found</string>
 </resources>

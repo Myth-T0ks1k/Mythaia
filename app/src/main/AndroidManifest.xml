@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Per-app split tunnelling: the user picks which installed apps the VPN
+         carries, so the picker has to be able to enumerate them. Package
+         visibility is filtered from API 30 onward without this. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
