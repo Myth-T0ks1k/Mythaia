@@ -202,4 +202,12 @@
     <string name="geoip_none">Sin importar</string>
     <string name="geoip_footer">Las reglas por país necesitan una base MaxMind .mmdb. No se incluye ninguna: descarga GeoLite2-Country de MaxMind e impórtala aquí. Sin ella, las reglas por país simplemente no coinciden.</string>
     <string name="geoip_import_failed">Ese archivo no es una base de datos MaxMind.</string>
+
+    <!-- Auto-select -->
+    <string name="auto_select">Elegir el más rápido</string>
+    <string name="auto_select_now">Elegir el más rápido</string>
+    <string name="auto_select_none">Ningún servidor respondió.</string>
+    <string name="auto_select_testing">Midiendo servidores…</string>
+    <string name="auto_select_footer">Mide todos los servidores y se conecta al más rápido. Añade unos segundos a cada conexión y contacta con todos tus servidores.</string>
+    <string name="connection">Conexión</string>
 </resources>

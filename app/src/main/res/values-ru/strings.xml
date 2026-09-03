@@ -202,4 +202,12 @@
     <string name="geoip_none">Не импортирована</string>
     <string name="geoip_footer">Правила по странам требуют базы MaxMind .mmdb. В приложение она не входит — скачайте GeoLite2-Country у MaxMind и импортируйте здесь. Без неё правила по странам просто не срабатывают.</string>
     <string name="geoip_import_failed">Это не база MaxMind.</string>
+
+    <!-- Auto-select -->
+    <string name="auto_select">Выбирать самый быстрый</string>
+    <string name="auto_select_now">Выбрать быстрый</string>
+    <string name="auto_select_none">Ни один сервер не ответил.</string>
+    <string name="auto_select_testing">Проверка серверов…</string>
+    <string name="auto_select_footer">Замеряет все серверы и подключается к самому быстрому. Добавляет несколько секунд к каждому подключению и обращается ко всем вашим серверам.</string>
+    <string name="connection">Подключение</string>
 </resources>

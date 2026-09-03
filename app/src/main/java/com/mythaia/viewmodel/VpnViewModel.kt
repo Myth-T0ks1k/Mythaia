@@ -233,10 +233,73 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** True while [autoSelectFastest] is measuring. */
+    private val _autoSelecting = MutableStateFlow(false)
+    val autoSelecting: StateFlow<Boolean> = _autoSelecting.asStateFlow()
+
+    /**
+     * Whether connecting should pick the fastest server first.
+     *
+     * Off by default: measuring every server before each connect costs a few
+     * seconds and a round trip to each one, which is not what someone who
+     * always uses the same server wants.
+     */
+    var autoSelectEnabled: Boolean
+        get() = prefs.getBoolean("autoSelectEnabled", false)
+        set(value) = prefs.edit().putBoolean("autoSelectEnabled", value).apply()
+
+    /**
+     * Measures every candidate and selects the fastest.
+     *
+     * Candidates are the servers that could actually be dialled: chains are
+     * left out (they are picked deliberately, and measuring one measures the
+     * whole path), and so is anything whose protocol this build cannot dial.
+     * A server that fails or is only reachable insecurely never wins, so a
+     * broken entry cannot be chosen just for answering first.
+     *
+     * @return the chosen server, or null when nothing answered.
+     */
+    suspend fun autoSelectFastest(): ProxyConfiguration? {
+        if (_autoSelecting.value) return null
+
+        val candidates = configRepository.getAll()
+            .filter { it.outboundProtocol.isImplemented }
+        if (candidates.isEmpty()) return null
+
+        _autoSelecting.value = true
+        try {
+            syncProxyServerAddresses(candidates)
+            candidates.forEach { config ->
+                _latencyResults.value = _latencyResults.value + (config.id to LatencyResult.Testing)
+            }
+
+            var bestId: UUID? = null
+            var bestMs = Int.MAX_VALUE
+
+            LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) })
+                .collect { (id, result) ->
+                    _latencyResults.value = _latencyResults.value + (id to result)
+                    if (result is LatencyResult.Success && result.ms < bestMs) {
+                        bestMs = result.ms
+                        bestId = id
+                    }
+                }
+
+            val winner = bestId?.let { configRepository.get(it) } ?: return null
+            logger.info("[AutoSelect] ${winner.name} at ${bestMs}ms")
+            setSelectedConfiguration(winner)
+            return winner
+        } finally {
+            _autoSelecting.value = false
+        }
+    }
+
     fun connect() {
-        val config = selectedConfiguration ?: return
         val context = getApplication<Application>()
 
+        // The permission prompt comes first either way: asking for it after a
+        // measurement round would leave the user staring at a spinner before
+        // the dialog they actually have to answer.
         val prepareIntent = VpnService.prepare(context)
         if (prepareIntent != null) {
             pendingConnectAfterPermission = true
@@ -244,15 +307,38 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // A chain is an explicit choice; auto-select only ranges over single
+        // servers, so it does not override one.
+        if (autoSelectEnabled && _selectedChainId.value == null) {
+            viewModelScope.launch {
+                val chosen = autoSelectFastest() ?: selectedConfiguration
+                if (chosen == null) {
+                    _startError.value = context.getString(R.string.auto_select_none)
+                    return@launch
+                }
+                startVpnService(chosen)
+            }
+            return
+        }
+
+        val config = selectedConfiguration ?: return
         startVpnService(config)
     }
 
     fun onVpnPermissionGranted() {
-        if (pendingConnectAfterPermission) {
-            pendingConnectAfterPermission = false
-            val config = selectedConfiguration ?: return
-            startVpnService(config)
+        if (!pendingConnectAfterPermission) return
+        pendingConnectAfterPermission = false
+
+        if (autoSelectEnabled && _selectedChainId.value == null) {
+            viewModelScope.launch {
+                val chosen = autoSelectFastest() ?: selectedConfiguration ?: return@launch
+                startVpnService(chosen)
+            }
+            return
         }
+
+        val config = selectedConfiguration ?: return
+        startVpnService(config)
     }
 
     fun onVpnPermissionDenied() {

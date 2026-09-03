@@ -959,8 +959,9 @@ class VlessClient(
 
         var lastError: Exception? = null
 
+        // Only the direct dial reaches here; the tunneled case returned above,
+        // so unlike the other retry loops this one needs no tunnel check.
         for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
-            if (tunnel != null && attempt > 0) break
             if (attempt > 0) {
                 cleanupRetryResources()
                 delay(RETRY_BASE_DELAY_MS * attempt)

@@ -23,7 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.CallMerge
-import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Shield
@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import com.mythaia.R
 import com.mythaia.data.rules.CountryBypassCatalog
 import com.mythaia.ui.components.wingTextFieldColors
+import com.mythaia.ui.components.countryDisplayName
 import com.mythaia.viewmodel.VpnViewModel
 import java.util.Locale
 
@@ -267,7 +268,7 @@ private fun SettingsRoot(
                     }
                     SettingsRowDivider()
                     SettingsNavRow(
-                        icon = Icons.Filled.AltRoute,
+                        icon = Icons.AutoMirrored.Filled.AltRoute,
                         iconTint = MaterialTheme.colorScheme.primary,
                         label = stringResource(R.string.routing_rules),
                         onClick = onOpenRoutingRules
@@ -533,11 +534,6 @@ internal fun SettingsNavRow(
     }
 }
 
-private fun flagForCountryCode(code: String): String {
-    val firstChar = Character.toChars(0x1F1E6 - 'A'.code + code[0].uppercaseChar().code)
-    val secondChar = Character.toChars(0x1F1E6 - 'A'.code + code[1].uppercaseChar().code)
-    return String(firstChar) + String(secondChar)
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -554,8 +550,7 @@ private fun CountryBypassPicker(
     val displayText = if (selectedCode.isEmpty()) {
         stringResource(R.string.disable)
     } else {
-        val locale = Locale("", selectedCode)
-        "${flagForCountryCode(selectedCode)} ${locale.displayCountry}"
+        countryDisplayName(selectedCode)
     }
 
     Row(
@@ -595,9 +590,8 @@ private fun CountryBypassPicker(
                     }
                 )
                 countryCodes.forEach { code ->
-                    val locale = Locale("", code)
                     DropdownMenuItem(
-                        text = { Text("${flagForCountryCode(code)} ${locale.displayCountry}") },
+                        text = { Text(countryDisplayName(code)) },
                         onClick = {
                             onSelect(code)
                             expanded = false

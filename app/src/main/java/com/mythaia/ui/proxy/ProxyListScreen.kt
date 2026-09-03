@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -119,6 +120,8 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
         }
     }
 
+    val autoSelecting by viewModel.autoSelecting.collectAsState()
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -131,6 +134,26 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                         actionIconContentColor = MaterialTheme.colorScheme.primary
                     ),
                     actions = {
+                        // Measures every server and switches to the fastest.
+                        // Disabled while running so a second tap cannot start a
+                        // competing round.
+                        IconButton(
+                            onClick = { scope.launch { viewModel.autoSelectFastest() } },
+                            enabled = !autoSelecting && configurations.isNotEmpty()
+                        ) {
+                            if (autoSelecting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = stringResource(R.string.auto_select_now)
+                                )
+                            }
+                        }
                         IconButton(onClick = {
                             // Only test what's currently visible — standalone proxies
                             // plus configurations from expanded subscriptions.

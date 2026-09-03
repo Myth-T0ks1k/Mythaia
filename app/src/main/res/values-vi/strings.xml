@@ -202,4 +202,12 @@
     <string name="geoip_none">Chưa nhập</string>
     <string name="geoip_footer">Quy tắc theo quốc gia cần cơ sở dữ liệu MaxMind .mmdb. Ứng dụng không kèm sẵn — tải GeoLite2-Country từ MaxMind rồi nhập tại đây. Không có nó, quy tắc theo quốc gia đơn giản là không khớp.</string>
     <string name="geoip_import_failed">Tệp đó không phải cơ sở dữ liệu MaxMind.</string>
+
+    <!-- Auto-select -->
+    <string name="auto_select">Tự chọn nhanh nhất</string>
+    <string name="auto_select_now">Chọn nhanh nhất</string>
+    <string name="auto_select_none">Không máy chủ nào phản hồi.</string>
+    <string name="auto_select_testing">Đang đo máy chủ…</string>
+    <string name="auto_select_footer">Đo mọi máy chủ rồi kết nối tới máy nhanh nhất. Mỗi lần kết nối lâu thêm vài giây và có liên hệ tới tất cả máy chủ của bạn.</string>
+    <string name="connection">Kết nối</string>
 </resources>

@@ -202,4 +202,12 @@
     <string name="geoip_none">وارد نشده</string>
     <string name="geoip_footer">قاعده‌های کشوری به پایگاه دادهٔ MaxMind با پسوند mmdb نیاز دارند. همراه برنامه نمی‌آید — GeoLite2-Country را از MaxMind بگیرید و اینجا وارد کنید. بدون آن، قاعده‌های کشوری اصلاً مطابقت نمی‌کنند.</string>
     <string name="geoip_import_failed">این پرونده پایگاه دادهٔ MaxMind نیست.</string>
+
+    <!-- Auto-select -->
+    <string name="auto_select">گزینش خودکار سریع‌ترین</string>
+    <string name="auto_select_now">گزینش سریع‌ترین</string>
+    <string name="auto_select_none">هیچ سروری پاسخ نداد.</string>
+    <string name="auto_select_testing">در حال سنجش سرورها…</string>
+    <string name="auto_select_footer">همهٔ سرورها را می‌سنجد و به سریع‌ترین وصل می‌شود. چند ثانیه به هر اتصال می‌افزاید و با همهٔ سرورهای شما تماس می‌گیرد.</string>
+    <string name="connection">اتصال</string>
 </resources>

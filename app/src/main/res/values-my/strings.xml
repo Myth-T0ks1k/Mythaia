@@ -202,4 +202,12 @@
     <string name="geoip_none">မတင်သွင်းရသေး</string>
     <string name="geoip_footer">နိုင်ငံအလိုက် စည်းမျဉ်းများအတွက် MaxMind .mmdb ဒေတာဘေ့စ် လိုအပ်ပါသည်။ အက်ပ်တွင် ပါဝင်ခြင်းမရှိပါ — MaxMind မှ GeoLite2-Country ကို ဒေါင်းလုဒ်ဆွဲပြီး ဤနေရာတွင် တင်သွင်းပါ။ ၎င်းမပါဘဲ နိုင်ငံအလိုက် စည်းမျဉ်းများ လုံးဝ ကိုက်ညီမည်မဟုတ်ပါ။</string>
     <string name="geoip_import_failed">ထိုဖိုင်သည် MaxMind ဒေတာဘေ့စ် မဟုတ်ပါ။</string>
+
+    <!-- Auto-select -->
+    <string name="auto_select">အမြန်ဆုံးကို အလိုအလျောက်ရွေး</string>
+    <string name="auto_select_now">အမြန်ဆုံးရွေးရန်</string>
+    <string name="auto_select_none">မည်သည့်ဆာဗာမှ တုံ့ပြန်မှုမရှိပါ။</string>
+    <string name="auto_select_testing">ဆာဗာများကို တိုင်းတာနေသည်…</string>
+    <string name="auto_select_footer">ဆာဗာအားလုံးကို တိုင်းတာပြီး အမြန်ဆုံးသို့ ချိတ်ဆက်ပါသည်။ ချိတ်ဆက်မှုတိုင်းတွင် စက္ကန့်အနည်းငယ် ပိုကြာပြီး သင့်ဆာဗာအားလုံးထံ ဆက်သွယ်ပါသည်။</string>
+    <string name="connection">ချိတ်ဆက်မှု</string>
 </resources>

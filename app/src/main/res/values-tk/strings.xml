@@ -202,4 +202,12 @@
     <string name="geoip_none">Import edilmedik</string>
     <string name="geoip_footer">Ýurt düzgünleri üçin MaxMind mmdb binýady gerek. Programma bilen gelmeýär — GeoLite2-Country-ni MaxMind-dan ýükläp, şu ýerde import ediň. Onsuz ýurt düzgünleri asla gabat gelmeýär.</string>
     <string name="geoip_import_failed">Bu faýl MaxMind binýady däl.</string>
+
+    <!-- Auto-select -->
+    <string name="auto_select">Iň çalt serweri saýla</string>
+    <string name="auto_select_now">Iň çalty saýla</string>
+    <string name="auto_select_none">Hiç bir serwer jogap bermedi.</string>
+    <string name="auto_select_testing">Serwerler ölçenýär…</string>
+    <string name="auto_select_footer">Ähli serwerleri ölçäp, iň çaltyna birigýär. Her birikmä birnäçe sekunt goşýar we ähli serweriňize ýüzlenýär.</string>
+    <string name="connection">Birikme</string>
 </resources>

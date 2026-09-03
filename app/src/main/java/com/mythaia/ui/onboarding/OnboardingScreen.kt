@@ -48,13 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.mythaia.R
 import com.mythaia.data.rules.CountryBypassCatalog
 import com.mythaia.ui.components.WingMark
-import java.util.Locale
-
-private fun flagForCountryCode(code: String): String {
-    val firstChar = Character.toChars(0x1F1E6 - 'A'.code + code[0].uppercaseChar().code)
-    val secondChar = Character.toChars(0x1F1E6 - 'A'.code + code[1].uppercaseChar().code)
-    return String(firstChar) + String(secondChar)
-}
+import com.mythaia.ui.components.countryDisplayName
 
 @Composable
 fun OnboardingScreen(
@@ -220,9 +214,8 @@ private fun CountryBypassPage(
             )
 
             countryCodes.forEach { code ->
-                val locale = Locale("", code)
                 CountryRow(
-                    label = "${flagForCountryCode(code)} ${locale.displayCountry}",
+                    label = countryDisplayName(code),
                     isSelected = selectedCountry == code,
                     onClick = { onSelect(code) }
                 )
