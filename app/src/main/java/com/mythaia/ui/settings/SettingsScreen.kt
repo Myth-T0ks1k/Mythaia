@@ -156,9 +156,9 @@ fun SettingsScreen(viewModel: VpnViewModel) {
                     }
                 },
                 onOpenTelegram = {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse(com.mythaia.BrandLinks.TELEGRAM_COMMUNITY))
-                    )
+                    com.mythaia.BrandLinks.TELEGRAM_COMMUNITY?.let { link ->
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                    }
                 },
                 onOpenRoutingRules = { showRoutingRules = true },
                 onOpenTrustedCertificates = { showTrustedCertificates = true },
@@ -299,13 +299,18 @@ private fun SettingsRoot(
 
             SectionHeader(stringResource(R.string.about))
             SettingsGroupCard {
-                SettingsNavRow(
-                    painter = painterResource(R.drawable.ic_telegram_symbol),
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    label = stringResource(R.string.join_telegram_group),
-                    onClick = onOpenTelegram
-                )
-                SettingsRowDivider()
+                // Hidden until a Mythaia community invite is configured — see
+                // BrandLinks.TELEGRAM_COMMUNITY. Shipping the row with no link
+                // would be a dead tap; pointing it elsewhere would be worse.
+                if (com.mythaia.BrandLinks.hasCommunityLink) {
+                    SettingsNavRow(
+                        painter = painterResource(R.drawable.ic_telegram_symbol),
+                        iconTint = MaterialTheme.colorScheme.primary,
+                        label = stringResource(R.string.join_telegram_group),
+                        onClick = onOpenTelegram
+                    )
+                    SettingsRowDivider()
+                }
                 SettingsNavRow(
                     icon = Icons.Filled.Info,
                     iconTint = MaterialTheme.colorScheme.primary,

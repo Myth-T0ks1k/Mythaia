@@ -8,10 +8,15 @@ package com.mythaia
 object BrandLinks {
 
     /**
-     * Community chat opened from Settings.
+     * Community chat opened from Settings, or null while there is none.
      *
-     * TODO(brand): still points at the upstream engine's public group. Replace
-     * with the Mythaia community invite before any public release.
+     * Null is the deliberate default: the row it drives hides itself rather
+     * than sending a Mythaia user to somebody else's group. Set this to the
+     * Mythaia invite and the row comes back on its own.
      */
-    const val TELEGRAM_COMMUNITY = "https://t.me/anywhere_official_group"
+    val TELEGRAM_COMMUNITY: String? = null
+
+    /** Whether the Settings row for [TELEGRAM_COMMUNITY] should be shown at all. */
+    val hasCommunityLink: Boolean
+        get() = !TELEGRAM_COMMUNITY.isNullOrBlank()
 }

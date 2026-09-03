@@ -18,7 +18,7 @@ No Electron. No WebView. No sing-box wrapper. Pure protocol implementation from 
 
 ## Why Mythaia?
 
-Most Android proxy clients wrap sing-box or Xray-core in a Go/C++ bridge. Mythaia implements the protocol, transport, and routing layers directly in Kotlin, and calls into a small set of vendored C libraries (lwIP, ngtcp2, BLAKE3, libyaml) through JNI for the parts that benefit from native code. The result is a smaller binary, lower memory usage, and no Go runtime overhead.
+Most Android proxy clients wrap sing-box or Xray-core in a Go/C++ bridge. Mythaia implements the protocol, transport, and routing layers directly in Kotlin, and calls into a small set of vendored C libraries (lwIP, BLAKE3, libyaml) through JNI for the parts that benefit from native code. The result is a smaller binary, lower memory usage, and no Go runtime overhead.
 
 ## Features
 
@@ -55,7 +55,7 @@ Most Android proxy clients wrap sing-box or Xray-core in a Go/C++ bridge. Mythai
 
 ### Architecture
 
-- **Minimal dependencies** — Android frameworks, vendored C libraries (lwIP, ngtcp2, blake3, libyaml)
+- **Minimal dependencies** — Android frameworks, vendored C libraries (lwIP, blake3, libyaml)
 - **Native VPN Service** — system-wide VPN via `VpnService` with a userspace TCP/IP stack
 - **Fake-IP DNS** — transparent domain-based routing for all apps
 - **Vendored native code** — lwIP (TCP/IP), BLAKE3 (keyed hashing), libyaml (Clash parsing); bundled into a single native library
