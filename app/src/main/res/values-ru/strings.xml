@@ -163,4 +163,12 @@
     <string name="vpn_service">Служба VPN</string>
     <string name="vpn_channel_description">Уведомление об активном подключении VPN</string>
     <string name="route_preview_format">Вы → %1$s → Цель</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">Фрагментация ClientHello</string>
+    <string name="fragment_hello_enable">Фрагментировать рукопожатие</string>
+    <string name="fragment_hello_footer">Отправляет TLS ClientHello несколькими записями с паузой между ними, чтобы фильтр, читающий имя сервера из первого пакета, не нашёл его там. Серверы собирают сообщение обратно, как того требует спецификация TLS.</string>
+    <string name="fragment_length">Байт в записи</string>
+    <string name="fragment_interval">Пауза (мс)</string>
+    <string name="fragment_range_footer">Размер каждой записи выбирается случайно из первого диапазона, а пауза перед следующей — из второго. Сервер, ссылка которого содержит собственную настройку фрагментации, эти значения игнорирует.</string>
 </resources>

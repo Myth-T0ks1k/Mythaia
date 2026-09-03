@@ -23,6 +23,7 @@ import com.mythaia.MainActivity
 import com.mythaia.R
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
+import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.LogBuffer
@@ -181,6 +182,7 @@ class MythaiaVpnService : VpnService() {
         // would normally have already populated this cache, but a fresh process
         // (system-killed app + user-tapped reconnect) can race the first handshake.
         CertificatePolicy.reload(this)
+        FragmentPolicy.reload(this)
 
         val effectiveConfig = applyGlobalAllowInsecure(config)
         logger.debug("[VPN] Starting tunnel to ${effectiveConfig.serverAddress}:${effectiveConfig.serverPort} " +

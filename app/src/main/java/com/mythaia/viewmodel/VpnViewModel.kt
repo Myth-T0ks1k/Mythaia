@@ -11,6 +11,7 @@ import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mythaia.R
+import com.mythaia.data.model.FragmentSettings
 import com.mythaia.data.model.ProxyChain
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.model.ProxyConfiguration
@@ -24,6 +25,7 @@ import com.mythaia.data.repository.ConfigRepository
 import com.mythaia.data.repository.RuleSetRepository
 import com.mythaia.data.repository.SubscriptionRepository
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
+import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.MythaiaVpnService
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.util.DnsCache
@@ -178,6 +180,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Prime CertificatePolicy with the current allowInsecure + trusted-certificate
         // values so TLS validation has a fresh snapshot before the first connection.
         CertificatePolicy.reload(application)
+        FragmentPolicy.reload(application)
 
         // React to trusted-certificate changes: update the singleton immediately and
         // notify the tunnel so live TLS connections tear down and reconnect under the
@@ -765,6 +768,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // new policy applies immediately.
             signalCertificatePolicyChanged()
         }
+
+    /**
+     * Tunnel-wide ClientHello fragmentation. A server whose share link carried
+     * its own `fragment=` overrides this; every other server follows it.
+     *
+     * Reads and writes go through [FragmentPolicy] so the running tunnel sees a
+     * change on its next dial without waiting for a stack reload.
+     */
+    var fragmentSettings: FragmentSettings
+        get() = FragmentPolicy.read(prefs)
+        set(value) = FragmentPolicy.write(prefs, value)
 
     /** UI-only flag gating experimental features (e.g. custom rule set creation). */
     var experimentalEnabled: Boolean

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.ParcelFileDescriptor
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
+import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.util.MythaiaLogger
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -804,6 +805,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         // ones created during restartStack) observe the latest allowInsecure +
         // trusted-fingerprint values.
         CertificatePolicy.reload(context)
+        FragmentPolicy.reload(context)
         lwipExecutor.execute {
             if (!running) return@execute
             val config = configuration ?: return@execute

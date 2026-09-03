@@ -163,4 +163,12 @@
     <string name="vpn_service">سرویس VPN</string>
     <string name="vpn_channel_description">اعلان برای اتصال VPN فعال</string>
     <string name="route_preview_format">شما → %1$s → مقصد</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">تکه‌تکه کردن ClientHello</string>
+    <string name="fragment_hello_enable">تکه‌تکه کردن دست‌دادن</string>
+    <string name="fragment_hello_footer">ClientHello پروتکل TLS را در چند رکورد و با مکث میان آن‌ها می‌فرستد تا صافی‌ای که نام سرور را از بستهٔ نخست می‌خواند آن را آنجا نیابد. سرورها آن را دوباره کنار هم می‌گذارند، همان‌طور که مشخصات TLS ایجاب می‌کند.</string>
+    <string name="fragment_length">بایت در هر رکورد</string>
+    <string name="fragment_interval">مکث (میلی‌ثانیه)</string>
+    <string name="fragment_range_footer">اندازهٔ هر رکورد به‌تصادف از بازهٔ نخست و مکث پیش از رکورد بعدی از بازهٔ دوم برداشته می‌شود. سروری که پیوندش تنظیم تکه‌تکه کردن خودش را دارد این مقادیر را نادیده می‌گیرد.</string>
 </resources>

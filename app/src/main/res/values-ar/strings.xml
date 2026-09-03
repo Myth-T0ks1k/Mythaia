@@ -163,4 +163,12 @@
     <string name="vpn_service">خدمة VPN</string>
     <string name="vpn_channel_description">إشعار لاتصال VPN النشط</string>
     <string name="route_preview_format">أنت → %1$s → الهدف</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">تجزئة ClientHello</string>
+    <string name="fragment_hello_enable">تجزئة المصافحة</string>
+    <string name="fragment_hello_footer">يرسل ClientHello الخاص بـ TLS في عدة سجلات مع توقّف بينها، حتى لا يجد المرشّح الذي يقرأ اسم الخادم من الحزمة الأولى ذلك الاسم فيها. تعيد الخوادم تجميعه كما تقتضي مواصفة TLS.</string>
+    <string name="fragment_length">بايت لكل سجل</string>
+    <string name="fragment_interval">التوقّف (مللي ثانية)</string>
+    <string name="fragment_range_footer">يأخذ كل سجل حجمًا عشوائيًا من النطاق الأول، ويُؤخذ التوقّف قبل السجل التالي من النطاق الثاني. أما الخادم الذي يحمل رابطه إعداد تجزئة خاصًا به فيتجاهل هذه القيم.</string>
 </resources>

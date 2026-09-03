@@ -118,7 +118,13 @@ data class TlsConfiguration(
     /** Minimum acceptable TLS version (null = no minimum, accept any). */
     val minVersion: TlsVersion? = null,
     /** Maximum acceptable TLS version (null = no maximum, accept any). */
-    val maxVersion: TlsVersion? = null
+    val maxVersion: TlsVersion? = null,
+    /**
+     * How this server's ClientHello goes out on a direct dial. Null means the
+     * link carried no `fragment=`, so the tunnel-wide default applies — see
+     * [com.mythaia.vpn.protocol.tls.FragmentPolicy].
+     */
+    val fragment: FragmentSettings? = null
 ) {
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): TlsConfiguration? {
@@ -129,13 +135,15 @@ data class TlsConfiguration(
             val fp = params["fp"] ?: "chrome_133"
             val minVersion = parseTlsVersion(params["minVersion"])
             val maxVersion = parseTlsVersion(params["maxVersion"])
+            val fragment = params["fragment"]?.let(FragmentSettings::fromShareLink)
             return TlsConfiguration(
                 serverName = sni,
                 alpn = alpn,
                 allowInsecure = allowInsecure,
                 fingerprint = TlsFingerprint.fromRaw(fp),
                 minVersion = minVersion,
-                maxVersion = maxVersion
+                maxVersion = maxVersion,
+                fragment = fragment
             )
         }
 
@@ -717,7 +725,8 @@ data class ProxyConfiguration(
     }
 
     /**
-     * Emits TLS query params (sni, alpn, fp, allowInsecure, minVersion, maxVersion).
+     * Emits TLS query params (sni, alpn, fp, allowInsecure, minVersion,
+     * maxVersion, fragment).
      */
     private fun appendTlsParams(params: MutableList<String>, tls: TlsConfiguration) {
         if (tls.serverName != serverAddress) params.add("sni=${tls.serverName}")
@@ -728,6 +737,12 @@ data class ProxyConfiguration(
         if (tls.allowInsecure) params.add("allowInsecure=1")
         tls.minVersion?.let { params.add("minVersion=${it.urlValue}") }
         tls.maxVersion?.let { params.add("maxVersion=${it.urlValue}") }
+        // Only a per-server override is exported; a server following the
+        // tunnel-wide default carries no `fragment=`, which is what the
+        // default means.
+        tls.fragment?.takeIf { it.isEnabled }?.let {
+            params.add("fragment=${urlEncode(it.toShareLinkValue())}")
+        }
     }
 
     private fun toNaiveUrl(): String {

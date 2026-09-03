@@ -163,4 +163,12 @@
     <string name="vpn_service">Dịch vụ VPN</string>
     <string name="vpn_channel_description">Thông báo cho kết nối VPN đang hoạt động</string>
     <string name="route_preview_format">Bạn → %1$s → Đích</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">Phân mảnh ClientHello</string>
+    <string name="fragment_hello_enable">Phân mảnh bắt tay</string>
+    <string name="fragment_hello_footer">Gửi ClientHello của TLS thành nhiều bản ghi với một khoảng dừng giữa chúng, để bộ lọc đọc tên máy chủ từ gói đầu tiên không tìm thấy nó ở đó. Máy chủ ghép lại như đặc tả TLS yêu cầu.</string>
+    <string name="fragment_length">Byte mỗi bản ghi</string>
+    <string name="fragment_interval">Khoảng dừng (ms)</string>
+    <string name="fragment_range_footer">Mỗi bản ghi lấy kích thước ngẫu nhiên từ khoảng thứ nhất, còn khoảng dừng trước bản ghi kế tiếp lấy từ khoảng thứ hai. Máy chủ có liên kết mang thiết lập phân mảnh riêng sẽ bỏ qua các giá trị này.</string>
 </resources>

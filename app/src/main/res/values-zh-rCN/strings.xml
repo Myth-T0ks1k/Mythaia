@@ -163,4 +163,12 @@
     <string name="vpn_service">VPN 服务</string>
     <string name="vpn_channel_description">活动 VPN 连接的通知</string>
     <string name="route_preview_format">你 → %1$s → 目标</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">分片 ClientHello</string>
+    <string name="fragment_hello_enable">分片握手</string>
+    <string name="fragment_hello_footer">将 TLS ClientHello 拆成多条记录发送，并在其间停顿，使从首个数据包读取服务器名称的过滤器无法在那里找到它。服务器会按 TLS 规范的要求重新组装。</string>
+    <string name="fragment_length">每条记录字节数</string>
+    <string name="fragment_interval">停顿（毫秒）</string>
+    <string name="fragment_range_footer">每条记录的大小从第一个区间中随机取值，下一条记录前的停顿从第二个区间中取值。分享链接自带分片设置的服务器会忽略这些值。</string>
 </resources>

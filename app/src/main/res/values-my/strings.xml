@@ -163,4 +163,12 @@
     <string name="vpn_service">VPN ဝန်ဆောင်မှု</string>
     <string name="vpn_channel_description">ဆက်သွယ်နေသော VPN အတွက် အသိပေးချက်</string>
     <string name="route_preview_format">သင် → %1$s → ပစ်မှတ်</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">ClientHello ကို အပိုင်းပိုင်းခွဲရန်</string>
+    <string name="fragment_hello_enable">လက်ဆွဲနှုတ်ဆက်မှုကို ပိုင်းခွဲရန်</string>
+    <string name="fragment_hello_footer">TLS ClientHello ကို မှတ်တမ်းအများအပြားအဖြစ် ခေတ္တရပ်နားချိန်များဖြင့် ပို့ပေးသည်။ ထို့ကြောင့် ပထမဆုံး ပက်ကက်မှ ဆာဗာအမည်ကို ဖတ်သည့် စစ်ထုတ်စနစ်သည် ထိုနေရာတွင် ၎င်းကို မတွေ့တော့ပါ။ TLS စံသတ်မှတ်ချက်အရ ဆာဗာများက ပြန်လည်ပေါင်းစပ်ပေးပါသည်။</string>
+    <string name="fragment_length">မှတ်တမ်းတစ်ခုလျှင် ဘိုက်</string>
+    <string name="fragment_interval">ခေတ္တရပ်နားချိန် (ms)</string>
+    <string name="fragment_range_footer">မှတ်တမ်းတစ်ခုစီသည် ပထမအပိုင်းအခြားမှ ကျပန်းအရွယ်အစားကို ယူပြီး၊ နောက်တစ်ခုမတိုင်မီ ခေတ္တရပ်နားချိန်ကို ဒုတိယအပိုင်းအခြားမှ ယူပါသည်။ မျှဝေလင့်ခ်တွင် ကိုယ်ပိုင် အပိုင်းပိုင်းခွဲခြင်း ဆက်တင်ပါရှိသော ဆာဗာသည် ဤတန်ဖိုးများကို လျစ်လျူရှုပါသည်။</string>
 </resources>

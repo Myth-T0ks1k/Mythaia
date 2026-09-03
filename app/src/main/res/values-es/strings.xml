@@ -163,4 +163,12 @@
     <string name="vpn_service">Servicio VPN</string>
     <string name="vpn_channel_description">Notificación de la conexión VPN activa</string>
     <string name="route_preview_format">Tú → %1$s → Destino</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">Fragmentar ClientHello</string>
+    <string name="fragment_hello_enable">Fragmentar el saludo</string>
+    <string name="fragment_hello_footer">Envía el ClientHello de TLS en varios registros con una pausa entre ellos, de modo que un filtro que lee el nombre del servidor del primer paquete no lo encuentra allí. Los servidores lo reensamblan, como exige la especificación de TLS.</string>
+    <string name="fragment_length">Bytes por registro</string>
+    <string name="fragment_interval">Pausa (ms)</string>
+    <string name="fragment_range_footer">Cada registro toma un tamaño aleatorio del primer intervalo, y la pausa antes del siguiente se toma del segundo. Un servidor cuyo enlace lleva su propia configuración de fragmentación ignora estos valores.</string>
 </resources>

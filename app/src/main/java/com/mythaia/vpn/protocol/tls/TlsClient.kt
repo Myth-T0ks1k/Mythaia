@@ -39,6 +39,9 @@ class TlsClient(private val configuration: TlsConfiguration) {
 
     private var connection: Transport? = null
 
+    /** Drives the ClientHello-fragment lengths and the pauses between them. */
+    private val handshakeRandom = java.security.SecureRandom()
+
     // Ephemeral X25519 key pair (cleared after handshake)
     private var ephemeralPrivateKeyBytes: ByteArray? = null
     private var ephemeralPublicKeyBytes: ByteArray? = null
@@ -76,14 +79,51 @@ class TlsClient(private val configuration: TlsConfiguration) {
         val socket = NioSocket()
         connection = socket
 
+        // A direct dial is the one a filter on the path can see, so this is where
+        // the hello goes out in pieces. Inside another proxy (the `connect(transport)`
+        // overload) there is no path to hide it from.
+        val fragment = configuration.fragment ?: FragmentPolicy.settings
+        val pieces = if (fragment.isEnabled) {
+            TlsHelloFragmenter.split(clientHello, fragment.lengthRange, handshakeRandom)
+        } else {
+            listOf(clientHello)
+        }
+
         try {
-            socket.connect(host, port, initialData = clientHello)
+            // The first piece still rides the connect, keeping the round-trip saving.
+            socket.connect(host, port, initialData = pieces.first())
         } catch (e: Exception) {
             logger.error("TCP connection failed: ${e.message}")
             throw TlsError.ConnectionFailed(e.message ?: "Unknown error")
         }
 
+        if (pieces.size > 1) {
+            try {
+                sendRemainingHelloPieces(socket, pieces, fragment.intervalRange)
+            } catch (e: Exception) {
+                logger.error("Fragmented ClientHello send failed: ${e.message}")
+                throw TlsError.HandshakeFailed(e.message ?: "Unknown error")
+            }
+        }
+
         return receiveServerResponse()
+    }
+
+    /**
+     * Sends every piece after the first, pausing between them. The pause is what
+     * separates the records into distinct segments on the wire; without it the
+     * kernel would coalesce them and the split would buy nothing.
+     */
+    private suspend fun sendRemainingHelloPieces(
+        socket: NioSocket,
+        pieces: List<ByteArray>,
+        intervalRange: IntRange
+    ) {
+        for (index in 1 until pieces.size) {
+            val pause = TlsHelloFragmenter.nextInRange(handshakeRandom, intervalRange)
+            if (pause > 0) kotlinx.coroutines.delay(pause.toLong())
+            socket.send(pieces[index])
+        }
     }
 
     /** Performs the handshake over an already-connected transport (for proxy chaining). */

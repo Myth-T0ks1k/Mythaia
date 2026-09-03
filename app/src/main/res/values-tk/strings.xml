@@ -163,4 +163,12 @@
     <string name="vpn_service">VPN hyzmaty</string>
     <string name="vpn_channel_description">Işjeň VPN birikmesi üçin habarnama</string>
     <string name="route_preview_format">Siz → %1$s → Nyşana</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">ClientHello böleklemek</string>
+    <string name="fragment_hello_enable">El gysyşmany böleklemek</string>
+    <string name="fragment_hello_footer">TLS ClientHello-ny arasynda arakesme goýup, birnäçe ýazgy görnüşinde iberýär, şeýlelikde serweriň adyny ilkinji bukjadan okaýan süzgüç ony ol ýerde tapmaýar. Serwerler ony TLS spesifikasiýasynyň talap edişi ýaly täzeden birleşdirýär.</string>
+    <string name="fragment_length">Her ýazgydaky baýt</string>
+    <string name="fragment_interval">Arakesme (ms)</string>
+    <string name="fragment_range_footer">Her ýazgy birinji aralykdan tötänleýin ölçeg alýar, indikisinden öňki arakesme bolsa ikinjiden alynýar. Salgysynda öz bölekleýiş sazlamasy bolan serwer bu bahalara üns bermeýär.</string>
 </resources>

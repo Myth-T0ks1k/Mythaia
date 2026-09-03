@@ -232,4 +232,12 @@
     <string name="vpn_service">VPN Service</string>
     <string name="vpn_channel_description">Notification for the active VPN connection</string>
     <string name="route_preview_format">You → %1$s → Target</string>
+
+    <!-- ClientHello fragmentation -->
+    <string name="fragment_hello">Fragment ClientHello</string>
+    <string name="fragment_hello_enable">Fragment the handshake</string>
+    <string name="fragment_hello_footer">Sends the TLS ClientHello as several records with a pause between them, so a filter that reads the server name off the first packet does not find it there. Servers reassemble it, as the TLS specification requires.</string>
+    <string name="fragment_length">Bytes per record</string>
+    <string name="fragment_interval">Pause (ms)</string>
+    <string name="fragment_range_footer">Each record takes a random size from the first range, and the pause before the next one is drawn from the second. A server whose share link carries its own fragment setting ignores these values.</string>
 </resources>
