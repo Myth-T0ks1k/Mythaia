@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The home-screen widget. RemoteViews only supports a fixed set of views, so
+    this is plain XML rather than Compose, and the whole row is the tap target.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="16dp"
+    android:background="@drawable/widget_background"
+    android:theme="@style/Theme.Mythaia">
+
+    <ImageView
+        android:id="@+id/widget_indicator"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:src="@drawable/ic_stat_wing"
+        android:contentDescription="@string/app_name" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/widget_text" />
+
+        <TextView
+            android:id="@+id/widget_traffic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="12sp"
+            android:textColor="@color/widget_text_muted" />
+    </LinearLayout>
+</LinearLayout>

@@ -58,6 +58,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Home-screen widget: state at a glance, one tap to toggle. -->
+        <receiver
+            android:name=".vpn.MythaiaWidgetProvider"
+            android:label="@string/app_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.mythaia.WIDGET_TOGGLE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_mythaia_info" />
+        </receiver>
+
         <!-- Quick Settings tile: the tunnel on and off from the shade. -->
         <service
             android:name=".vpn.MythaiaTileService"

@@ -225,4 +225,8 @@
     <string name="sort_by_latency">按延迟排序</string>
     <string name="no_matching_proxies">没有匹配的服务器</string>
     <string name="clear">清除</string>
+
+    <!-- Home-screen widget -->
+    <string name="tap_to_connect">点按以连接</string>
+    <string name="widget_description">连接状态，一点即可连接或断开。</string>
 </resources>

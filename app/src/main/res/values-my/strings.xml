@@ -225,4 +225,8 @@
     <string name="sort_by_latency">နှောင့်နှေးချိန်အလိုက် စဉ်ရန်</string>
     <string name="no_matching_proxies">ကိုက်ညီသော ဆာဗာ မရှိပါ</string>
     <string name="clear">ရှင်းရန်</string>
+
+    <!-- Home-screen widget -->
+    <string name="tap_to_connect">ချိတ်ဆက်ရန် တို့ပါ</string>
+    <string name="widget_description">ချိတ်ဆက်မှုအခြေအနေနှင့် ချိတ်ဆက်ရန် သို့မဟုတ် ဖြတ်တောက်ရန် တစ်ချက်တို့ရုံဖြင့်။</string>
 </resources>

@@ -233,7 +233,9 @@ class MythaiaVpnService : VpnService() {
         // Stamped here rather than in the view model so the uptime survives the
         // UI going away and rebinding to a tunnel that never stopped.
         sessionStartedAt = android.os.SystemClock.elapsedRealtime()
+        activeServerName = effectiveConfig.name
         setActive(true)
+        MythaiaWidgetProvider.refresh(this)
 
         // Wire logger sink so logger.info/.warning/.error forward to the
         // user-facing log buffer.
@@ -266,7 +268,9 @@ class MythaiaVpnService : VpnService() {
         val stack = lwipStack
         lwipStack = null
         sessionStartedAt = 0L
+        activeServerName = null
         setActive(false)
+        MythaiaWidgetProvider.refresh(this)
         // Capture the fd now — a subsequent startVpn() assigns a fresh tunFd
         // and the deferred finishStopVpn() must never close that new one.
         val fdToClose = tunFd
@@ -742,6 +746,11 @@ class MythaiaVpnService : VpnService() {
          */
         @Volatile
         var isActive: Boolean = false
+            private set
+
+        /** The server the tunnel is on, for the widget. Null when it is down. */
+        @Volatile
+        var activeServerName: String? = null
             private set
 
         /** Callbacks fired when [isActive] changes, for the tile and widget. */

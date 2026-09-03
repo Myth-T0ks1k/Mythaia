@@ -2,4 +2,16 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!--
+        Widget palette. RemoteViews cannot read the Compose theme, so the Wing
+        tokens are repeated here as plain colours; values-night carries the dark
+        set. azure / slate / paper / ink, matching ui/theme/Color.kt.
+    -->
+    <color name="widget_on">#FF24548F</color>
+    <color name="widget_off">#FF4E5568</color>
+    <color name="widget_text">#FF14213A</color>
+    <color name="widget_text_muted">#FF4E5568</color>
+    <color name="widget_surface">#FFFDFBF6</color>
+    <color name="widget_outline">#1F14213A</color>
 </resources>
