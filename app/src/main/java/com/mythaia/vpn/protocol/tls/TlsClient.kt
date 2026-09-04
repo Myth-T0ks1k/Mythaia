@@ -97,16 +97,22 @@ class TlsClient(private val configuration: TlsConfiguration) {
             throw TlsError.ConnectionFailed(e.message ?: "Unknown error")
         }
 
-        if (pieces.size > 1) {
-            try {
+        // Everything past the TCP connect has to close the socket on its way
+        // out. Callers only take ownership of the TlsClient once connect()
+        // RETURNS, so a throw here leaves a connected channel that nothing can
+        // reach — and it stays registered on the shared selector, which holds
+        // it and its file descriptor strongly for the life of the process.
+        try {
+            if (pieces.size > 1) {
                 sendRemainingHelloPieces(socket, pieces, fragment.intervalRange)
-            } catch (e: Exception) {
-                logger.error("Fragmented ClientHello send failed: ${e.message}")
-                throw TlsError.HandshakeFailed(e.message ?: "Unknown error")
             }
+            return receiveServerResponse()
+        } catch (e: Throwable) {
+            runCatching { socket.forceCancel() }
+            if (e is TlsError) throw e
+            logger.error("TLS handshake failed: ${e.message}")
+            throw TlsError.HandshakeFailed(e.message ?: "Unknown error")
         }
-
-        return receiveServerResponse()
     }
 
     /**

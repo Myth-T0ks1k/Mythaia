@@ -554,7 +554,17 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         this.tunFd = newFd
         this.tunInput = FileInputStream(newFd.fileDescriptor)
         this.tunOutput = FileOutputStream(newFd.fileDescriptor)
-        tunFdSwapped = true
+
+        // Start reading the new fd here rather than waiting for the restart.
+        // The caller closes the old fd immediately, which kills the old reader;
+        // restartStack is throttled to once every two seconds, so coupling the
+        // two left a window with no reader at all — every packet an app sent in
+        // it was dropped.
+        if (running) {
+            startReadingPackets()
+        } else {
+            tunFdSwapped = true
+        }
     }
 
     /**
@@ -680,8 +690,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         NativeBridge.nativeInit()
         startTimeoutTimer()
         startUdpCleanupTimer()
-        // Start new read loop if TUN fd was swapped (old loop died with old fd).
-        // Otherwise existing read loop continues uninterrupted.
+        // Normally swapTunFd has already started the new reader; this covers
+        // the case where the swap arrived while the stack was down.
         if (tunFdSwapped) {
             tunFdSwapped = false
             startReadingPackets()

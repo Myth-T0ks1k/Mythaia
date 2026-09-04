@@ -457,6 +457,22 @@ class MythaiaVpnService : VpnService() {
     @Suppress("DEPRECATION")
     private fun findUnderlyingNetwork(): Network? {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return null
+
+        // The active network first: it is the one traffic actually takes.
+        // Scanning the list and returning whichever came first would pick an
+        // idle interface as readily as the working one.
+        cm.activeNetwork?.let { active ->
+            val caps = cm.getNetworkCapabilities(active)
+            if (caps != null &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            ) {
+                return active
+            }
+        }
+
+        // Falls back to a scan, which is what happens while our own VPN is the
+        // active network.
         for (network in cm.allNetworks) {
             val caps = cm.getNetworkCapabilities(network) ?: continue
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
@@ -604,6 +620,13 @@ class MythaiaVpnService : VpnService() {
         val networkCaps = caps ?: cm.getNetworkCapabilities(network) ?: return
         if (networkCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
         if (!networkCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return
+
+        // The callback fires for every matching network, not only the one
+        // traffic actually uses. With Wi-Fi and cellular both up, acting on the
+        // wrong one would point DnsCache at an interface nothing is routed over
+        // and restart every connection for a change that did not happen.
+        val active = cm.activeNetwork
+        if (active != null && active != network) return
 
         val transports = transportBitmask(networkCaps)
         val previousNetwork = lastUnderlyingNetwork

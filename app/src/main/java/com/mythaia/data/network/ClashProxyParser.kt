@@ -348,11 +348,24 @@ object ClashProxyParser {
 
         if (node.optInt("alterId", 0) != 0) return null
 
+        // Reality is a different handshake, not a variant of TLS. Importing the
+        // node without it would produce an entry that looks fine and can never
+        // connect, so it is skipped and counted as unsupported instead.
+        if (node.optJSONObject("reality-opts") != null) return null
+
         val network = node.optString("network", "tcp")
         val transport = when (network) {
             "ws" -> "ws"
             "tcp" -> "tcp"
             else -> return null
+        }
+
+        // `v2ray-http-upgrade` means the node speaks HTTP Upgrade, not
+        // WebSocket: no frame headers and no masking. Importing it as a
+        // WebSocket would put frame headers on the wire that the server does
+        // not expect.
+        if (node.optJSONObject("ws-opts")?.optBoolean("v2ray-http-upgrade", false) == true) {
+            return null
         }
 
         val useTls = node.optBoolean("tls", false)

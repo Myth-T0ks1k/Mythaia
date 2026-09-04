@@ -926,15 +926,27 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     var encryptedDnsEnabled: Boolean
         get() = prefs.getBoolean("encryptedDnsEnabled", false)
-        set(value) = prefs.edit().putBoolean("encryptedDnsEnabled", value).apply()
+        set(value) {
+            prefs.edit().putBoolean("encryptedDnsEnabled", value).apply()
+            EncryptedDnsPolicy.reload(getApplication())
+        }
 
     var encryptedDnsProtocol: String
         get() = prefs.getString("encryptedDnsProtocol", "doh") ?: "doh"
-        set(value) = prefs.edit().putString("encryptedDnsProtocol", value).apply()
+        set(value) {
+            prefs.edit().putString("encryptedDnsProtocol", value).apply()
+            EncryptedDnsPolicy.reload(getApplication())
+        }
 
     var encryptedDnsServer: String
         get() = prefs.getString("encryptedDnsServer", "") ?: ""
-        set(value) = prefs.edit().putString("encryptedDnsServer", value).apply()
+        set(value) {
+            // Published straight away, like CertificatePolicy and
+            // FragmentPolicy: without this the resolver keeps using the old
+            // setting until the tunnel happens to reload.
+            prefs.edit().putString("encryptedDnsServer", value).apply()
+            EncryptedDnsPolicy.reload(getApplication())
+        }
 
     /**
      * When true, drop UDP/443 traffic with ICMP port-unreachable so HTTP/3 clients

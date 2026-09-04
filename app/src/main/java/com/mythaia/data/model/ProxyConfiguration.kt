@@ -756,6 +756,9 @@ data class ProxyConfiguration(
                 json.put("alpn", alpn.joinToString(","))
             }
             json.put("fp", it.fingerprint.raw)
+            // Without this a shared link silently turns certificate checking
+            // back on, and the server the user could reach stops working.
+            if (it.allowInsecure) json.put("allowInsecure", "true")
         } ?: json.put("tls", "")
 
         val encoded = java.util.Base64.getEncoder()
@@ -1015,7 +1018,16 @@ data class ProxyConfiguration(
             val name: String?
         )
 
-        private fun decomposeUserInfoLink(url: String, scheme: String): UserInfoLink {
+        private fun decomposeUserInfoLink(
+            url: String,
+            scheme: String,
+            /**
+             * Used when the authority carries no port. Hysteria2 and AnyTLS
+             * both default to 443, and a link written without one is common
+             * enough that rejecting it is the wrong answer.
+             */
+            defaultPort: UShort? = null
+        ): UserInfoLink {
             var remaining = url.removePrefix(scheme)
 
             var fragmentName: String? = null
@@ -1044,7 +1056,7 @@ data class ProxyConfiguration(
             val slashIdx = serverPart.indexOf('/')
             if (slashIdx >= 0) serverPart = serverPart.substring(0, slashIdx)
 
-            val (host, port) = parseHostPort(serverPart)
+            val (host, port) = parseHostPort(serverPart, defaultPort)
             return UserInfoLink(
                 password = password,
                 host = host,
@@ -1105,10 +1117,15 @@ data class ProxyConfiguration(
                 ?: json.optString("host").takeIf { it.isNotEmpty() }
                 ?: host
             val alpn = json.optString("alpn").takeIf { it.isNotEmpty() }?.split(",")
+            // v2rayN writes this either way round depending on its version.
+            val allowInsecure = json.optString("allowInsecure").let { it == "true" || it == "1" } ||
+                json.optString("verify_cert").let { it == "false" || it == "0" }
+
             val tls = if (useTls) {
                 TlsConfiguration(
                     serverName = sni,
                     alpn = alpn,
+                    allowInsecure = allowInsecure,
                     fingerprint = TlsFingerprint.fromRaw(
                         json.optString("fp").ifEmpty { "chrome_133" }
                     )
@@ -1167,7 +1184,7 @@ data class ProxyConfiguration(
          * TLS is mandatory; Hysteria2 runs over QUIC and has no plaintext form.
          */
         private fun fromHysteria2Url(url: String, scheme: String): ProxyConfiguration {
-            val link = decomposeUserInfoLink(url, scheme)
+            val link = decomposeUserInfoLink(url, scheme, defaultPort = 443u)
             val params = link.params
 
             val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
@@ -1202,7 +1219,7 @@ data class ProxyConfiguration(
 
         /** `anytls://password@host:port?sni=…&alpn=…&fp=…#name`. TLS is mandatory. */
         private fun fromAnyTlsUrl(url: String): ProxyConfiguration {
-            val link = decomposeUserInfoLink(url, "anytls://")
+            val link = decomposeUserInfoLink(url, "anytls://", defaultPort = 443u)
             val params = link.params
 
             val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
@@ -1496,7 +1513,10 @@ data class ProxyConfiguration(
             return params
         }
 
-        private fun parseHostPort(hostPort: String): Pair<String, UShort> {
+        private fun parseHostPort(
+            hostPort: String,
+            defaultPort: UShort? = null
+        ): Pair<String, UShort> {
             val host: String
             val portString: String
             if (hostPort.startsWith("[")) {
@@ -1504,12 +1524,31 @@ data class ProxyConfiguration(
                 if (closeBracket < 0) throw ProxyError.InvalidUrl("Missing closing bracket for IPv6 address")
                 host = hostPort.substring(1, closeBracket)
                 val afterBracket = hostPort.substring(closeBracket + 1)
+                if (afterBracket.isEmpty()) {
+                    return Pair(
+                        host,
+                        defaultPort ?: throw ProxyError.InvalidUrl("Missing port after IPv6 address")
+                    )
+                }
                 if (!afterBracket.startsWith(":")) throw ProxyError.InvalidUrl("Missing port after IPv6 address")
                 portString = afterBracket.removePrefix(":")
             } else {
                 val colonIndex = hostPort.lastIndexOf(':')
-                if (colonIndex < 0) throw ProxyError.InvalidUrl("Missing port in server address")
+                if (colonIndex < 0) {
+                    return Pair(
+                        hostPort,
+                        defaultPort ?: throw ProxyError.InvalidUrl("Missing port in server address")
+                    )
+                }
                 host = hostPort.substring(0, colonIndex)
+                // An unbracketed IPv6 literal has colons of its own, so this
+                // split would take all but the last group as the host and the
+                // last as a port. RFC 3986 §3.2.2 requires the brackets;
+                // without them the address is not addressable and guessing at
+                // it would connect somewhere else entirely.
+                if (host.contains(':')) {
+                    throw ProxyError.InvalidUrl("IPv6 address must be bracketed: $hostPort")
+                }
                 portString = hostPort.substring(colonIndex + 1)
             }
             val port = portString.toUShortOrNull()

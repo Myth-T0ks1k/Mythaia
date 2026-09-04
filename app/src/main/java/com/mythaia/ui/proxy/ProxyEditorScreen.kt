@@ -323,7 +323,17 @@ fun ProxyEditorScreen(
 
                         val nonVless = isShadowsocks || isNaive || isSocks5 || isTrojan
 
-                        val config = ProxyConfiguration(
+                        // Built from the loaded configuration where there is
+                        // one, so a field this editor does not surface —
+                        // password, the Hysteria2 bandwidth pair, the VMess
+                        // cipher — survives a save instead of being dropped.
+                        val config = (configuration ?: ProxyConfiguration(
+                            name = name,
+                            serverAddress = serverAddress,
+                            serverPort = port,
+                            uuid = parsedUUID,
+                            encryption = encryption
+                        )).copy(
                             id = configuration?.id ?: UUID.randomUUID(),
                             name = name,
                             serverAddress = bareAddress,
