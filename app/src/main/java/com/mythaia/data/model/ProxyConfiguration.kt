@@ -531,7 +531,8 @@ enum class OutboundProtocol(val raw: String) {
     NAIVE_HTTP2("http2"),
     HYSTERIA2("hysteria2"),
     ANYTLS("anytls"),
-    VMESS("vmess");
+    VMESS("vmess"),
+    WIREGUARD("wireguard");
 
     val isNaive: Boolean get() = this == NAIVE_HTTP11 || this == NAIVE_HTTP2
 
@@ -544,6 +545,15 @@ enum class OutboundProtocol(val raw: String) {
      */
     val isImplemented: Boolean get() = this != HYSTERIA2 && this != ANYTLS
 
+    /**
+     * Whether this outbound is a layer-3 interface rather than a stream proxy.
+     *
+     * WireGuard carries whole IP packets, so it replaces the lwIP stack instead
+     * of being dialled per flow. Domain routing rules do not apply to it — its
+     * own AllowedIPs decide what enters the tunnel.
+     */
+    val isLayer3: Boolean get() = this == WIREGUARD
+
     val displayName: String
         get() = when (this) {
             VLESS -> "VLESS"
@@ -555,6 +565,7 @@ enum class OutboundProtocol(val raw: String) {
             HYSTERIA2 -> "Hysteria2"
             ANYTLS -> "AnyTLS"
             VMESS -> "VMess"
+            WIREGUARD -> "WireGuard"
         }
 
     /**
@@ -591,6 +602,7 @@ object OutboundProtocolSerializer : KSerializer<OutboundProtocol> {
             "hysteria2", "hy2" -> OutboundProtocol.HYSTERIA2
             "anytls" -> OutboundProtocol.ANYTLS
             "vmess" -> OutboundProtocol.VMESS
+            "wireguard", "wg", "awg", "amneziawg" -> OutboundProtocol.WIREGUARD
             else -> throw SerializationException("Unknown outbound protocol: $raw")
         }
     }
@@ -652,6 +664,15 @@ data class ProxyConfiguration(
      */
     val vmessSecurity: String? = null,
     val obfuscationPassword: String? = null,
+    /**
+     * The peer's `wg-quick` INI, verbatim, for WireGuard and AmneziaWG.
+     *
+     * Kept as the text the user pasted rather than exploded into fields: it is
+     * the format every peer hands out, it round-trips through export without
+     * losing a key this build does not know yet, and it is what
+     * [com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parse] already reads.
+     */
+    val wireGuardConfig: String? = null,
     val chain: List<ProxyConfiguration>? = null
 ) {
     val connectAddress: String get() = resolvedIP ?: serverAddress
@@ -707,6 +728,9 @@ data class ProxyConfiguration(
         OutboundProtocol.HYSTERIA2 -> toHysteria2Url()
         OutboundProtocol.ANYTLS -> toAnyTlsUrl()
         OutboundProtocol.VMESS -> toVmessUrl()
+        // WireGuard has no share-link scheme; peers hand out the INI itself,
+        // so exporting one gives back exactly what was imported.
+        OutboundProtocol.WIREGUARD -> wireGuardConfig.orEmpty()
     }
 
     /**

@@ -42,6 +42,14 @@ private val logger = MythaiaLogger("PacketTunnel")
 class MythaiaVpnService : VpnService() {
 
     private var lwipStack: LwipStack? = null
+
+    /**
+     * The WireGuard interface, when the active profile is a layer-3 one.
+     *
+     * Exactly one of this and [lwipStack] is ever set: WireGuard carries whole
+     * IP packets, so there is no lwIP stack under it to terminate flows.
+     */
+    private var wireGuardTunnel: com.mythaia.vpn.protocol.wireguard.WireGuardTunnel? = null
     private var tunFd: ParcelFileDescriptor? = null
     private var currentConfig: ProxyConfiguration? = null
 
@@ -170,6 +178,13 @@ class MythaiaVpnService : VpnService() {
         // called while a netif is already registered. We must wait for
         // nativeShutdown() (which calls netif_remove → netif_default = NULL)
         // to complete before calling nativeInit() (which calls netif_add).
+        wireGuardTunnel?.let { old ->
+            wireGuardTunnel = null
+            old.stop()
+            tunFd?.close()
+            tunFd = null
+        }
+
         lwipStack?.let { oldStack ->
             lwipStack = null
             val latch = java.util.concurrent.CountDownLatch(1)
@@ -202,6 +217,11 @@ class MythaiaVpnService : VpnService() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification(effectiveConfig.name))
+        }
+
+        if (effectiveConfig.outboundProtocol.isLayer3) {
+            startWireGuard(effectiveConfig)
+            return
         }
 
         // Build and establish TUN interface
@@ -265,6 +285,9 @@ class MythaiaVpnService : VpnService() {
         SocketProtector.clearProtector()
         DnsCache.setUnderlyingNetwork(null)
 
+        wireGuardTunnel?.stop()
+        wireGuardTunnel = null
+
         val stack = lwipStack
         lwipStack = null
         sessionStartedAt = 0L
@@ -312,6 +335,153 @@ class MythaiaVpnService : VpnService() {
 
     // Bypass routes — IP ranges excluded from VPN tunnel (sent directly)
     private data class BypassRoute(val address: String, val prefixLength: Int)
+
+    /**
+     * Brings up a WireGuard or AmneziaWG interface.
+     *
+     * The TUN is built from the profile's own `[Interface]` and `AllowedIPs`
+     * rather than the app-wide layout: a WireGuard peer states exactly what it
+     * routes, and that list is the split tunnel. No lwIP stack is started —
+     * whole IP packets go straight to the interface.
+     */
+    private fun startWireGuard(config: ProxyConfiguration) {
+        val text = config.wireGuardConfig
+        if (text.isNullOrBlank()) {
+            logger.error("[VPN] ${config.name} has no WireGuard configuration")
+            stopSelf()
+            return
+        }
+
+        val parsed = try {
+            com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parse(text)
+        } catch (e: Exception) {
+            logger.error("[VPN] WireGuard configuration is not usable: ${e.message ?: e}")
+            stopSelf()
+            return
+        }
+
+        val fd = buildWireGuardTun(parsed) ?: run {
+            logger.error("[VPN] Failed to set tunnel settings: Failed to establish TUN interface")
+            stopSelf()
+            return
+        }
+        tunFd = fd
+
+        // The peer socket must sit outside the tunnel, or its own packets would
+        // be routed back into it.
+        SocketProtector.setProtector(
+            fdFn = ::protectSocket,
+            socketFn = { protect(it) },
+            datagramFn = { protect(it) }
+        )
+        findUnderlyingNetwork()?.let { DnsCache.setUnderlyingNetwork(it) }
+        DnsCache.setActiveProxyDomain(parsed.peer.endpointHost)
+
+        MythaiaLogger.logSink = { message, level -> LogBuffer.append(message, level) }
+
+        val tunnel = com.mythaia.vpn.protocol.wireguard.WireGuardTunnel(parsed)
+        tunnel.onFailure = { reason ->
+            logger.error("[VPN] WireGuard: $reason")
+        }
+
+        try {
+            tunnel.start(fd)
+        } catch (e: Exception) {
+            logger.error("[VPN] WireGuard could not start: ${e.message ?: e}")
+            try { fd.close() } catch (_: Exception) {}
+            tunFd = null
+            stopSelf()
+            return
+        }
+
+        wireGuardTunnel = tunnel
+        sessionStartedAt = android.os.SystemClock.elapsedRealtime()
+        activeServerName = config.name
+        setActive(true)
+        MythaiaWidgetProvider.refresh(this)
+
+        startNetworkMonitoring()
+    }
+
+    /**
+     * The TUN for a WireGuard profile.
+     *
+     * Addresses, DNS and MTU come from `[Interface]`; the routes come from the
+     * peer's `AllowedIPs`, which is what a WireGuard config uses to say what
+     * belongs in the tunnel. An entry that Android refuses is skipped rather
+     * than failing `establish()` and taking the whole tunnel down with it.
+     */
+    private fun buildWireGuardTun(
+        config: com.mythaia.vpn.protocol.wireguard.WireGuardConfig
+    ): ParcelFileDescriptor? {
+        val builder = Builder()
+            .setMtu(config.mtu)
+            .setBlocking(true)
+            .setSession("Mythaia VPN")
+
+        var addressCount = 0
+        for (entry in config.addresses) {
+            val (address, prefix) = splitCidr(entry) ?: continue
+            try {
+                builder.addAddress(address, prefix)
+                addressCount++
+            } catch (e: Exception) {
+                logger.warning("[VPN] WireGuard address $entry refused: ${e.message ?: e}")
+            }
+        }
+        if (addressCount == 0) {
+            logger.error("[VPN] WireGuard configuration has no usable [Interface] Address")
+            return null
+        }
+
+        var routeCount = 0
+        for (entry in config.peer.allowedIps) {
+            val (address, prefix) = splitCidr(entry) ?: continue
+            try {
+                builder.addRoute(address, prefix)
+                routeCount++
+            } catch (e: Exception) {
+                logger.warning("[VPN] WireGuard route $entry refused: ${e.message ?: e}")
+            }
+        }
+        if (routeCount == 0) {
+            logger.error("[VPN] WireGuard configuration has no usable AllowedIPs")
+            return null
+        }
+
+        for (server in config.dnsServers) {
+            try {
+                builder.addDnsServer(server)
+            } catch (e: Exception) {
+                logger.warning("[VPN] WireGuard DNS $server refused: ${e.message ?: e}")
+            }
+        }
+
+        applySplitTunnel(builder, getSharedPreferences("mythaia_settings", Context.MODE_PRIVATE))
+
+        return try {
+            builder.establish()
+        } catch (e: Exception) {
+            logger.error("[VPN] Failed to set tunnel settings: ${e.message ?: e}")
+            null
+        }
+    }
+
+    /** `10.0.0.2/32` or a bare address, which is taken as a host route. */
+    private fun splitCidr(entry: String): Pair<String, Int>? {
+        val text = entry.trim()
+        if (text.isEmpty()) return null
+        val slash = text.lastIndexOf('/')
+        if (slash < 0) {
+            return text to if (text.contains(':')) 128 else 32
+        }
+        val address = text.substring(0, slash)
+        val prefix = text.substring(slash + 1).toIntOrNull() ?: return null
+        if (address.isEmpty()) return null
+        val limit = if (address.contains(':')) 128 else 32
+        if (prefix !in 0..limit) return null
+        return address to prefix
+    }
 
     private fun buildTunInterface(config: ProxyConfiguration): ParcelFileDescriptor? {
         val prefs = getSharedPreferences("mythaia_settings", Context.MODE_PRIVATE)
@@ -721,6 +891,7 @@ class MythaiaVpnService : VpnService() {
 
     /** Returns current traffic statistics (bytes in/out). */
     fun getStats(): Pair<Long, Long> {
+        wireGuardTunnel?.let { return it.bytesIn to it.bytesOut }
         val stack = lwipStack ?: return 0L to 0L
         return stack.totalBytesIn.get() to stack.totalBytesOut.get()
     }
@@ -731,7 +902,7 @@ class MythaiaVpnService : VpnService() {
     }
 
     /** Returns whether the VPN is currently running. */
-    val isRunning: Boolean get() = lwipStack != null
+    val isRunning: Boolean get() = lwipStack != null || wireGuardTunnel != null
 
     /**
      * When the current session started, on the monotonic clock, or 0 when there

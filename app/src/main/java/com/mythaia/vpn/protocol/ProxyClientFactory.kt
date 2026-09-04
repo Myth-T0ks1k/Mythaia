@@ -34,6 +34,12 @@ object ProxyClientFactory {
             OutboundProtocol.HYSTERIA2, OutboundProtocol.ANYTLS -> throw ProxyError.ProtocolError(
                 "${config.outboundProtocol.displayName} is not supported yet"
             )
+            // WireGuard is a layer-3 interface, not a stream proxy: it carries
+            // whole IP packets and runs instead of the lwIP stack, so nothing
+            // should ever reach the per-flow dial path with it.
+            OutboundProtocol.WIREGUARD -> throw ProxyError.ProtocolError(
+                "WireGuard carries IP packets and cannot be dialled per flow"
+            )
         }
     }
 
@@ -55,6 +61,9 @@ object ProxyClientFactory {
             OutboundProtocol.TROJAN -> TrojanClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.SOCKS5 -> SocksClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.VMESS -> VmessClient(config, tunnel).connectUDP(host, port)
+            OutboundProtocol.WIREGUARD -> throw ProxyError.ProtocolError(
+                "WireGuard carries IP packets and cannot be dialled per flow"
+            )
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> throw ProxyError.Dropped()
             OutboundProtocol.SHADOWSOCKS -> throw ProxyError.ProtocolError(
                 "UDP not supported through TCP factory for Shadowsocks"

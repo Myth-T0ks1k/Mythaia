@@ -158,6 +158,93 @@ object WireGuardCrypto {
         null
     }
 
+    /**
+     * ChaCha20-Poly1305 with the nonce given outright.
+     *
+     * The handshake's own AEAD numbers its nonces from a counter, but the
+     * cookie reply carries a random one, so that path needs this form.
+     */
+    fun openWithNonce(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, aad: ByteArray): ByteArray? = try {
+        val cipher = ChaCha20Poly1305()
+        cipher.init(false, AEADParameters(KeyParameter(key), TAG_SIZE * 8, nonce, aad))
+        val out = ByteArray(cipher.getOutputSize(ciphertext.size))
+        var written = cipher.processBytes(ciphertext, 0, ciphertext.size, out, 0)
+        written += cipher.doFinal(out, written)
+        if (written == out.size) out else out.copyOf(written)
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * XChaCha20-Poly1305, which is what a cookie reply is sealed with.
+     *
+     * The 24-byte nonce is split: the first 16 bytes derive a subkey through
+     * HChaCha20, and the last 8 become the low half of an ordinary 12-byte
+     * ChaCha20-Poly1305 nonce. Null when the tag does not verify.
+     */
+    fun xopen(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, aad: ByteArray): ByteArray? {
+        if (key.size != KEY_SIZE || nonce.size != 24) return null
+        val subkey = hchacha20(key, nonce.copyOf(16))
+        val inner = ByteArray(12)
+        nonce.copyInto(inner, 4, 16, 24)
+        return openWithNonce(subkey, inner, ciphertext, aad)
+    }
+
+    /**
+     * HChaCha20: the ChaCha20 core run once over a 16-byte nonce, keeping the
+     * first and last four words. It is a PRF, not a cipher — there is no
+     * feed-forward addition at the end, which is what makes the output usable
+     * as a key.
+     */
+    fun hchacha20(key: ByteArray, nonce: ByteArray): ByteArray {
+        if (key.size != KEY_SIZE || nonce.size != 16) {
+            throw WireGuardError("HChaCha20 takes a 32-byte key and a 16-byte nonce")
+        }
+        val state = IntArray(16)
+        state[0] = 0x61707865
+        state[1] = 0x3320646e
+        state[2] = 0x79622d32
+        state[3] = 0x6b206574
+        for (i in 0 until 8) state[4 + i] = le32(key, i * 4)
+        for (i in 0 until 4) state[12 + i] = le32(nonce, i * 4)
+
+        repeat(10) {
+            quarterRound(state, 0, 4, 8, 12)
+            quarterRound(state, 1, 5, 9, 13)
+            quarterRound(state, 2, 6, 10, 14)
+            quarterRound(state, 3, 7, 11, 15)
+            quarterRound(state, 0, 5, 10, 15)
+            quarterRound(state, 1, 6, 11, 12)
+            quarterRound(state, 2, 7, 8, 13)
+            quarterRound(state, 3, 4, 9, 14)
+        }
+
+        val out = ByteArray(32)
+        for (i in 0 until 4) putLe32(out, i * 4, state[i])
+        for (i in 0 until 4) putLe32(out, 16 + i * 4, state[12 + i])
+        return out
+    }
+
+    private fun quarterRound(s: IntArray, a: Int, b: Int, c: Int, d: Int) {
+        s[a] += s[b]; s[d] = Integer.rotateLeft(s[d] xor s[a], 16)
+        s[c] += s[d]; s[b] = Integer.rotateLeft(s[b] xor s[c], 12)
+        s[a] += s[b]; s[d] = Integer.rotateLeft(s[d] xor s[a], 8)
+        s[c] += s[d]; s[b] = Integer.rotateLeft(s[b] xor s[c], 7)
+    }
+
+    private fun le32(bytes: ByteArray, at: Int): Int =
+        (bytes[at].toInt() and 0xFF) or
+            ((bytes[at + 1].toInt() and 0xFF) shl 8) or
+            ((bytes[at + 2].toInt() and 0xFF) shl 16) or
+            ((bytes[at + 3].toInt() and 0xFF) shl 24)
+
+    private fun putLe32(out: ByteArray, at: Int, value: Int) {
+        out[at] = (value and 0xFF).toByte()
+        out[at + 1] = ((value ushr 8) and 0xFF).toByte()
+        out[at + 2] = ((value ushr 16) and 0xFF).toByte()
+        out[at + 3] = ((value ushr 24) and 0xFF).toByte()
+    }
+
     // MARK: - Timestamp
 
     /**
