@@ -5,9 +5,14 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * The data phase: one IP packet per message, each with its own counter.
  *
- * Layout is type(1) ‖ reserved(3) ‖ receiver index(4, LE) ‖ counter(8, LE) ‖
- * sealed packet. The counter is the AEAD nonce, so it must never repeat under
- * one key — which is what the rekey limits below are about.
+ * Layout is type(4, LE) ‖ receiver index(4, LE) ‖ counter(8, LE) ‖ sealed
+ * packet. The counter is the AEAD nonce, so it must never repeat under one
+ * key — which is what the rekey limits below are about.
+ *
+ * The paper writes the first field as type(1) ‖ reserved(3), which is the same
+ * four bytes: type 4 little-endian is `04 00 00 00`. AmneziaWG replaces the
+ * whole word with H4, a value normally well above 255, so it has to be read
+ * and written as one 32-bit field rather than a byte.
  */
 class WireGuardTransport(
     private val sendKey: ByteArray,
@@ -15,7 +20,7 @@ class WireGuardTransport(
     private val peerIndex: Int,
     private val localIndex: Int,
     /** AmneziaWG renumbers the message types; plain WireGuard leaves them. */
-    private val transportType: Byte = WireGuardHandshake.MESSAGE_TRANSPORT
+    private val transportType: Int = WireGuardHandshake.MESSAGE_TRANSPORT
 ) {
 
     private val sendCounter = AtomicLong(0)
@@ -55,7 +60,7 @@ class WireGuardTransport(
         val sealed = WireGuardCrypto.seal(sendKey, counter, padded, ByteArray(0))
 
         val out = ByteArray(HEADER_SIZE + sealed.size)
-        out[0] = transportType
+        WireGuardHandshake.writeLe32(out, 0, transportType)
         WireGuardHandshake.writeLe32(out, 4, peerIndex)
         WireGuardHandshake.writeLe64(out, 8, counter)
         sealed.copyInto(out, HEADER_SIZE)
@@ -74,7 +79,7 @@ class WireGuardTransport(
      */
     fun decapsulate(message: ByteArray): ByteArray? {
         if (message.size < HEADER_SIZE + WireGuardCrypto.TAG_SIZE) return null
-        if (message[0] != transportType) return null
+        if (WireGuardHandshake.readLe32(message, 0) != transportType) return null
         if (WireGuardHandshake.readLe32(message, 4) != localIndex) return null
 
         val counter = WireGuardHandshake.readLe64(message, 8)

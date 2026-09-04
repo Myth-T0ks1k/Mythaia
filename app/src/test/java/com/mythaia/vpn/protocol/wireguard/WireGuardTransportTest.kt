@@ -38,7 +38,7 @@ class WireGuardTransportTest {
     fun `a message carries the peer index and the counter little-endian`() {
         val message = client().encapsulate("packet".toByteArray())
 
-        assertEquals(WireGuardHandshake.MESSAGE_TRANSPORT, message[0])
+        assertEquals(WireGuardHandshake.MESSAGE_TRANSPORT, WireGuardHandshake.readLe32(message, 0))
         assertEquals(0.toByte(), message[1])
         assertEquals(0.toByte(), message[2])
         assertEquals(0.toByte(), message[3])
@@ -110,7 +110,8 @@ class WireGuardTransportTest {
         assertNull(server().decapsulate(misaddressed))
 
         // Not a transport message.
-        val wrongType = message.copyOf().also { it[0] = WireGuardHandshake.MESSAGE_INITIATION }
+        val wrongType = message.copyOf()
+            .also { WireGuardHandshake.writeLe32(it, 0, WireGuardHandshake.MESSAGE_INITIATION) }
         assertNull(server().decapsulate(wrongType))
     }
 
@@ -233,17 +234,46 @@ class WireGuardTransportTest {
     @Test
     fun `a renumbered transport type is used on both sides`() {
         // AmneziaWG replaces the four message types so a filter matching on
-        // WireGuard's constants sees nothing it recognises.
-        val type: Byte = 0x57
+        // WireGuard's constants sees nothing it recognises. H4 is required to
+        // exceed 4 and is generated up to 2^31, so it does not fit in a byte.
+        val type = 0x70609579
         val client = WireGuardTransport(keyA, keyB, indexServer, indexClient, transportType = type)
         val server = WireGuardTransport(keyB, keyA, indexClient, indexServer, transportType = type)
 
         val message = client.encapsulate("x".toByteArray())
-        assertEquals(type, message[0])
         assertNotNull(server.decapsulate(message))
+
+        // Asserted against the bytes a peer reads, not against our own writer:
+        // a round trip alone passes just as happily when both sides truncate.
+        assertEquals(0x79.toByte(), message[0])
+        assertEquals(0x95.toByte(), message[1])
+        assertEquals(0x60.toByte(), message[2])
+        assertEquals(0x70.toByte(), message[3])
 
         // A peer still expecting the standard type does not read it.
         val standard = WireGuardTransport(keyB, keyA, indexClient, indexServer)
         assertNull(standard.decapsulate(message))
+    }
+
+    @Test
+    fun `two headers sharing a low byte are told apart`() {
+        // The whole 32-bit word is the type. Comparing only its low byte would
+        // let one AmneziaWG peer's traffic be accepted as another's.
+        val ours = 0x11223344
+        val theirs = 0x55667744
+
+        val client = WireGuardTransport(keyA, keyB, indexServer, indexClient, transportType = theirs)
+        val server = WireGuardTransport(keyB, keyA, indexClient, indexServer, transportType = ours)
+
+        assertNull(server.decapsulate(client.encapsulate("x".toByteArray())))
+    }
+
+    @Test
+    fun `plain WireGuard still writes type 4 with three zero bytes`() {
+        val message = client().encapsulate("x".toByteArray())
+        assertEquals(4.toByte(), message[0])
+        assertEquals(0.toByte(), message[1])
+        assertEquals(0.toByte(), message[2])
+        assertEquals(0.toByte(), message[3])
     }
 }

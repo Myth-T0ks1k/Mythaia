@@ -49,8 +49,14 @@ data class AmneziaSettings(
         return low + random.nextInt(high - low + 1)
     }
 
-    /** The transport message type this peer uses, as a byte. */
-    val transportType: Byte get() = (transportPacketMagicHeader and 0xFF).toByte()
+    // The message type is a 32-bit field on the wire. H1-H4 are required to be
+    // distinct and greater than 4, so they are normally well past a byte —
+    // truncating one would put three zero octets on the wire and every packet
+    // would be dropped by the peer.
+    val initiationType: Int get() = initPacketMagicHeader.toInt()
+    val responseType: Int get() = responsePacketMagicHeader.toInt()
+    val cookieType: Int get() = underloadPacketMagicHeader.toInt()
+    val transportType: Int get() = transportPacketMagicHeader.toInt()
 }
 
 /**
@@ -138,8 +144,12 @@ data class WireGuardConfig(
          */
         fun parse(text: String): WireGuardConfig {
             var section = ""
-            val interfaceValues = HashMap<String, String>()
-            val peerValues = HashMap<String, String>()
+            // Address, DNS and AllowedIPs may each be written over several
+            // lines, and wg-quick takes the union. Every key accumulates;
+            // single-valued ones are read back with `last`, so a repeated
+            // PrivateKey or Endpoint still means the last one wins.
+            val interfaceValues = HashMap<String, MutableList<String>>()
+            val peerValues = HashMap<String, MutableList<String>>()
             var seenPeer = false
 
             for (rawLine in text.lines()) {
@@ -165,54 +175,58 @@ data class WireGuardConfig(
                 if (key.isEmpty()) continue
 
                 when (section) {
-                    "interface" -> interfaceValues[key] = value
-                    "peer" -> peerValues[key] = value
+                    "interface" -> interfaceValues.getOrPut(key) { mutableListOf() }.add(value)
+                    "peer" -> peerValues.getOrPut(key) { mutableListOf() }.add(value)
                     else -> Unit
                 }
             }
 
-            val privateKey = interfaceValues["privatekey"]?.let { WireGuardCrypto.decodeKey(it) }
+            fun one(values: Map<String, MutableList<String>>, key: String): String? =
+                values[key]?.lastOrNull()
+
+            val privateKey = one(interfaceValues, "privatekey")?.let { WireGuardCrypto.decodeKey(it) }
                 ?: throw WireGuardError("[Interface] PrivateKey is missing or not a 32-byte key")
 
             if (!seenPeer) throw WireGuardError("no [Peer] section")
 
-            val peerPublicKey = peerValues["publickey"]?.let { WireGuardCrypto.decodeKey(it) }
+            val peerPublicKey = one(peerValues, "publickey")?.let { WireGuardCrypto.decodeKey(it) }
                 ?: throw WireGuardError("[Peer] PublicKey is missing or not a 32-byte key")
 
-            val endpoint = peerValues["endpoint"]
+            val endpoint = one(peerValues, "endpoint")
                 ?: throw WireGuardError("[Peer] Endpoint is missing")
             val (host, port) = splitEndpoint(endpoint)
 
-            val presharedKey = peerValues["presharedkey"]?.let {
+            val presharedKey = one(peerValues, "presharedkey")?.let {
                 WireGuardCrypto.decodeKey(it)
                     ?: throw WireGuardError("[Peer] PresharedKey is not a 32-byte key")
             }
 
             return WireGuardConfig(
                 privateKey = privateKey,
-                addresses = splitList(interfaceValues["address"]),
-                dnsServers = splitList(interfaceValues["dns"]),
-                mtu = interfaceValues["mtu"]?.toIntOrNull()?.takeIf { it in 576..9000 } ?: DEFAULT_MTU,
+                addresses = splitAll(interfaceValues["address"]),
+                dnsServers = splitAll(interfaceValues["dns"]),
+                mtu = one(interfaceValues, "mtu")?.toIntOrNull()?.takeIf { it in 576..9000 }
+                    ?: DEFAULT_MTU,
                 peer = WireGuardPeer(
                     publicKey = peerPublicKey,
                     presharedKey = presharedKey,
                     endpointHost = host,
                     endpointPort = port,
-                    allowedIps = splitList(peerValues["allowedips"])
+                    allowedIps = splitAll(peerValues["allowedips"])
                         .ifEmpty { listOf("0.0.0.0/0", "::/0") },
-                    persistentKeepalive = peerValues["persistentkeepalive"]?.toIntOrNull()
+                    persistentKeepalive = one(peerValues, "persistentkeepalive")?.toIntOrNull()
                         ?.takeIf { it in 0..65535 } ?: 0
                 ),
                 amnezia = parseAmnezia(interfaceValues)
             )
         }
 
-        private fun parseAmnezia(values: Map<String, String>): AmneziaSettings {
+        private fun parseAmnezia(values: Map<String, MutableList<String>>): AmneziaSettings {
             fun int(key: String, fallback: Int) =
-                values[key]?.toIntOrNull()?.takeIf { it >= 0 } ?: fallback
+                values[key]?.lastOrNull()?.toIntOrNull()?.takeIf { it >= 0 } ?: fallback
 
             fun long(key: String, fallback: Long) =
-                values[key]?.toLongOrNull()?.takeIf { it in 0..0xFFFFFFFFL } ?: fallback
+                values[key]?.lastOrNull()?.toLongOrNull()?.takeIf { it in 0..0xFFFFFFFFL } ?: fallback
 
             return AmneziaSettings(
                 junkPacketCount = int("jc", 0),
@@ -259,7 +273,15 @@ data class WireGuardConfig(
             return host to port
         }
 
-        private fun splitList(value: String?): List<String> =
-            value?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        /**
+         * Every comma-separated entry across every occurrence of the key, in
+         * the order written, without duplicates.
+         */
+        private fun splitAll(values: List<String>?): List<String> =
+            values.orEmpty()
+                .flatMap { it.split(",") }
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
     }
 }

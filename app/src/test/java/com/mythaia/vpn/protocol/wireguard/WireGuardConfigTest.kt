@@ -222,7 +222,52 @@ class WireGuardConfigTest {
         assertEquals(30, a.responsePacketJunkSize)
         assertEquals(1234567L, a.initPacketMagicHeader)
         assertEquals(4433221L, a.transportPacketMagicHeader)
-        assertEquals((4433221L and 0xFF).toByte(), a.transportType)
+        // The full 32-bit value reaches the wire, not just its low byte.
+        assertEquals(4433221, a.transportType)
+        assertEquals(1234567, a.initiationType)
+    }
+
+    @Test
+    fun `a key written twice keeps both values`() {
+        // wg-quick takes the union of repeated Address, DNS and AllowedIPs
+        // lines. Dropping the first would send that whole family in the clear.
+        val parsed = WireGuardConfig.parse(
+            """
+            [Interface]
+            PrivateKey = $privateKey
+            Address = 10.0.0.2/32
+            Address = fd00::2/128
+            DNS = 1.1.1.1
+            DNS = 8.8.8.8
+
+            [Peer]
+            PublicKey = $peerKey
+            Endpoint = example.com:51820
+            AllowedIPs = 0.0.0.0/0
+            AllowedIPs = ::/0
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("10.0.0.2/32", "fd00::2/128"), parsed.addresses)
+        assertEquals(listOf("1.1.1.1", "8.8.8.8"), parsed.dnsServers)
+        assertEquals(listOf("0.0.0.0/0", "::/0"), parsed.peer.allowedIps)
+    }
+
+    @Test
+    fun `a repeated single-valued key takes the last one`() {
+        val parsed = WireGuardConfig.parse(
+            """
+            [Interface]
+            PrivateKey = $privateKey
+            MTU = 1280
+            MTU = 1420
+
+            [Peer]
+            PublicKey = $peerKey
+            Endpoint = example.com:51820
+            """.trimIndent()
+        )
+        assertEquals(1420, parsed.mtu)
     }
 
     @Test

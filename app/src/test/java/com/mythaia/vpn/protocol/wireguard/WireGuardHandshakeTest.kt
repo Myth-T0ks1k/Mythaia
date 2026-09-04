@@ -46,7 +46,10 @@ class WireGuardHandshakeTest {
         presharedKey: ByteArray = ByteArray(32)
     ): ResponderResult {
         assertEquals(WireGuardHandshake.INITIATION_SIZE, initiation.size)
-        assertEquals(WireGuardHandshake.MESSAGE_INITIATION, initiation[0])
+        assertEquals(
+            WireGuardHandshake.MESSAGE_INITIATION,
+            WireGuardHandshake.readLe32(initiation, 0)
+        )
 
         val senderIndex = WireGuardHandshake.readLe32(initiation, 4)
         val initiatorEphemeral = initiation.copyOfRange(8, 40)
@@ -93,8 +96,7 @@ class WireGuardHandshakeTest {
         val responderIndex = 0x11223344
         val body = ByteArray(4 + 4 + 4 + 32 + 16)
         var at = 0
-        body[at++] = WireGuardHandshake.MESSAGE_RESPONSE
-        body[at++] = 0; body[at++] = 0; body[at++] = 0
+        WireGuardHandshake.writeLe32(body, at, WireGuardHandshake.MESSAGE_RESPONSE); at += 4
         WireGuardHandshake.writeLe32(body, at, responderIndex); at += 4
         WireGuardHandshake.writeLe32(body, at, senderIndex); at += 4
         ePub.copyInto(body, at); at += 32
@@ -129,7 +131,7 @@ class WireGuardHandshakeTest {
         val message = handshake.buildInitiation(index = 0x01020304)
 
         assertEquals(WireGuardHandshake.INITIATION_SIZE, message.size)
-        assertEquals(WireGuardHandshake.MESSAGE_INITIATION, message[0])
+        assertEquals(WireGuardHandshake.MESSAGE_INITIATION, WireGuardHandshake.readLe32(message, 0))
         // Three reserved zero bytes, which some deployments do inspect.
         assertEquals(0.toByte(), message[1])
         assertEquals(0.toByte(), message[2])
@@ -276,7 +278,7 @@ class WireGuardHandshakeTest {
             ByteArray(0),
             good.copyOfRange(0, WireGuardHandshake.RESPONSE_SIZE - 1),
             good + byteArrayOf(0),
-            good.copyOf().also { it[0] = WireGuardHandshake.MESSAGE_INITIATION },
+            good.copyOf().also { WireGuardHandshake.writeLe32(it, 0, WireGuardHandshake.MESSAGE_INITIATION) },
             // Echoes somebody else's index.
             good.copyOf().also { WireGuardHandshake.writeLe32(it, 8, 99) },
             // Tampered ephemeral.
@@ -291,6 +293,80 @@ class WireGuardHandshakeTest {
                 // expected
             }
         }
+    }
+
+    // MARK: - AmneziaWG wire tweaks
+
+    @Test
+    fun `H1 replaces the whole initiation type word`() {
+        val (clientPrivate, clientPublic) = WireGuardCrypto.generateKeyPair()
+        val (_, serverPublic) = WireGuardCrypto.generateKeyPair()
+
+        val h1 = 0x1A2B3C4D
+        val handshake = WireGuardHandshake(
+            clientPrivate, clientPublic, serverPublic, initiationType = h1
+        )
+        val message = handshake.buildInitiation(index = 7)
+
+        assertEquals(WireGuardHandshake.INITIATION_SIZE, message.size)
+        assertEquals(0x4D.toByte(), message[0])
+        assertEquals(0x3C.toByte(), message[1])
+        assertEquals(0x2B.toByte(), message[2])
+        assertEquals(0x1A.toByte(), message[3])
+    }
+
+    @Test
+    fun `plain WireGuard writes type 1 with three zero bytes`() {
+        val (clientPrivate, clientPublic) = WireGuardCrypto.generateKeyPair()
+        val (_, serverPublic) = WireGuardCrypto.generateKeyPair()
+
+        val message = WireGuardHandshake(clientPrivate, clientPublic, serverPublic)
+            .buildInitiation(index = 7)
+        assertEquals(1.toByte(), message[0])
+        assertEquals(0.toByte(), message[1])
+        assertEquals(0.toByte(), message[2])
+        assertEquals(0.toByte(), message[3])
+    }
+
+    @Test
+    fun `S1 prepends junk without disturbing the message behind it`() {
+        val (clientPrivate, clientPublic) = WireGuardCrypto.generateKeyPair()
+        val (_, serverPublic) = WireGuardCrypto.generateKeyPair()
+
+        val junkSize = 15
+        val plain = WireGuardHandshake(clientPrivate, clientPublic, serverPublic)
+            .buildInitiation(index = 7)
+        val junked = WireGuardHandshake(
+            clientPrivate, clientPublic, serverPublic, initiationJunkSize = junkSize
+        ).buildInitiation(index = 7)
+
+        assertEquals(WireGuardHandshake.INITIATION_SIZE + junkSize, junked.size)
+        // The type word starts after the junk, not at offset 0.
+        assertEquals(1, WireGuardHandshake.readLe32(junked, junkSize))
+        // Index is echoed in the same place relative to the message start.
+        assertEquals(
+            WireGuardHandshake.readLe32(plain, 4),
+            WireGuardHandshake.readLe32(junked, junkSize + 4)
+        )
+    }
+
+    @Test
+    fun `S2 junk is stripped from the response before it is parsed`() {
+        val (clientPrivate, clientPublic) = WireGuardCrypto.generateKeyPair()
+        val (serverPrivate, serverPublic) = WireGuardCrypto.generateKeyPair()
+
+        val junkSize = 30
+        val client = WireGuardHandshake(
+            clientPrivate, clientPublic, serverPublic, responseJunkSize = junkSize
+        )
+        val initiation = client.buildInitiation(index = 7)
+        val responder = respond(initiation, serverPrivate, serverPublic)
+
+        val keys = client.consumeResponse(
+            WireGuardCrypto.randomBytes(junkSize) + responder.response
+        )
+        assertEquals(7, keys.localIndex)
+        assertTrue(keys.sendKey.contentEquals(responder.receiveKey))
     }
 
     @Test

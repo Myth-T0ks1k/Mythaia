@@ -13,7 +13,16 @@ class WireGuardHandshake(
     private val localPublicKey: ByteArray,
     private val peerPublicKey: ByteArray,
     /** Optional pre-shared key, mixed in at the end. All zeroes when unused. */
-    private val presharedKey: ByteArray = ByteArray(WireGuardCrypto.KEY_SIZE)
+    private val presharedKey: ByteArray = ByteArray(WireGuardCrypto.KEY_SIZE),
+    /**
+     * AmneziaWG's wire tweaks: renumbered message types (H1, H2) and random
+     * bytes prepended to each handshake message (S1, S2). The defaults are
+     * plain WireGuard, which is AmneziaWG with every knob at its identity.
+     */
+    private val initiationType: Int = MESSAGE_INITIATION,
+    private val responseType: Int = MESSAGE_RESPONSE,
+    private val initiationJunkSize: Int = 0,
+    private val responseJunkSize: Int = 0
 ) {
 
     /** What a completed handshake yields. */
@@ -75,14 +84,15 @@ class WireGuardHandshake(
 
         val body = ByteArray(4 + 4 + 32 + 48 + 28)
         var at = 0
-        body[at++] = MESSAGE_INITIATION
-        body[at++] = 0; body[at++] = 0; body[at++] = 0          // reserved
+        writeLe32(body, at, initiationType); at += 4
         writeLe32(body, at, index); at += 4
         ephemeralPublic.copyInto(body, at); at += 32
         encryptedStatic.copyInto(body, at); at += 48
         encryptedTimestamp.copyInto(body, at); at += 28
 
-        return body + macs(body)
+        // The MACs cover the message only. S1's junk is prepended afterwards,
+        // so it is outside both the MAC and the peer's length check.
+        return junk(initiationJunkSize) + body + macs(body)
     }
 
     /**
@@ -92,12 +102,25 @@ class WireGuardHandshake(
      *         the initiation this instance sent. A wrong key looks the same as
      *         a tampered packet, and both are refused rather than guessed at.
      */
-    fun consumeResponse(message: ByteArray): Keys {
+    fun consumeResponse(response: ByteArray): Keys {
+        // S2 prepends random bytes to the response; drop them before parsing.
+        // Only a response of exactly the junked length is trimmed, so a peer
+        // that turns out not to be sending junk still reports a size mismatch
+        // rather than being silently misparsed.
+        val message = if (responseJunkSize > 0 &&
+            response.size == RESPONSE_SIZE + responseJunkSize
+        ) {
+            response.copyOfRange(responseJunkSize, response.size)
+        } else {
+            response
+        }
+
         if (message.size != RESPONSE_SIZE) {
             throw WireGuardError("response is ${message.size} bytes, expected $RESPONSE_SIZE")
         }
-        if (message[0] != MESSAGE_RESPONSE) {
-            throw WireGuardError("message type ${message[0]} is not a handshake response")
+        val type = readLe32(message, 0)
+        if (type != responseType) {
+            throw WireGuardError("message type $type is not a handshake response")
         }
 
         val peerIndex = readLe32(message, 4)
@@ -158,14 +181,21 @@ class WireGuardHandshake(
         return mac1 + mac2
     }
 
+    /** `size` random bytes, or nothing when no junk was configured. */
+    private fun junk(size: Int): ByteArray =
+        if (size > 0) WireGuardCrypto.randomBytes(size) else ByteArray(0)
+
     /** The most recent cookie from the peer, if it has challenged us. */
     var cookie: ByteArray? = null
 
     companion object {
-        const val MESSAGE_INITIATION: Byte = 1
-        const val MESSAGE_RESPONSE: Byte = 2
-        const val MESSAGE_COOKIE: Byte = 3
-        const val MESSAGE_TRANSPORT: Byte = 4
+        // The type field is a 32-bit little-endian word. The paper writes it
+        // as type(1) followed by three reserved zero bytes, which is the same
+        // encoding for these four values; AmneziaWG replaces the whole word.
+        const val MESSAGE_INITIATION: Int = 1
+        const val MESSAGE_RESPONSE: Int = 2
+        const val MESSAGE_COOKIE: Int = 3
+        const val MESSAGE_TRANSPORT: Int = 4
 
         const val INITIATION_SIZE = 148
         const val RESPONSE_SIZE = 92
