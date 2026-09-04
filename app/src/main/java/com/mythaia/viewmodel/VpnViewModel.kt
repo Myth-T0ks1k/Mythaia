@@ -15,6 +15,7 @@ import com.mythaia.data.model.FragmentSettings
 import com.mythaia.data.model.ProxyChain
 import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.data.model.Subscription
+import com.mythaia.data.model.ThemeMode
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.network.LatencyResult
 import com.mythaia.data.network.LatencyTester
@@ -108,6 +109,45 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _chainLatencyResults = MutableStateFlow<Map<UUID, LatencyResult>>(emptyMap())
     val chainLatencyResults: StateFlow<Map<UUID, LatencyResult>> = _chainLatencyResults.asStateFlow()
+
+    /**
+     * Which palette to draw in.
+     *
+     * A flow rather than a plain preference read: the activity collects it, so
+     * choosing a mode repaints immediately instead of at the next launch.
+     */
+    private val _themeMode = MutableStateFlow(
+        ThemeMode.fromRaw(prefs.getString(ThemeMode.KEY, null))
+    )
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    fun setThemeMode(mode: ThemeMode) {
+        if (_themeMode.value == mode) return
+        prefs.edit().putString(ThemeMode.KEY, mode.raw).apply()
+        _themeMode.value = mode
+        applySystemNightMode(mode)
+    }
+
+    /**
+     * Tells the platform too, so the system bars, the recents card and the
+     * splash follow the choice — Compose alone only repaints its own tree.
+     * Only available from API 31; below that the app's own surfaces still
+     * follow the setting and the chrome follows the device.
+     */
+    private fun applySystemNightMode(mode: ThemeMode) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
+        val manager = getApplication<Application>()
+            .getSystemService(android.app.UiModeManager::class.java) ?: return
+        runCatching {
+            manager.setApplicationNightMode(
+                when (mode) {
+                    ThemeMode.SYSTEM -> android.app.UiModeManager.MODE_NIGHT_AUTO
+                    ThemeMode.LIGHT -> android.app.UiModeManager.MODE_NIGHT_NO
+                    ThemeMode.DARK -> android.app.UiModeManager.MODE_NIGHT_YES
+                }
+            )
+        }
+    }
 
     var onRequestVpnPermission: ((Intent) -> Unit)? = null
 

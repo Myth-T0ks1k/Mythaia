@@ -69,6 +69,15 @@ import com.mythaia.R
 import com.mythaia.data.rules.CountryBypassCatalog
 import com.mythaia.ui.components.wingTextFieldColors
 import com.mythaia.ui.components.countryDisplayName
+import com.mythaia.data.model.ThemeMode
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.foundation.layout.width
 import com.mythaia.viewmodel.VpnViewModel
 import java.util.Locale
 
@@ -85,6 +94,7 @@ fun SettingsScreen(viewModel: VpnViewModel) {
     var globalMode by remember { mutableStateOf(viewModel.proxyMode == "global") }
     var bypassCountryCode by remember { mutableStateOf(viewModel.bypassCountryCode) }
     var allowInsecure by remember { mutableStateOf(viewModel.allowInsecure) }
+    val themeMode by viewModel.themeMode.collectAsState()
 
     val adBlockRuleSet = remember { viewModel.ruleSetRepository.ruleSets.value.find { it.name == "ADBlock" } }
     var adBlockEnabled by remember {
@@ -156,6 +166,8 @@ fun SettingsScreen(viewModel: VpnViewModel) {
                         viewModel.allowInsecure = false
                     }
                 },
+                themeMode = themeMode,
+                onThemeModeChange = { viewModel.setThemeMode(it) },
                 onOpenTelegram = {
                     com.mythaia.BrandLinks.TELEGRAM_COMMUNITY?.let { link ->
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
@@ -213,6 +225,8 @@ private fun SettingsRoot(
     onAdBlockChange: (Boolean) -> Unit,
     allowInsecure: Boolean,
     onAllowInsecureChange: (Boolean) -> Unit,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
     onOpenTelegram: () -> Unit,
     onOpenRoutingRules: () -> Unit,
     onOpenTrustedCertificates: () -> Unit,
@@ -278,6 +292,16 @@ private fun SettingsRoot(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            SectionHeader(stringResource(R.string.appearance))
+            SettingsGroupCard {
+                ThemeModeRow(
+                    mode = themeMode,
+                    onModeChange = onThemeModeChange
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             SectionHeader(stringResource(R.string.security))
             SettingsGroupCard {
                 SettingsSwitch(
@@ -329,6 +353,60 @@ private fun SettingsRoot(
                     label = stringResource(R.string.advanced_settings),
                     onClick = onOpenAdvancedSettings
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Light, dark, or whatever the device is doing.
+ *
+ * A segmented row rather than a menu: three mutually exclusive choices, and
+ * seeing which one is active matters more than saving the width.
+ */
+@Composable
+private fun ThemeModeRow(mode: ThemeMode, onModeChange: (ThemeMode) -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SettingsIcon(
+                icon = when (mode) {
+                    ThemeMode.SYSTEM -> Icons.Filled.BrightnessAuto
+                    ThemeMode.LIGHT -> Icons.Filled.LightMode
+                    ThemeMode.DARK -> Icons.Filled.DarkMode
+                },
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                text = stringResource(R.string.theme),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        val segmentColors = SegmentedButtonDefaults.colors(
+            activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
+            activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            activeBorderColor = MaterialTheme.colorScheme.outline,
+            inactiveContainerColor = MaterialTheme.colorScheme.surface,
+            inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            inactiveBorderColor = MaterialTheme.colorScheme.outline
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            val options = listOf(
+                ThemeMode.SYSTEM to R.string.theme_system,
+                ThemeMode.LIGHT to R.string.theme_light,
+                ThemeMode.DARK to R.string.theme_dark
+            )
+            options.forEachIndexed { index, (value, labelRes) ->
+                SegmentedButton(
+                    selected = mode == value,
+                    onClick = { onModeChange(value) },
+                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                    colors = segmentColors
+                ) { Text(stringResource(labelRes)) }
             }
         }
     }

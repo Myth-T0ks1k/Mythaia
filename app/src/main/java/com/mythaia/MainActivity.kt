@@ -15,6 +15,9 @@ import com.mythaia.ui.navigation.AppNavigation
 import com.mythaia.ui.onboarding.OnboardingScreen
 import com.mythaia.ui.theme.MythaiaTheme
 import com.mythaia.viewmodel.VpnStatus
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.collectAsState
+import com.mythaia.data.model.ThemeMode
 import com.mythaia.viewmodel.VpnViewModel
 
 class MainActivity : ComponentActivity() {
@@ -43,7 +46,14 @@ class MainActivity : ComponentActivity() {
         handleConnectIntent(intent)
 
         setContent {
-            MythaiaTheme {
+            val themeMode by viewModel.themeMode.collectAsState()
+            MythaiaTheme(
+                darkTheme = when (themeMode) {
+                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                    ThemeMode.LIGHT -> false
+                    ThemeMode.DARK -> true
+                }
+            ) {
                 var onboardingCompleted by remember { mutableStateOf(viewModel.hasCompletedOnboarding) }
 
                 if (!onboardingCompleted) {
