@@ -236,4 +236,6 @@
     <string name="theme_system">سامانه</string>
     <string name="theme_light">روشن</string>
     <string name="theme_dark">تیره</string>
+    <string name="wireguard_configuration">پیکربندی WireGuard</string>
+    <string name="wireguard_configuration_hint">بخش‌های [Interface] و [Peer] را که ارائه‌دهنده به شما داده است اینجا بچسبانید</string>
 </resources>

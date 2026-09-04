@@ -236,4 +236,6 @@
     <string name="theme_system">النظام</string>
     <string name="theme_light">فاتح</string>
     <string name="theme_dark">داكن</string>
+    <string name="wireguard_configuration">إعدادات WireGuard</string>
+    <string name="wireguard_configuration_hint">الصق قسمي [Interface] و[Peer] اللذين زوّدك بهما المزوّد</string>
 </resources>

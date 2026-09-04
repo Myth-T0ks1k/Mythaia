@@ -153,6 +153,19 @@ fun AddProxyScreen(
 
     fun importFromString(string: String, fromQr: Boolean) {
         val trimmed = string.trim()
+
+        // A WireGuard peer hands out a wg-quick INI, not a link, so a paste is
+        // recognised by its shape before any scheme matching happens.
+        if (ProxyConfiguration.looksLikeWireGuardConfig(trimmed)) {
+            try {
+                onImport(ProxyConfiguration.fromWireGuardConfig(trimmed))
+            } catch (e: Exception) {
+                linkErrorMessage = e.message ?: context.getString(R.string.invalid_url)
+                showLinkError = true
+            }
+            return
+        }
+
         val isHTTP = trimmed.startsWith("http://") || trimmed.startsWith("https://")
         // QR codes don't expose the segmented picker, so default to subscription
         // for any http(s) URL.

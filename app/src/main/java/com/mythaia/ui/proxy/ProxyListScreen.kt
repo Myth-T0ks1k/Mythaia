@@ -66,6 +66,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mythaia.R
 import com.mythaia.data.model.Subscription
+import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.network.SubscriptionDomainHelper
 import com.mythaia.ui.components.ProxyCardContent
@@ -477,14 +478,27 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.surface
         ) {
-            ProxyEditorScreen(
-                configuration = config,
-                onSave = { updated ->
-                    viewModel.updateConfiguration(updated)
-                    configurationToEdit = null
-                },
-                onDismiss = { configurationToEdit = null }
-            )
+            // WireGuard is configured by a file, not by the field-by-field
+            // form the other protocols share.
+            if (config.outboundProtocol == OutboundProtocol.WIREGUARD) {
+                WireGuardEditorScreen(
+                    configuration = config,
+                    onSave = { updated ->
+                        viewModel.updateConfiguration(updated)
+                        configurationToEdit = null
+                    },
+                    onDismiss = { configurationToEdit = null }
+                )
+            } else {
+                ProxyEditorScreen(
+                    configuration = config,
+                    onSave = { updated ->
+                        viewModel.updateConfiguration(updated)
+                        configurationToEdit = null
+                    },
+                    onDismiss = { configurationToEdit = null }
+                )
+            }
         }
     }
 

@@ -305,4 +305,6 @@
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="wireguard_configuration">WireGuard configuration</string>
+    <string name="wireguard_configuration_hint">Paste the [Interface] and [Peer] sections your provider gave you</string>
 </resources>

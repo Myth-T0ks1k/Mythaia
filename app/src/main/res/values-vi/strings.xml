@@ -236,4 +236,6 @@
     <string name="theme_system">Hệ thống</string>
     <string name="theme_light">Sáng</string>
     <string name="theme_dark">Tối</string>
+    <string name="wireguard_configuration">Cấu hình WireGuard</string>
+    <string name="wireguard_configuration_hint">Dán các mục [Interface] và [Peer] mà nhà cung cấp đã gửi cho bạn</string>
 </resources>

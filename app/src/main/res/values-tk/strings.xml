@@ -236,4 +236,6 @@
     <string name="theme_system">Ulgam</string>
     <string name="theme_light">Açyk</string>
     <string name="theme_dark">Goýy</string>
+    <string name="wireguard_configuration">WireGuard sazlamasy</string>
+    <string name="wireguard_configuration_hint">Üpjün edijiniň beren [Interface] we [Peer] bölümlerini goýuň</string>
 </resources>

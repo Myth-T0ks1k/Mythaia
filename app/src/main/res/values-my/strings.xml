@@ -236,4 +236,6 @@
     <string name="theme_system">စနစ်အလိုက်</string>
     <string name="theme_light">အလင်း</string>
     <string name="theme_dark">အမှောင်</string>
+    <string name="wireguard_configuration">WireGuard ဆက်တင်</string>
+    <string name="wireguard_configuration_hint">သင့်ဝန်ဆောင်မှုပေးသူထံမှရသော [Interface] နှင့် [Peer] အပိုင်းများကို ကူးထည့်ပါ</string>
 </resources>

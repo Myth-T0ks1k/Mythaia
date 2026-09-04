@@ -965,6 +965,49 @@ data class ProxyConfiguration(
         }
 
         /**
+         * Whether this text is a `wg-quick` config rather than a share link.
+         *
+         * WireGuard has no URL scheme — a peer hands out the INI itself — so a
+         * paste is recognised by its shape.
+         */
+        fun looksLikeWireGuardConfig(text: String): Boolean {
+            val lower = text.lowercase()
+            return lower.contains("[interface]") &&
+                lower.contains("privatekey") &&
+                lower.contains("[peer]")
+        }
+
+        /**
+         * Builds a profile from a `wg-quick` INI, WireGuard or AmneziaWG.
+         *
+         * The text is kept verbatim so a key this build does not know survives
+         * a round trip; parsing here only validates it and pulls out the
+         * endpoint for the list and the latency check.
+         */
+        fun fromWireGuardConfig(text: String, name: String? = null): ProxyConfiguration {
+            val parsed = try {
+                com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parse(text)
+            } catch (e: Exception) {
+                throw ProxyError.InvalidUrl(e.message ?: "WireGuard configuration is not usable")
+            }
+
+            val label = name?.takeIf { it.isNotBlank() }
+                ?: if (parsed.amnezia.isEnabled) "AmneziaWG" else "WireGuard"
+
+            return ProxyConfiguration(
+                name = label,
+                serverAddress = parsed.peer.endpointHost,
+                serverPort = parsed.peer.endpointPort.toUShort(),
+                uuid = UUID.randomUUID(), // placeholder; WireGuard has no user id
+                outboundProtocol = OutboundProtocol.WIREGUARD,
+                encryption = "none",
+                security = "none",
+                transport = "udp",
+                wireGuardConfig = text
+            )
+        }
+
+        /**
          * Parses a Trojan URL. Format:
          * `trojan://password@host:port?sni=...&alpn=h2%2Chttp%2F1.1&fp=chrome_133#name`
          * TLS is mandatory — there is no plaintext Trojan variant on the wire.
