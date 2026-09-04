@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android TV banner, 320x180 at xhdpi as the launcher expects.
+
+    The WingMark on the ink ground, sized and placed the way the launcher icon
+    does it, with the wordmark alongside. Vector rather than a bitmap so it
+    stays sharp on a 4K panel.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Ink ground. -->
+    <path
+        android:pathData="M0,0 H320 V180 H0 Z"
+        android:fillColor="#14213A" />
+
+    <!-- WingMark: three feather strokes from one point, in bone. -->
+    <group
+        android:scaleX="0.9"
+        android:scaleY="0.9"
+        android:translateX="34"
+        android:translateY="44">
+        <path
+            android:pathData="M20,82 Q21,32 82,20"
+            android:fillColor="#00000000"
+            android:strokeColor="#F6F3EC"
+            android:strokeWidth="8.5"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M20,82 Q29,47 69,38"
+            android:fillColor="#00000000"
+            android:strokeColor="#F6F3EC"
+            android:strokeWidth="8"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M20,82 Q36,61 57,55"
+            android:fillColor="#00000000"
+            android:strokeColor="#F6F3EC"
+            android:strokeWidth="7.5"
+            android:strokeLineCap="round" />
+    </group>
+
+    <!-- A single azure rule under the mark, echoing the in-app accent. -->
+    <path
+        android:pathData="M150,118 H286"
+        android:fillColor="#00000000"
+        android:strokeColor="#24548F"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+</vector>

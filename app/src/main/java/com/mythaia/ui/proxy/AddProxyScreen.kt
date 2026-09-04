@@ -94,6 +94,15 @@ fun AddProxyScreen(
     var showLinkError by remember { mutableStateOf(false) }
     var linkErrorMessage by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
+
+    // A TV has no camera, so offering to scan a QR code there would open a
+    // screen that can only fail. Checked by feature rather than by form factor:
+    // a tablet without a camera is in the same position.
+    val availableMethods = remember(context) {
+        val hasCamera = context.packageManager
+            .hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
+        if (hasCamera) ImportMethod.entries else ImportMethod.entries.filter { it != ImportMethod.QR_CODE }
+    }
     var showRemnawaveHWIDAlert by remember { mutableStateOf(false) }
     var pendingSubscriptionURL by remember { mutableStateOf("") }
 
@@ -212,7 +221,7 @@ fun AddProxyScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        ImportMethod.entries.forEach { method ->
+        availableMethods.forEach { method ->
             val isSelected = selectedMethod == method
             Surface(
                 modifier = Modifier

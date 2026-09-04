@@ -16,11 +16,22 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!--
+        Android TV. None of these may be required, or the Play listing and the
+        launcher both exclude the device: a TV has no touchscreen and usually no
+        camera, and leanback is what marks the app as TV-capable without making
+        it TV-only.
+    -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Mythaia">
@@ -39,6 +50,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- The TV launcher only lists activities carrying this. -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <!-- Deep links: mythaia://add-proxy?link=… and bare proxy URL schemes. Mirrors iOS DeepLinkManager. -->
             <intent-filter android:autoVerify="false">
