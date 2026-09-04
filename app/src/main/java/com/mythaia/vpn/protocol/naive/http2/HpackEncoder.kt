@@ -303,6 +303,13 @@ object HpackHuffman {
         val result = ByteArrayOutputStream()
         var nodeIdx = 0
 
+        // What is left over after the last complete symbol. RFC 7541 §5.2 only
+        // allows that to be padding: at most 7 bits, and all ones, since the
+        // padding is the leading bits of the EOS code. Anything else is a
+        // decoding error rather than a shorter string.
+        var danglingBits = 0
+        var danglingAllOnes = true
+
         for (byte in data) {
             for (bitPos in 7 downTo 0) {
                 val bit = (byte.toInt() shr bitPos) and 1
@@ -310,15 +317,22 @@ object HpackHuffman {
                 if (next < 0) return null
                 nodeIdx = next
 
+                danglingBits++
+                if (bit == 0) danglingAllOnes = false
+
                 val sym = tree[nodeIdx].symbol
                 if (sym >= 0) {
-                    if (sym == 256) return result.toByteArray() // EOS
+                    // EOS must never appear in a real header block.
+                    if (sym == 256) return null
                     result.write(sym)
                     nodeIdx = 0
+                    danglingBits = 0
+                    danglingAllOnes = true
                 }
             }
         }
 
+        if (danglingBits > 7 || !danglingAllOnes) return null
         return result.toByteArray()
     }
 
