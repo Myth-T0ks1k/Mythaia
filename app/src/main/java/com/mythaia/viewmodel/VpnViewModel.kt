@@ -54,8 +54,8 @@ private val logger = MythaiaLogger("VPNViewModel")
 
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
-    val configRepository = ConfigRepository(application)
-    val subscriptionRepository = SubscriptionRepository(application)
+    val configRepository = ConfigRepository.get(application)
+    val subscriptionRepository = SubscriptionRepository.get(application)
     val ruleSetRepository = RuleSetRepository(application)
     val certificateRepository = CertificateRepository(application)
     val chainRepository = ChainRepository(application)
@@ -197,6 +197,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         ensureValidSelection()
+
+        // The service outlives the Activity. Coming back to a tunnel that never
+        // stopped has to restore CONNECTED and rebind — otherwise the power
+        // button reads disconnected while traffic is still flowing, and the
+        // next tap calls connect(), which tears the live stack down and
+        // rebuilds it. Guarded by isActive so the binding never creates a
+        // service that was not already running.
+        if (MythaiaVpnService.isActive) {
+            _vpnStatus.value = VpnStatus.CONNECTED
+            bindToService()
+        }
 
         // Prime CertificatePolicy with the current allowInsecure + trusted-certificate
         // values so TLS validation has a fresh snapshot before the first connection.
@@ -665,6 +676,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         ensureValidSelection()
+        // A panel that renames a server gives it a fresh id, which orphans any
+        // rule set assigned to it. Without this the assignment points at a dead
+        // id, the user is never told, and that rule set silently stops routing.
+        checkOrphanedRuleSets()
+        syncRoutingConfigurationToNE()
     }
 
     /**
@@ -814,9 +830,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * rewriting routing.json would be beside the point.
      */
     fun signalRoutingChanged() {
-        if (_vpnStatus.value == VpnStatus.CONNECTED) {
-            prefs.edit().putLong("routingChanged", System.currentTimeMillis()).apply()
-        }
+        // Written unconditionally: LwipStack only listens while a tunnel is up,
+        // so a stray write costs nothing, and gating on the view model own
+        // status would drop the signal whenever that status is behind.
+        prefs.edit().putLong("routingChanged", System.currentTimeMillis()).apply()
     }
 
     /** Collects all proxy server addresses (domains + resolved IPs) from all

@@ -42,8 +42,10 @@ class SubscriptionRefreshWorker(
         FragmentPolicy.reload(context)
         EncryptedDnsPolicy.reload(context)
 
-        val subscriptionRepository = SubscriptionRepository(context)
-        val configRepository = ConfigRepository(context)
+        // The same instances the UI uses, so a refresh and a foreground edit
+        // cannot overwrite one another, and the UI sees what lands.
+        val subscriptionRepository = SubscriptionRepository.get(context)
+        val configRepository = ConfigRepository.get(context)
 
         val subscriptions = subscriptionRepository.getAll()
         if (subscriptions.isEmpty()) return Result.success()

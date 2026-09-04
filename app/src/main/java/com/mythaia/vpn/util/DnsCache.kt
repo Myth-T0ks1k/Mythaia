@@ -5,6 +5,7 @@ import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.RejectedExecutionException
 
 private val logger = MythaiaLogger("ProxyDNSCache")
 
@@ -136,11 +137,48 @@ object DnsCache {
         }
     }
 
+    /**
+     * Refreshes [key] in the background, at most one refresh per name at a time.
+     *
+     * Both guards matter once encrypted DNS is on. A refresh used to be a
+     * platform lookup that returned in milliseconds; through an unreachable
+     * DoH or DoT resolver it takes the full four-second timeout, and every new
+     * proxied connection calls resolveAll. A browser opening one page would
+     * otherwise start hundreds of threads inside a single refresh window.
+     */
     private fun refreshAsync(key: String, bare: String) {
-        Thread({
-            resolveAndCache(key, bare)
-        }, "DnsCache-refresh").apply { isDaemon = true }.start()
+        if (!refreshing.add(key)) return
+        try {
+            refreshExecutor.execute {
+                try {
+                    resolveAndCache(key, bare)
+                } finally {
+                    refreshing.remove(key)
+                }
+            }
+        } catch (e: RejectedExecutionException) {
+            // The pool is saturated; the stale entry the caller already has is
+            // a better answer than blocking for a new one.
+            refreshing.remove(key)
+            logger.debug("[DNS] Refresh for $bare rejected: ${e.message ?: e}")
+        }
     }
+
+    /** Names with a refresh already in flight. */
+    private val refreshing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * A small bounded pool, so a dead resolver costs a handful of parked
+     * threads rather than one per connection.
+     */
+    private val refreshExecutor: java.util.concurrent.ThreadPoolExecutor =
+        java.util.concurrent.ThreadPoolExecutor(
+            0, 4,
+            30L, java.util.concurrent.TimeUnit.SECONDS,
+            java.util.concurrent.LinkedBlockingQueue(32)
+        ) { runnable ->
+            Thread(runnable, "DnsCache-refresh").apply { isDaemon = true }
+        }
 
     private fun resolveAndCache(key: String, bare: String): List<String> {
         val network = underlyingNetwork

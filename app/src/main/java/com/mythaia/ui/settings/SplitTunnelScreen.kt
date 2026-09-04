@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,8 +85,24 @@ fun SplitTunnelScreen(
         apps = withContext(Dispatchers.IO) { InstalledAppsRepository(context).load() }
     }
 
+    /**
+     * Writes the selection.
+     *
+     * Deliberately NOT called per tick: every write re-establishes the TUN and
+     * restarts the lwIP stack, so ticking ten apps would kill every live
+     * connection ten times. The edits stay local and land once, when the screen
+     * goes away — by back gesture, by system back, or by the process ending,
+     * since onDispose runs for all three.
+     */
     fun persist() {
-        viewModel.splitTunnelSettings = SplitTunnelSettings(mode = mode, packages = selected)
+        val next = SplitTunnelSettings(mode = mode, packages = selected)
+        if (next != viewModel.splitTunnelSettings) {
+            viewModel.splitTunnelSettings = next
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { persist() }
     }
 
     val visible = remember(apps, query) {
@@ -133,15 +150,15 @@ fun SplitTunnelScreen(
                 ModeChip(
                     label = stringResource(R.string.split_tunnel_off),
                     selected = mode == SplitTunnelMode.OFF
-                ) { mode = SplitTunnelMode.OFF; persist() }
+                ) { mode = SplitTunnelMode.OFF }
                 ModeChip(
                     label = stringResource(R.string.split_tunnel_allow),
                     selected = mode == SplitTunnelMode.ALLOW
-                ) { mode = SplitTunnelMode.ALLOW; persist() }
+                ) { mode = SplitTunnelMode.ALLOW }
                 ModeChip(
                     label = stringResource(R.string.split_tunnel_disallow),
                     selected = mode == SplitTunnelMode.DISALLOW
-                ) { mode = SplitTunnelMode.DISALLOW; persist() }
+                ) { mode = SplitTunnelMode.DISALLOW }
             }
 
             Text(
@@ -199,7 +216,6 @@ fun SplitTunnelScreen(
                             onToggle = { checked ->
                                 selected = if (checked) selected + app.packageName
                                            else selected - app.packageName
-                                persist()
                             }
                         )
                     }

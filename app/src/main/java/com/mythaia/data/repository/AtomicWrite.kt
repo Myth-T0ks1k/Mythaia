@@ -19,7 +19,11 @@ import java.nio.file.StandardCopyOption
  * atomic move (rare, but documented for FUSE-backed paths).
  */
 internal fun File.writeTextAtomic(text: String) {
-    val tmp = File(parentFile, "$name.tmp")
+    // A name no concurrent writer can share. writeTextAsync serialises its
+    // callers, but syncRoutingFile writes straight through from whatever
+    // coroutine asked for it, and two of those sharing one temp file would
+    // interleave their contents and rename the mixture into place.
+    val tmp = File(parentFile, "$name.${java.util.UUID.randomUUID()}.tmp")
     tmp.writeText(text)
     try {
         Files.move(
@@ -30,6 +34,10 @@ internal fun File.writeTextAtomic(text: String) {
         )
     } catch (_: AtomicMoveNotSupportedException) {
         Files.move(tmp.toPath(), toPath(), StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+        // A failed move leaves the temp behind; with a unique name it would
+        // otherwise accumulate one file per failure.
+        if (tmp.exists()) tmp.delete()
     }
 }
 
@@ -39,9 +47,9 @@ internal fun File.writeTextAtomic(text: String) {
  * the disk fsync happens asynchronously off the calling thread.
  *
  * Parallelism is limited to 1 so writes are executed in submission order:
- * concurrent writes to the same file share the same `$name.tmp` sibling, and
- * unordered execution could interleave tmp contents or let an older snapshot
- * win the rename race, persisting stale data.
+ * unordered execution could let an older snapshot win the rename race and
+ * persist stale data. (Each write now uses its own temp file, so the contents
+ * can no longer interleave — but the ordering still matters.)
  */
 internal val repositoryWriterScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))

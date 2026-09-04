@@ -83,4 +83,24 @@ class ConfigRepository(context: Context) {
             println("Failed to save configurations: $it")
         }
     }
+
+    companion object {
+        @Volatile
+        private var instance: ConfigRepository? = null
+
+        /**
+         * The one instance for this process.
+         *
+         * The background refresh worker and the view model both mutate this
+         * store. With an instance each they would hold two snapshots of the
+         * same file and two independent StateFlows: whichever wrote last would
+         * silently overwrite the other's edits, and the UI would not see what
+         * the worker had written. Sharing one instance makes a background
+         * refresh land in the running UI as well.
+         */
+        fun get(context: Context): ConfigRepository =
+            instance ?: synchronized(this) {
+                instance ?: ConfigRepository(context.applicationContext).also { instance = it }
+            }
+    }
 }
