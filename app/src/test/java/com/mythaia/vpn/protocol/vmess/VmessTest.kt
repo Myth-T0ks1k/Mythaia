@@ -10,6 +10,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.bouncycastle.crypto.digests.SHAKEDigest
 import java.security.MessageDigest
 import java.util.UUID
 import javax.crypto.Mac
@@ -221,8 +222,96 @@ class VmessTest {
         }
     }
 
+    /**
+     * Pins the draw ORDER against the reference, which a round trip cannot.
+     *
+     * Both ends of every other chunk test are this same class, so a wrong draw
+     * order is symmetric and cancels out — the bug it hides only appears
+     * against a real server. Here the expected length field is computed from a
+     * SHAKE128 stream driven independently, in v2ray's order: the padding draw
+     * first, then the mask draw.
+     */
     @Test
-    fun `a partial chunk can be retried without losing the mask stream`() {
+    fun `the length field matches a stream driven in v2ray draw order`() {
+        val key = ByteArray(16) { it.toByte() }
+        val iv = ByteArray(16) { (it * 3).toByte() }
+
+        // The reference stream, read the way AuthenticationWriter.seal does.
+        val reference = SHAKEDigest(128).apply { update(iv, 0, iv.size) }
+        fun draw(): Int {
+            val b = ByteArray(2)
+            reference.doOutput(b, 0, 2)
+            return ((b[0].toInt() and 0xFF) shl 8) or (b[1].toInt() and 0xFF)
+        }
+
+        val writer = VmessChunkStream(
+            key, iv, VmessSecurity.AES_128_GCM, masking = true, globalPadding = true
+        )
+        val payload = "hello".toByteArray()
+        val wire = writer.encode(payload)
+
+        val paddingLength = draw() % 64
+        val mask = draw()
+        val sealedLength = payload.size + 16          // GCM tag
+        val expected = (sealedLength + paddingLength) xor mask
+
+        val actual = ((wire[0].toInt() and 0xFF) shl 8) or (wire[1].toInt() and 0xFF)
+        assertEquals(
+            "length field disagrees with the reference draw order",
+            expected, actual
+        )
+        assertEquals(2 + sealedLength + paddingLength, wire.size)
+    }
+
+    /**
+     * The same order on the read side, and that a chunk written by the
+     * reference order decodes.
+     */
+    @Test
+    fun `a chunk framed in reference order decodes`() {
+        val key = ByteArray(16) { it.toByte() }
+        val iv = ByteArray(16) { (it * 7).toByte() }
+        val payload = "some payload".toByteArray()
+
+        val reference = SHAKEDigest(128).apply { update(iv, 0, iv.size) }
+        fun draw(): Int {
+            val b = ByteArray(2)
+            reference.doOutput(b, 0, 2)
+            return ((b[0].toInt() and 0xFF) shl 8) or (b[1].toInt() and 0xFF)
+        }
+
+        // Seal exactly as the peer would, then frame it by hand.
+        val nonce = ByteArray(12).also { iv.copyInto(it, 2, 2, 12) }
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            javax.crypto.Cipher.ENCRYPT_MODE,
+            SecretKeySpec(key, "AES"),
+            javax.crypto.spec.GCMParameterSpec(128, nonce)
+        )
+        val sealed = cipher.doFinal(payload)
+
+        val paddingLength = draw() % 64
+        val mask = draw()
+        val onWire = sealed.size + paddingLength
+        val length = onWire xor mask
+
+        val wire = byteArrayOf(
+            ((length shr 8) and 0xFF).toByte(),
+            (length and 0xFF).toByte()
+        ) + sealed + ByteArray(paddingLength)
+
+        val reader = VmessChunkStream(
+            key, iv, VmessSecurity.AES_128_GCM, masking = true, globalPadding = true
+        )
+        val decoded = reader.decode(wire, 0)
+        assertTrue("expected a chunk, got $decoded", decoded is VmessChunkStream.Decoded.Chunk)
+        decoded as VmessChunkStream.Decoded.Chunk
+        assertArrayEquals(payload, decoded.payload)
+        assertEquals(wire.size, decoded.consumed)
+    }
+
+    @Test
+    fun `a partial chunk can be retried without losing the draw stream`() {
         // The mask and the chunk counter advance once per complete chunk. If a
         // short read consumed a draw, every later chunk would decode as garbage.
         val (writer, reader) = streams(VmessSecurity.AES_128_GCM, masking = true, padding = true)

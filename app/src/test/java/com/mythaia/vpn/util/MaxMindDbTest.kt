@@ -3,6 +3,7 @@ package com.mythaia.vpn.util
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
@@ -79,6 +80,70 @@ class MaxMindDbTest {
         // This fixture carries no country field — what matters is that the tree
         // walk and metadata parse succeed without throwing.
         db!!.countryCode(bytes("1.1.1.1"))
+    }
+
+    @Test
+    fun `an IPv6 address gets no answer from an IPv4-only database`() {
+        // Walking it anyway would follow its first four bytes and return
+        // whichever IPv4 address happens to share them — a confident wrong
+        // country rather than no answer.
+        val db = open("MaxMind-DB-test-ipv4-24.mmdb")
+        assumeTrue("fixture missing", db != null)
+        db!!
+
+        assertNull(db.countryCode(bytes("2001:218::1")))
+        assertNull(db.countryCode(bytes("::1")))
+        // The v4 form of an address whose bytes a v6 address could shadow still
+        // resolves normally.
+        db.countryCode(bytes("1.1.1.1"))
+    }
+
+    @Test
+    fun `a header describing more nodes than the file holds is refused`() {
+        // The tree size comes from header fields, so an inflated node_count
+        // would put every node read past the end of the mapping.
+        val source = fixture("GeoIP2-Country-Test.mmdb")
+        assumeTrue("fixture missing", source != null)
+
+        val bytes = source!!.readBytes()
+        val marker = byteArrayOf(0xAB.toByte(), 0xCD.toByte(), 0xEF.toByte()) +
+            "MaxMind.com".toByteArray(Charsets.US_ASCII)
+
+        // Find the metadata, then the node_count value inside it, and inflate it.
+        var metadataStart = -1
+        outer@ for (start in bytes.size - marker.size downTo 0) {
+            for (i in marker.indices) {
+                if (bytes[start + i] != marker[i]) continue@outer
+            }
+            metadataStart = start + marker.size
+            break
+        }
+        assertTrue("no metadata marker", metadataStart > 0)
+
+        val key = "node_count".toByteArray(Charsets.US_ASCII)
+        var keyAt = -1
+        outer2@ for (start in metadataStart until bytes.size - key.size) {
+            for (i in key.indices) {
+                if (bytes[start + i] != key[i]) continue@outer2
+            }
+            keyAt = start
+            break
+        }
+        assertTrue("no node_count key", keyAt > 0)
+
+        // The value follows the key: a control byte then its big-endian bytes.
+        val valueControl = keyAt + key.size
+        val valueSize = bytes[valueControl].toInt() and 0x1F
+        assertTrue("unexpected node_count encoding", valueSize in 1..4)
+        for (i in 0 until valueSize) {
+            bytes[valueControl + 1 + i] = 0xFF.toByte()
+        }
+
+        val corrupt = File.createTempFile("mythaia-geoip-corrupt", ".mmdb").apply {
+            writeBytes(bytes)
+            deleteOnExit()
+        }
+        assertNull(MaxMindDb.open(corrupt))
     }
 
     @Test

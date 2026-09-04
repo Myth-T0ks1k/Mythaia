@@ -13,8 +13,20 @@ import javax.crypto.spec.SecretKeySpec
  * With ChunkMasking the length is XORed with a SHAKE128 stream seeded by the
  * body IV, so an observer sees no plaintext sizes; with GlobalPadding the same
  * stream also decides how many random bytes follow each chunk, so the sizes it
- * does see mean nothing either. Both sides advance the stream in lockstep, one
- * draw per chunk — which is why a mask must never be taken speculatively.
+ * does see mean nothing either.
+ *
+ * Draw order is part of the wire format. v2ray's AuthenticationWriter.seal
+ * calls NextPaddingLen() before sizeParser.Encode(), and its reader does the
+ * same, so each chunk consumes the padding draw FIRST and the mask draw
+ * second — two separate two-byte reads off the shared stream. It has to be
+ * that way round: the encoded length includes the padding, so the padding must
+ * already be known. Deriving both from one draw, or taking them in the other
+ * order, desynchronises against a real server on the very first chunk while
+ * still round-tripping perfectly against itself.
+ *
+ * Both sides advance in lockstep, which is why a draw must never be taken
+ * speculatively — decode() peeks on a copy and only consumes once the whole
+ * chunk is present.
  */
 class VmessChunkStream(
     private val key: ByteArray,
@@ -41,8 +53,13 @@ class VmessChunkStream(
     private var count = 0
     private val shakeBuffer = ByteArray(2)
 
-    /** The next two bytes of the mask stream, as an unsigned 16-bit value. */
-    private fun nextMask(): Int {
+    /**
+     * The next two bytes of the shared stream, as an unsigned 16-bit value.
+     *
+     * Only called when the option that consumes it is on, so a caller never
+     * burns a draw the peer did not.
+     */
+    private fun nextDraw(): Int {
         val digest = shake ?: return 0
         digest.doOutput(shakeBuffer, 0, 2)
         return ((shakeBuffer[0].toInt() and 0xFF) shl 8) or (shakeBuffer[1].toInt() and 0xFF)
@@ -161,10 +178,10 @@ class VmessChunkStream(
     }
 
     private fun writeChunk(out: java.io.ByteArrayOutputStream, plaintext: ByteArray) {
-        // The mask and the padding length come from one draw each, in this
-        // order, and the peer draws them the same way.
-        val mask = nextMask()
-        val paddingLength = if (globalPadding) mask % MAX_PADDING else 0
+        // Padding draw first, then the mask draw — the order the peer reads
+        // them in. See the class doc.
+        val paddingLength = if (globalPadding) nextDraw() % MAX_PADDING else 0
+        val mask = if (masking) nextDraw() else 0
 
         val sealed = seal(plaintext, count)
         val onWire = sealed.size + paddingLength
@@ -202,20 +219,22 @@ class VmessChunkStream(
     fun decode(input: ByteArray, from: Int): Decoded {
         if (input.size - from < 2) return Decoded.NeedMore
 
-        // Peek the mask without consuming it: the stream must not advance
-        // unless the whole chunk is here.
-        val digest = shake?.let { SHAKEDigest(it) }
-        val mask = if (digest != null) {
-            val buffer = ByteArray(2)
+        // Peek on a copy: the stream must not advance unless the whole chunk is
+        // here, or a short read would desynchronise every chunk after it. The
+        // order matches writeChunk and the peer — padding, then mask.
+        val peek = shake?.let { SHAKEDigest(it) }
+        val buffer = ByteArray(2)
+        fun peekDraw(): Int {
+            val digest = peek ?: return 0
             digest.doOutput(buffer, 0, 2)
-            ((buffer[0].toInt() and 0xFF) shl 8) or (buffer[1].toInt() and 0xFF)
-        } else {
-            0
+            return ((buffer[0].toInt() and 0xFF) shl 8) or (buffer[1].toInt() and 0xFF)
         }
+
+        val paddingLength = if (globalPadding) peekDraw() % MAX_PADDING else 0
+        val mask = if (masking) peekDraw() else 0
 
         val raw = ((input[from].toInt() and 0xFF) shl 8) or (input[from + 1].toInt() and 0xFF)
         val onWire = if (masking) raw xor mask else raw
-        val paddingLength = if (globalPadding) mask % MAX_PADDING else 0
 
         if (onWire < paddingLength || onWire > maxChunk) {
             throw ProxyError.ProtocolError("VMess: chunk length $onWire is not plausible")
@@ -227,7 +246,7 @@ class VmessChunkStream(
         // the body is unencrypted.
         if ((tagSize > 0 && sealedLength == tagSize) || sealedLength == 0) {
             // An empty payload is the end-of-stream marker.
-            advanceMask()
+            advanceDraws()
             return Decoded.EndOfStream
         }
 
@@ -235,13 +254,17 @@ class VmessChunkStream(
         val payload = open(sealed, count)
             ?: throw ProxyError.ProtocolError("VMess: chunk failed authentication")
 
-        advanceMask()
+        advanceDraws()
         count++
         return Decoded.Chunk(payload, 2 + onWire)
     }
 
-    /** Consumes the mask draw that [decode] peeked. */
-    private fun advanceMask() {
-        if (shake != null) nextMask()
+    /**
+     * Consumes exactly the draws [decode] peeked — two when both options are
+     * on, one when only one is, none when neither.
+     */
+    private fun advanceDraws() {
+        if (globalPadding) nextDraw()
+        if (masking) nextDraw()
     }
 }

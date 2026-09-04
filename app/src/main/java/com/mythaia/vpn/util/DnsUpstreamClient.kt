@@ -13,7 +13,6 @@ import java.net.Socket
 import java.net.URL
 import java.security.SecureRandom
 import javax.net.ssl.SNIHostName
-import javax.net.ssl.SSLParameters
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
@@ -199,12 +198,17 @@ object DnsUpstreamClient {
         val serverAddress = bootstrap(upstream.server, network)
             ?: throw IOException("cannot resolve resolver ${upstream.server}")
 
-        // Connect the raw socket first so it can be protected before the
-        // handshake writes anything: a TLS socket that dialled through the
-        // tunnel would already have looped.
+        // The socket has to be protected before the handshake writes anything —
+        // a TLS socket that dialled through the tunnel would already have
+        // looped — and protect() needs a file descriptor, which an unbound
+        // Socket() does not have yet. Binding to an ephemeral local port
+        // creates one without connecting.
         val raw = Socket()
         try {
-            SocketProtector.protect(raw)
+            raw.bind(null)
+            if (!SocketProtector.protect(raw)) {
+                throw IOException("could not protect the DoT socket")
+            }
             raw.soTimeout = timeoutMs
             raw.connect(InetSocketAddress(serverAddress, upstream.port), timeoutMs)
 
@@ -212,9 +216,14 @@ object DnsUpstreamClient {
             val tls = factory.createSocket(raw, upstream.server, upstream.port, true) as SSLSocket
             tls.use { socket ->
                 socket.soTimeout = timeoutMs
-                // SNI and hostname verification both key off the configured
-                // name, not the address it resolved to.
-                socket.sslParameters = SSLParameters().apply {
+                // Read, adjust, write back rather than assigning a fresh
+                // SSLParameters: a new one carries none of the protocols and
+                // cipher suites the socket was created with, and setting it
+                // wholesale would replace them with the defaults of an empty
+                // object.
+                socket.sslParameters = socket.sslParameters.apply {
+                    // SNI and hostname verification both key off the configured
+                    // name, not the address it resolved to.
                     endpointIdentificationAlgorithm = "HTTPS"
                     if (!DnsCache.isIpAddress(upstream.server)) {
                         serverNames = listOf(SNIHostName(upstream.server))

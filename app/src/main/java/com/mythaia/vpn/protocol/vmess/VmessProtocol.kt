@@ -102,9 +102,7 @@ object VmessProtocol {
         val bodyIv = ByteArray(16).also { random.nextBytes(it) }
         val responseHeader = ByteArray(1).also { random.nextBytes(it) }[0]
 
-        // Chunked stream with masked lengths and global padding: what a current
-        // v2ray client sends, and what makes the chunk sizes uninformative.
-        val option = OPTION_CHUNK_STREAM or OPTION_CHUNK_MASKING or OPTION_GLOBAL_PADDING
+        val option = optionsFor(security)
 
         val header = buildHeader(bodyKey, bodyIv, responseHeader, option, security, command, host, port)
         val authId = generateAuthId(cmdKey)
@@ -130,6 +128,23 @@ object VmessProtocol {
         sealedHeader.copyInto(out, at)
 
         return SealedRequest(out, Session(bodyKey, bodyIv, responseHeader, security, option))
+    }
+
+    /**
+     * The request options that go with [security].
+     *
+     * Masking and global padding only make sense over an AEAD body: they act on
+     * the length prefix and the trailing bytes of a sealed chunk. With `none`
+     * the chunk carries the payload verbatim, so padding would be delivered to
+     * the destination as part of the stream — the first HTTP request the tunnel
+     * carried would arrive with random bytes glued to the end of it.
+     */
+    private fun optionsFor(security: VmessSecurity): Int = when (security) {
+        VmessSecurity.AES_128_GCM, VmessSecurity.CHACHA20_POLY1305 ->
+            OPTION_CHUNK_STREAM or OPTION_CHUNK_MASKING or OPTION_GLOBAL_PADDING
+        // Chunked, so lengths still frame the stream, but nothing is added to
+        // the payload that the far side would have to strip.
+        VmessSecurity.NONE, VmessSecurity.ZERO -> OPTION_CHUNK_STREAM
     }
 
     /**

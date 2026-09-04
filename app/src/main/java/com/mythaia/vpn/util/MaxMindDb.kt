@@ -36,24 +36,31 @@ class MaxMindDb private constructor(
      *
      * @param address 4 bytes for IPv4, 16 for IPv6.
      */
-    fun countryCode(address: ByteArray): String? {
-        val bytes = when {
-            address.size == 16 -> address
-            address.size == 4 && ipVersion == 6 -> ipv4MappedToIpv6(address)
-            address.size == 4 -> address
-            else -> return null
+    fun countryCode(address: ByteArray): String? = when {
+        address.size == 16 -> {
+            // A v6 address has no answer in a v4-only tree. Walking it anyway
+            // would follow its first four bytes and return whichever IPv4
+            // address happens to share them.
+            if (ipVersion == 4) null else lookup(address, startNode = 0)
         }
+        // In a v6 tree the IPv4 data lives under ::/96, which is where the
+        // 32-bit walk has to begin. Some databases also alias ::ffff:0:0/96,
+        // but not all do, so the subtree is found rather than assumed.
+        address.size == 4 -> lookup(address, startNode = if (ipVersion == 6) ipv4StartNode else 0)
+        else -> null
+    }
 
-        val pointer = findRecord(bytes) ?: return null
-        return runCatching { decodeCountry(pointer) }.getOrNull()
+    /** The country at [address], starting the walk at [startNode]. */
+    private fun lookup(address: ByteArray, startNode: Int): String? {
+        // Anything malformed in the file surfaces here rather than escaping to
+        // the caller, which on the routing path is a JNI upcall.
+        if (startNode < 0) return null
+        return runCatching { findRecord(address, startNode)?.let(::decodeCountry) }.getOrNull()
     }
 
     /** Walks the search tree; returns an offset into the data section. */
-    private fun findRecord(address: ByteArray): Int? {
-        // An IPv4 address in a v6 tree starts at the ::ffff:0:0/96 node, but the
-        // mapped form above already puts the bits in the right place, so the
-        // walk is uniform.
-        var node = 0
+    private fun findRecord(address: ByteArray, startNode: Int): Int? {
+        var node = startNode
         val bitCount = address.size * 8
 
         for (i in 0 until bitCount) {
@@ -68,6 +75,23 @@ class MaxMindDb private constructor(
             node > nodeCount -> node - nodeCount + searchTreeSize
             else -> null
         }
+    }
+
+    /**
+     * The node the IPv4 subtree of a v6 tree hangs off: 96 zero bits down from
+     * the root.
+     *
+     * Computed once. -1 when the database has no IPv4 subtree at all, which
+     * [lookup] reads as "no answer" rather than walking from a bogus node.
+     */
+    private val ipv4StartNode: Int by lazy {
+        if (ipVersion != 6) return@lazy 0
+        var node = 0
+        repeat(96) {
+            if (node >= nodeCount) return@lazy -1
+            node = readNode(node, 0)
+        }
+        if (node >= nodeCount) -1 else node
     }
 
     /** One half of a tree node, at [recordSize] bits per half. */
@@ -233,14 +257,6 @@ class MaxMindDb private constructor(
 
     private fun u8(at: Int): Int = buffer.get(at).toInt() and 0xFF
 
-    private fun ipv4MappedToIpv6(address: ByteArray): ByteArray {
-        val out = ByteArray(16)
-        out[10] = 0xFF.toByte()
-        out[11] = 0xFF.toByte()
-        address.copyInto(out, 12)
-        return out
-    }
-
     companion object {
         private const val DATA_SEPARATOR_SIZE = 16
 
@@ -298,7 +314,19 @@ class MaxMindDb private constructor(
                 return null
             }
 
-            val searchTreeSize = nodeCount * recordSize * 2 / 8
+            // The tree size is derived from header fields, so a corrupt or
+            // hostile file could put it past the end of the mapping and every
+            // node read would then be out of bounds. Computed wide to catch the
+            // overflow, and checked against what is actually mapped.
+            val treeSize = nodeCount.toLong() * recordSize * 2 / 8
+            if (nodeCount <= 0 || treeSize <= 0 ||
+                treeSize + DATA_SEPARATOR_SIZE > buffer.limit()
+            ) {
+                logger.warning("[GeoIP] Header describes a $treeSize-byte tree in a ${buffer.limit()}-byte file")
+                return null
+            }
+
+            val searchTreeSize = treeSize.toInt()
             logger.debug("[GeoIP] Opened database: $nodeCount nodes, ${recordSize}-bit records, IPv$ipVersion")
 
             return MaxMindDb(buffer, nodeCount, recordSize, ipVersion, searchTreeSize)

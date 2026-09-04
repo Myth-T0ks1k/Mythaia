@@ -69,14 +69,19 @@ class VmessClient(
             if (tunnel != null && attempt > 0) break
             if (attempt > 0) delay(RETRY_BASE_DELAY_MS * attempt)
 
+            var transport: Transport? = null
             try {
-                val transport = openTransport()
+                transport = openTransport()
                 val connection = VmessConnection(transport, sealed.session, sealed.bytes)
                 // The header is only actually written by the first send, so an
                 // empty initialData still has to flush it.
                 connection.send(initialData ?: ByteArray(0))
                 return connection
             } catch (e: Exception) {
+                // A transport that never became a returned connection owns a
+                // socket nobody else will close; five failing attempts would
+                // otherwise leak five of them per dial.
+                runCatching { transport?.forceCancel() }
                 if (e is TlsError.CertificateValidationFailed) throw e
                 logger.debug("VMess attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
                 lastError = e
@@ -94,9 +99,17 @@ class VmessClient(
                 val wsConfig = configuration.websocket
                     ?: throw ProxyError.ConnectionFailed("VMess: ws transport with no WebSocket configuration")
                 val inner = openByteStream(useTls)
-                val ws = WebSocketConnection(transport = inner, configuration = wsConfig)
-                ws.performUpgrade()
-                WebSocketTransport(ws)
+                try {
+                    val ws = WebSocketConnection(transport = inner, configuration = wsConfig)
+                    ws.performUpgrade()
+                    WebSocketTransport(ws)
+                } catch (e: Exception) {
+                    // The upgrade can fail after the socket is connected — a 503
+                    // from a CDN, say — and the caller never sees this inner
+                    // stream, so nothing else would close it.
+                    runCatching { inner.forceCancel() }
+                    throw e
+                }
             }
             "tcp" -> openByteStream(useTls)
             else -> throw ProxyError.ConnectionFailed(

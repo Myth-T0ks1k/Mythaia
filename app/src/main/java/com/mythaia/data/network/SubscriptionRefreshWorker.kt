@@ -10,6 +10,9 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.mythaia.data.repository.ConfigRepository
 import com.mythaia.data.repository.SubscriptionRepository
+import com.mythaia.vpn.protocol.tls.CertificatePolicy
+import com.mythaia.vpn.protocol.tls.FragmentPolicy
+import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.MythaiaLogger
 import java.util.concurrent.TimeUnit
 
@@ -30,6 +33,15 @@ class SubscriptionRefreshWorker(
 
     override suspend fun doWork(): Result {
         val context = applicationContext
+
+        // A cold process started by WorkManager has no view model, so nothing
+        // has loaded these yet. Without allowInsecure a panel on a self-signed
+        // host fails every background refresh while pull-to-refresh in the app
+        // succeeds.
+        CertificatePolicy.reload(context)
+        FragmentPolicy.reload(context)
+        EncryptedDnsPolicy.reload(context)
+
         val subscriptionRepository = SubscriptionRepository(context)
         val configRepository = ConfigRepository(context)
 
