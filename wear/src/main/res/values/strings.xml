@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mythaia Pro</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="working">Working…</string>
+    <string name="no_phone">Phone not reachable</string>
+    <string name="needs_phone">Open Mythaia on your phone to allow the VPN</string>
+    <string name="no_server">Choose a server on your phone</string>
+    <string name="failed">Could not start</string>
+</resources>

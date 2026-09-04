@@ -84,6 +84,7 @@ dependencies {
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.view)
     implementation(libs.mlkit.barcode)
+    implementation(libs.play.services.wearable)
     implementation(libs.coroutines.android)
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.androidx.work.runtime.ktx)
