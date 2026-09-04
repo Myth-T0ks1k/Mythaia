@@ -389,7 +389,9 @@ private fun ProxyPickerScreenContent(
     onDismiss: () -> Unit
 ) {
     val available = remember(configurations, excludedIds) {
-        configurations.filter { it.id !in excludedIds }
+        // WireGuard carries IP packets, so it can be neither a hop nor the exit
+        // of a chain — offering one would build a chain that cannot be dialled.
+        configurations.filter { it.id !in excludedIds && !it.outboundProtocol.isLayer3 }
     }
 
     // Standalone section (configs without a subscriptionId) followed by one

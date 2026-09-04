@@ -330,8 +330,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun autoSelectFastest(): ProxyConfiguration? {
         if (_autoSelecting.value) return null
 
+        // A layer-3 interface is not a candidate: there is no per-flow dial to
+        // time, and the measurement would only ever come back as a failure.
         val candidates = configRepository.getAll()
-            .filter { it.outboundProtocol.isImplemented }
+            .filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }
         if (candidates.isEmpty()) return null
 
         _autoSelecting.value = true
@@ -376,8 +378,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // A chain is an explicit choice; auto-select only ranges over single
-        // servers, so it does not override one.
-        if (autoSelectEnabled && _selectedChainId.value == null) {
+        // servers, so it does not override one. Nor does it override a
+        // WireGuard profile, which it cannot measure and so would discard.
+        if (autoSelectEnabled &&
+            _selectedChainId.value == null &&
+            selectedConfiguration?.outboundProtocol?.isLayer3 != true
+        ) {
             viewModelScope.launch {
                 val chosen = autoSelectFastest() ?: selectedConfiguration
                 if (chosen == null) {
@@ -397,7 +403,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (!pendingConnectAfterPermission) return
         pendingConnectAfterPermission = false
 
-        if (autoSelectEnabled && _selectedChainId.value == null) {
+        if (autoSelectEnabled &&
+            _selectedChainId.value == null &&
+            selectedConfiguration?.outboundProtocol?.isLayer3 != true
+        ) {
             viewModelScope.launch {
                 val chosen = autoSelectFastest() ?: selectedConfiguration ?: return@launch
                 startVpnService(chosen)
@@ -801,6 +810,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun resolveChain(chain: ProxyChain): ProxyConfiguration? {
         val configs = chain.proxyIds.mapNotNull { id -> configRepository.get(id) }
         if (configs.size != chain.proxyIds.size || configs.size < 2) return null
+        // WireGuard carries IP packets, so it can be neither a hop nor the exit
+        // of a chain. Resolving one anyway would dial the peer directly and
+        // silently drop every hop the user put in front of it.
+        if (configs.any { it.outboundProtocol.isLayer3 }) return null
         val exitProxy = configs.last()
         val chainProxies = configs.dropLast(1)
         return exitProxy.copy(

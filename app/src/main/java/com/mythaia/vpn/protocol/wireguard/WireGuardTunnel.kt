@@ -71,6 +71,20 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     @Volatile
     private var lastHandshakeAttempt = 0L
 
+    /**
+     * When the current run of handshake attempts began.
+     *
+     * Separate from [lastHandshakeAttempt], which moves on every retry: timing
+     * the give-up against that would compare a value to itself and the branch
+     * would never be taken.
+     */
+    @Volatile
+    private var handshakeSeriesStartedAt = 0L
+
+    /** Whether [onFailure] has already been raised for the current outage. */
+    @Volatile
+    private var failureReported = false
+
     @Volatile
     private var lastSendAt = 0L
 
@@ -197,6 +211,48 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         }
     }
 
+    /**
+     * Re-establishes the tunnel after the network underneath it changed.
+     *
+     * The socket was protected and bound on a path that no longer exists, and
+     * the name may resolve somewhere else on the new one, so both are replaced
+     * and the session dropped rather than waiting out a rekey that would go out
+     * of the wrong interface.
+     */
+    fun handleNetworkPathChange(reason: String) {
+        if (!running) return
+        logger.debug("[WG] Network path changed (" + reason + "), re-establishing")
+
+        session = null
+        previousSession = null
+        pending = null
+        sessionStartedAt = 0L
+        handshakeSeriesStartedAt = 0L
+        lastHandshakeAttempt = 0L
+        failureReported = false
+
+        val replacement = try {
+            DatagramSocket().also {
+                if (!SocketProtector.protect(it)) {
+                    it.close()
+                    throw WireGuardError("could not protect the replacement socket")
+                }
+                it.soTimeout = SOCKET_POLL_MS
+            }
+        } catch (e: Exception) {
+            logger.warning("[WG] Could not replace the socket: " + (e.message ?: e))
+            return
+        }
+
+        // Closing the old socket is what wakes the downlink thread out of its
+        // receive; it re-reads the field on the next pass.
+        val previous = socket
+        socket = replacement
+        runCatching { previous?.close() }
+
+        resolveEndpoint()
+    }
+
     // MARK: - Handshake
 
     private fun beginHandshake() {
@@ -205,7 +261,9 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
             endpoint ?: return
         }
 
-        lastHandshakeAttempt = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastHandshakeAttempt = now
+        if (handshakeSeriesStartedAt == 0L) handshakeSeriesStartedAt = now
 
         val handshake = WireGuardHandshake(
             localPrivateKey = config.privateKey,
@@ -260,6 +318,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         }
 
         pending = null
+        handshakeSeriesStartedAt = 0L
+        failureReported = false
         previousSession = session
         session = WireGuardTransport(
             sendKey = keys.sendKey,
@@ -409,34 +469,68 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     }
 
     private fun runTimer() {
+        // The first handshake goes out at once. Sleeping first would leave the
+        // user watching a connected tunnel carry nothing for a second.
         while (running) {
+            val now = System.currentTimeMillis()
+            retireExpiredSessions(now)
+
+            val active = session
+            if (active == null || needsRekey(active, now)) {
+                if (now - lastHandshakeAttempt >= REKEY_TIMEOUT_MS) {
+                    // A run of attempts that has got nowhere: the name may
+                    // point somewhere else now, so look it up again before
+                    // spending another ninety seconds on the same address.
+                    if (handshakeSeriesStartedAt != 0L &&
+                        now - handshakeSeriesStartedAt >= HANDSHAKE_GIVE_UP_MS
+                    ) {
+                        resolveEndpoint()
+                        handshakeSeriesStartedAt = now
+                        reportFailure("no handshake for ${HANDSHAKE_GIVE_UP_MS / 1000}s")
+                    }
+                    beginHandshake()
+                }
+            } else {
+                val keepalive = config.peer.persistentKeepalive
+                if (keepalive > 0 && now - lastSendAt >= keepalive * 1000L) {
+                    sendKeepalive()
+                }
+            }
+
             try {
                 Thread.sleep(TIMER_TICK_MS)
             } catch (_: InterruptedException) {
                 break
             }
-            if (!running) break
-
-            val now = System.currentTimeMillis()
-            val active = session
-
-            if (active == null || needsRekey(active, now)) {
-                if (now - lastHandshakeAttempt >= REKEY_TIMEOUT_MS) {
-                    if (pending != null && now - lastHandshakeAttempt >= HANDSHAKE_GIVE_UP_MS) {
-                        // The endpoint may have moved; look it up again before
-                        // spending another 90 seconds on the same address.
-                        resolveEndpoint()
-                    }
-                    beginHandshake()
-                }
-                continue
-            }
-
-            val keepalive = config.peer.persistentKeepalive
-            if (keepalive > 0 && now - lastSendAt >= keepalive * 1000L) {
-                sendKeepalive()
-            }
         }
+    }
+
+    /**
+     * Drops a session that has outlived its keys.
+     *
+     * Past REJECT_AFTER_TIME a peer must stop using a session entirely rather
+     * than keep sending under it: the far side has already discarded it, so
+     * everything sent after that point goes nowhere. Retiring it here is what
+     * makes the uplink stop and a fresh handshake start.
+     */
+    private fun retireExpiredSessions(now: Long) {
+        if (sessionStartedAt == 0L) return
+        val age = now - sessionStartedAt
+        if (age >= REJECT_AFTER_TIME_MS) {
+            if (session != null) logger.debug("[WG] Session expired, rekeying")
+            session = null
+            previousSession = null
+        } else if (age >= REKEY_AFTER_TIME_MS + KEEPALIVE_TIMEOUT_MS) {
+            // The replaced session stops being useful long before the live one.
+            previousSession = null
+        }
+    }
+
+    private fun reportFailure(reason: String) {
+        if (failureReported) return
+        failureReported = true
+        logger.warning("[WG] " + reason)
+        onFailure?.invoke(reason)
     }
 
     private fun needsRekey(active: WireGuardTransport, now: Long): Boolean =
@@ -507,6 +601,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         private const val REKEY_AFTER_TIME_MS = 120_000L
         private const val REKEY_TIMEOUT_MS = 5_000L
         private const val HANDSHAKE_GIVE_UP_MS = 90_000L
+        private const val REJECT_AFTER_TIME_MS = 180_000L
+        private const val KEEPALIVE_TIMEOUT_MS = 10_000L
         private const val COOKIE_LIFETIME_MS = 120_000L
 
         /** type(4) + receiver(4) + nonce(24) + sealed cookie(16 + tag 16). */

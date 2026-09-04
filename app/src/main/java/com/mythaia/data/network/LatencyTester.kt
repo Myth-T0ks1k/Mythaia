@@ -45,7 +45,26 @@ object LatencyTester {
     /** Maximum number of latency tests running at the same time. */
     private const val MAX_CONCURRENT_TESTS = 6
 
+    /** How long to wait for a peer to answer a handshake initiation. */
+    private const val HANDSHAKE_PROBE_MS = 5_000
+
     suspend fun test(config: ProxyConfiguration): LatencyResult = withContext(Dispatchers.IO) {
+        // A layer-3 interface has no per-flow dial to time. Sending it through
+        // the proxy factory would report Failed for a peer that is perfectly
+        // reachable, so it gets the probe that actually applies to it.
+        if (config.outboundProtocol.isLayer3) {
+            return@withContext withTimeoutOrNull(TIMEOUT_MS) {
+                try {
+                    testWireGuard(config)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.error("Latency test failed for ${config.name}: ${e.message}")
+                    LatencyResult.Failed
+                }
+            } ?: LatencyResult.Failed
+        }
+
         withTimeoutOrNull(TIMEOUT_MS) {
             try {
                 performTest(resolveConfig(config))
@@ -59,6 +78,64 @@ object LatencyTester {
                 LatencyResult.Failed
             }
         } ?: LatencyResult.Failed
+    }
+
+    /**
+     * Times a real WireGuard handshake against the peer.
+     *
+     * Nothing else would mean anything: the peer answers only a well-formed
+     * initiation under the right key, so a reply is proof the endpoint is
+     * reachable *and* that the profile is valid — which is more than the
+     * stream-proxy probe establishes.
+     */
+    private fun testWireGuard(config: ProxyConfiguration): LatencyResult {
+        val text = config.wireGuardConfig ?: return LatencyResult.Failed
+        val parsed = com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parse(text)
+        val amnezia = parsed.amnezia
+
+        val host = DnsCache.resolveHost(parsed.peer.endpointHost)
+            ?: return LatencyResult.Failed
+        val target = java.net.InetSocketAddress(
+            java.net.InetAddress.getByName(host), parsed.peer.endpointPort
+        )
+
+        val handshake = com.mythaia.vpn.protocol.wireguard.WireGuardHandshake(
+            localPrivateKey = parsed.privateKey,
+            localPublicKey = parsed.publicKey,
+            peerPublicKey = parsed.peer.publicKey,
+            presharedKey = parsed.peer.presharedKey
+                ?: ByteArray(com.mythaia.vpn.protocol.wireguard.WireGuardCrypto.KEY_SIZE),
+            initiationType = amnezia.initiationType,
+            responseType = amnezia.responseType,
+            initiationJunkSize = amnezia.initPacketJunkSize,
+            responseJunkSize = amnezia.responsePacketJunkSize
+        )
+
+        val socket = java.net.DatagramSocket()
+        return try {
+            com.mythaia.vpn.SocketProtector.protect(socket)
+            socket.soTimeout = HANDSHAKE_PROBE_MS
+
+            val initiation = handshake.buildInitiation()
+            val started = System.nanoTime()
+            socket.send(java.net.DatagramPacket(initiation, initiation.size, target))
+
+            val buffer = ByteArray(2048)
+            val reply = java.net.DatagramPacket(buffer, buffer.size)
+            socket.receive(reply)
+            val elapsed = ((System.nanoTime() - started) / 1_000_000L).toInt()
+
+            // Only the peer that holds the key can produce a response this
+            // parses, so anything else is a Failed rather than a fast answer.
+            val message = buffer.copyOf(reply.length)
+            handshake.consumeResponse(message)
+            LatencyResult.Success(elapsed.coerceAtLeast(1))
+        } catch (e: Exception) {
+            logger.error("WireGuard probe failed for ${config.name}: ${e.message}")
+            LatencyResult.Failed
+        } finally {
+            runCatching { socket.close() }
+        }
     }
 
     fun testAll(configurations: List<ProxyConfiguration>): Flow<Pair<UUID, LatencyResult>> = channelFlow {
