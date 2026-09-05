@@ -44,11 +44,13 @@ class QuicStream(
         var offset = 0
         while (offset < data.size) {
             val remaining = if (offset == 0) data else data.copyOfRange(offset, data.size)
+            if (!isConnected) return
             val accepted = connection.writeStream(streamId, remaining, fin = false)
+            // Negative means the connection is gone. Zero means ngtcp2 took
+            // nothing this time — the window is shut, or the packet had no room
+            // for a STREAM frame — which is ordinary backpressure, not failure.
             if (accepted < 0) return
             if (accepted == 0L) {
-                // Nothing taken: the window is shut. Waiting beats spinning,
-                // and an ACK reopening it arrives on the reader thread.
                 delay(WRITE_RETRY_MS)
                 continue
             }

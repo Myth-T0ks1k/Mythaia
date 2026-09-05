@@ -34,6 +34,10 @@
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
 
+/* derive_and_install_initial_key is declared in the crypto helper's own
+   header, not the public one. */
+#include "shared.h"
+
 #define LOG_TAG "MythaiaQUIC"
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -105,6 +109,50 @@ static jbyteArray to_java_bytes(JNIEnv *env, const uint8_t *data, size_t len) {
   return array;
 }
 
+/* -------------------------------------------------------------------------
+ * Encryption levels
+ *
+ * The app names three levels and this maps them onto ngtcp2's enum. They are
+ * translated rather than cast because the enum has been renumbered before:
+ * `ngtcp2_crypto_level` ordered them initial, early, handshake, app, and
+ * `ngtcp2_encryption_level` orders them initial, handshake, 1-RTT, 0-RTT. A
+ * cast that silently survived that change installs handshake keys as 1-RTT
+ * keys, and nothing reports it.
+ * ------------------------------------------------------------------------- */
+
+#define APP_LEVEL_INITIAL 0
+#define APP_LEVEL_HANDSHAKE 1
+#define APP_LEVEL_APPLICATION 2
+
+static int to_ngtcp2_level(jint level, ngtcp2_encryption_level *out) {
+  switch (level) {
+  case APP_LEVEL_INITIAL:
+    *out = NGTCP2_ENCRYPTION_LEVEL_INITIAL;
+    return 0;
+  case APP_LEVEL_HANDSHAKE:
+    *out = NGTCP2_ENCRYPTION_LEVEL_HANDSHAKE;
+    return 0;
+  case APP_LEVEL_APPLICATION:
+    *out = NGTCP2_ENCRYPTION_LEVEL_1RTT;
+    return 0;
+  default:
+    return -1;
+  }
+}
+
+static jint from_ngtcp2_level(ngtcp2_encryption_level level) {
+  switch (level) {
+  case NGTCP2_ENCRYPTION_LEVEL_INITIAL:
+    return APP_LEVEL_INITIAL;
+  case NGTCP2_ENCRYPTION_LEVEL_HANDSHAKE:
+    return APP_LEVEL_HANDSHAKE;
+  case NGTCP2_ENCRYPTION_LEVEL_1RTT:
+    return APP_LEVEL_APPLICATION;
+  default:
+    return -2; /* 0-RTT, which this client never offers. */
+  }
+}
+
 /* ------------------------------------------------------------------------- */
 /* ngtcp2 callbacks                                                           */
 /* ------------------------------------------------------------------------- */
@@ -114,7 +162,19 @@ static jbyteArray to_java_bytes(JNIEnv *env, const uint8_t *data, size_t len) {
    something to put in its first Initial packet. */
 static int on_client_initial(ngtcp2_conn *conn, void *user_data) {
   quic_conn *qc = (quic_conn *)user_data;
-  (void)conn;
+
+  /* Replacing ngtcp2's own client_initial callback means taking on what it
+     did. Deriving the Initial keys is the part that is easy to miss and fatal
+     to miss: without them conn->in_pktns->crypto.tx.ckm stays NULL, and the
+     very first Initial packet dereferences it while building its nonce. The
+     assert that would catch it is compiled out of a release build. */
+  if (ngtcp2_crypto_derive_and_install_initial_key(
+        conn, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        ngtcp2_conn_get_client_chosen_version2(conn),
+        ngtcp2_conn_get_dcid2(conn)) != 0) {
+    LOGW("could not install the Initial keys");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
 
   int attached = 0;
   JNIEnv *env = attach(qc, &attached);
@@ -122,8 +182,9 @@ static int on_client_initial(ngtcp2_conn *conn, void *user_data) {
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
 
-  /* Level -1 means "there is no data, produce the first flight". */
-  (*env)->CallVoidMethod(env, qc->callback, qc->on_crypto_data, -1, NULL);
+  /* A null payload means "there is no data, produce the first flight". */
+  (*env)->CallVoidMethod(env, qc->callback, qc->on_crypto_data,
+                         APP_LEVEL_INITIAL, NULL);
   int failed = (*env)->ExceptionCheck(env);
   if (failed) {
     (*env)->ExceptionDescribe(env);
@@ -150,12 +211,19 @@ static int on_recv_crypto_data(ngtcp2_conn *conn,
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
 
+  jint app_level = from_ngtcp2_level(level);
+  if (app_level < 0) {
+    /* 0-RTT, which this client never offers, so there is nothing to hand up. */
+    detach(qc, attached);
+    return 0;
+  }
+
   jbyteArray bytes = to_java_bytes(env, data, datalen);
   int failed = 0;
   if (bytes == NULL) {
     failed = 1;
   } else {
-    (*env)->CallVoidMethod(env, qc->callback, qc->on_crypto_data, (jint)level,
+    (*env)->CallVoidMethod(env, qc->callback, qc->on_crypto_data, app_level,
                            bytes);
     failed = (*env)->ExceptionCheck(env);
     if (failed) {
@@ -390,11 +458,18 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   ngtcp2_settings settings;
   ngtcp2_settings_default(&settings);
   settings.initial_ts = timestamp_ns();
+  /* The ceiling, not the starting point. Shaping stays on so ngtcp2 begins at
+     the 1200 bytes every path must carry and grows towards this through PMTU
+     discovery — forcing the ceiling from the first packet makes the Initial
+     datagram undeliverable on any path with a smaller MTU, and there is no
+     fallback once it has been ruled out. */
   settings.max_tx_udp_payload_size = MAX_DATAGRAM;
-  settings.no_tx_udp_payload_size_shaping = 1;
 
   ngtcp2_transport_params params;
   ngtcp2_transport_params_default(&params);
+  /* Every stream here is opened by us; a server that opens one is not
+     something any protocol on this transport does, and granting no credit
+     makes such an attempt a connection error rather than a silent surprise. */
   params.initial_max_streams_bidi = 0;
   params.initial_max_streams_uni = 0;
   params.initial_max_stream_data_bidi_local = 1024 * 1024;
@@ -514,19 +589,26 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWrite(JNIEnv *env, jclass clazz,
 }
 
 /*
- * Writes stream data, returning how many bytes ngtcp2 took.
+ * Writes stream data and hands back the datagram it produced.
  *
- * It may take fewer than offered, or none, when flow control or congestion
- * says so — the caller keeps the remainder and offers it again.
+ * Both halves matter. ngtcp2 serialises a packet into our buffer *and* reports
+ * how much of the offered payload went into it, and those are different
+ * numbers: returning only the count loses the packet, which then never reaches
+ * the wire even though the library has already numbered it and is waiting to
+ * have it acknowledged.
+ *
+ * `accepted_out[0]` receives the byte count. Taking fewer than offered, or
+ * none, is ordinary — flow control and congestion both say so — and the caller
+ * offers the remainder again.
  */
-JNIEXPORT jlong JNICALL
+JNIEXPORT jbyteArray JNICALL
 Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
   JNIEnv *env, jclass clazz, jlong handle, jlong stream_id, jbyteArray data,
-  jboolean fin) {
+  jboolean fin, jlongArray accepted_out) {
   (void)clazz;
   quic_conn *qc = (quic_conn *)(intptr_t)handle;
   if (qc == NULL || qc->conn == NULL) {
-    return NGTCP2_ERR_INVALID_STATE;
+    return NULL;
   }
 
   jsize len = data == NULL ? 0 : (*env)->GetArrayLength(env, data);
@@ -534,7 +616,7 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
   if (len > 0) {
     bytes = (*env)->GetByteArrayElements(env, data, NULL);
     if (bytes == NULL) {
-      return NGTCP2_ERR_NOMEM;
+      return NULL;
     }
   }
 
@@ -547,10 +629,10 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
   ngtcp2_pkt_info pi;
 
   ngtcp2_ssize accepted = 0;
-  uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
-  if (fin) {
-    flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
-  }
+  /* No WRITE_MORE: nothing here coalesces several streams into one packet,
+     which is its only purpose, and it would leave ngtcp2 mid-packet across a
+     released lock waiting for a resume call with the same timestamp. */
+  uint32_t flags = fin ? NGTCP2_WRITE_STREAM_FLAG_FIN : NGTCP2_WRITE_STREAM_FLAG_NONE;
 
   ngtcp2_ssize written = ngtcp2_conn_writev_stream(
     qc->conn, &ps.path, &pi, qc->out, sizeof(qc->out), &accepted, flags,
@@ -561,10 +643,42 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
     (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
   }
 
-  if (written < 0 && written != NGTCP2_ERR_WRITE_MORE) {
-    return (jlong)written;
+  if (accepted_out != NULL) {
+    /* -1 means "no STREAM frame went into this packet", which is a normal
+       outcome and not an error; reporting it as a byte count would have the
+       caller treat a routine backpressure tick as a fatal write failure. */
+    jlong reported = written < 0 ? 0 : (accepted < 0 ? 0 : (jlong)accepted);
+    (*env)->SetLongArrayRegion(env, accepted_out, 0, 1, &reported);
   }
-  return (jlong)accepted;
+
+  if (written <= 0) {
+    if (written < 0 && written != NGTCP2_ERR_STREAM_DATA_BLOCKED &&
+        written != NGTCP2_ERR_STREAM_SHUT_WR) {
+      LOGD("writev_stream: %s", ngtcp2_strerror((int)written));
+    }
+    return NULL;
+  }
+  return to_java_bytes(env, qc->out, (size_t)written);
+}
+
+/*
+ * Tells ngtcp2 the send burst is over, so it can pace the next one.
+ *
+ * Without this `pacing_interval_m` is never consulted and every window is sent
+ * as fast as the socket will take it, which is what congestion control exists
+ * to avoid.
+ */
+JNIEXPORT void JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicConnFlushDone(JNIEnv *env,
+                                                          jclass clazz,
+                                                          jlong handle) {
+  (void)env;
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return;
+  }
+  ngtcp2_conn_update_pkt_tx_time(qc->conn, timestamp_ns());
 }
 
 JNIEXPORT jlong JNICALL Java_com_mythaia_vpn_NativeBridge_nativeQuicConnExpiry(
@@ -634,20 +748,23 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicSubmitCrypto(
     return NGTCP2_ERR_INVALID_STATE;
   }
 
-  jsize len = (*env)->GetArrayLength(env, data);
-  /* ngtcp2 keeps a pointer to this buffer until the data is acknowledged, so
-     it has to outlive the call — freed when the connection is. */
-  uint8_t *copy = malloc((size_t)len);
-  if (copy == NULL) {
+  ngtcp2_encryption_level target;
+  if (to_ngtcp2_level(level, &target) != 0) {
+    return NGTCP2_ERR_INVALID_ARGUMENT;
+  }
+
+  jbyte *bytes = (*env)->GetByteArrayElements(env, data, NULL);
+  if (bytes == NULL) {
     return NGTCP2_ERR_NOMEM;
   }
-  (*env)->GetByteArrayRegion(env, data, 0, len, (jbyte *)copy);
+  jsize len = (*env)->GetArrayLength(env, data);
 
-  int rv = ngtcp2_conn_submit_crypto_data(
-    qc->conn, (ngtcp2_encryption_level)level, copy, (size_t)len);
-  if (rv != 0) {
-    free(copy);
-  }
+  /* ngtcp2 copies the bytes into its own buffer chain (conn_buffer_crypto_data
+     ends in ngtcp2_cpymem), so nothing here has to outlive the call. */
+  int rv = ngtcp2_conn_submit_crypto_data(qc->conn, target,
+                                          (const uint8_t *)bytes, (size_t)len);
+
+  (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
   return rv;
 }
 
@@ -675,14 +792,73 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicInstallKeys(
     (*env)->GetByteArrayRegion(env, tx_secret, 0, tx_len, (jbyte *)tx);
   }
 
-  return ngtcp2_crypto_derive_and_install_rx_key(
-           qc->conn, NULL, NULL, NULL, (ngtcp2_encryption_level)level, rx,
-           (size_t)rx_len) != 0 ||
-             ngtcp2_crypto_derive_and_install_tx_key(
-               qc->conn, NULL, NULL, NULL, (ngtcp2_encryption_level)level, tx,
-               (size_t)tx_len) != 0
-           ? NGTCP2_ERR_CALLBACK_FAILURE
-           : 0;
+  ngtcp2_encryption_level target;
+  if (to_ngtcp2_level(level, &target) != 0) {
+    return NGTCP2_ERR_INVALID_ARGUMENT;
+  }
+
+  if (ngtcp2_crypto_derive_and_install_rx_key(qc->conn, NULL, NULL, NULL,
+                                              target, rx, (size_t)rx_len) != 0) {
+    LOGW("could not install the rx key at level %d", (int)level);
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  if (ngtcp2_crypto_derive_and_install_tx_key(qc->conn, NULL, NULL, NULL,
+                                              target, tx, (size_t)tx_len) != 0) {
+    LOGW("could not install the tx key at level %d", (int)level);
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
+}
+
+/*
+ * Hands the peer's transport parameters to ngtcp2.
+ *
+ * Decoding them in Kotlin is for diagnostics; these are the values ngtcp2
+ * enforces, and without this it keeps its own conservative defaults — the
+ * peer's stream and flow-control limits are simply never learned.
+ */
+JNIEXPORT jint JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicSetRemoteParams(JNIEnv *env,
+                                                            jclass clazz,
+                                                            jlong handle,
+                                                            jbyteArray params) {
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return NGTCP2_ERR_INVALID_STATE;
+  }
+
+  jbyte *bytes = (*env)->GetByteArrayElements(env, params, NULL);
+  if (bytes == NULL) {
+    return NGTCP2_ERR_NOMEM;
+  }
+  jsize len = (*env)->GetArrayLength(env, params);
+
+  int rv = ngtcp2_conn_decode_and_set_remote_transport_params(
+    qc->conn, (const uint8_t *)bytes, (size_t)len);
+
+  (*env)->ReleaseByteArrayElements(env, params, bytes, JNI_ABORT);
+  return rv;
+}
+
+/*
+ * Tells ngtcp2 the TLS handshake finished.
+ *
+ * Only ever after the server's Finished has been verified: this is what
+ * promotes the connection to carrying application data, and calling it earlier
+ * promotes one that has proved nothing.
+ */
+JNIEXPORT void JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicHandshakeCompleted(JNIEnv *env,
+                                                               jclass clazz,
+                                                               jlong handle) {
+  (void)env;
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return;
+  }
+  ngtcp2_conn_tls_handshake_completed(qc->conn);
 }
 
 /* ------------------------------------------------------------------------- */

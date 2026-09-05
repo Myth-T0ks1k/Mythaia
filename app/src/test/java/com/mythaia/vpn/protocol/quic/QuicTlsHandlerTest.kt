@@ -155,12 +155,17 @@ class QuicTlsHandlerTest {
     // MARK: - Encryption levels
 
     @Test
-    fun `the level numbers are the ones ngtcp2 uses`() {
-        // ngtcp2_encryption_level: initial 0, 0-RTT 1, handshake 2, 1-RTT 3.
-        // Installing at the wrong level fails in a way nothing reports.
+    fun `the level numbers are contiguous and are not ngtcp2's own`() {
+        // These are the bridge's numbering, translated to ngtcp2's enum in C.
+        // Deliberately not ngtcp2's raw values: that enum has been renumbered
+        // once already — ngtcp2_crypto_level ordered them initial, early,
+        // handshake, app, while ngtcp2_encryption_level orders them initial,
+        // handshake, 1-RTT, 0-RTT. Constants copied from the old order install
+        // handshake keys as 1-RTT keys, the handshake never completes, and
+        // nothing anywhere reports why. This exact mistake was in this file.
         assertEquals(0, QuicTlsHandler.LEVEL_INITIAL)
-        assertEquals(2, QuicTlsHandler.LEVEL_HANDSHAKE)
-        assertEquals(3, QuicTlsHandler.LEVEL_APPLICATION)
+        assertEquals(1, QuicTlsHandler.LEVEL_HANDSHAKE)
+        assertEquals(2, QuicTlsHandler.LEVEL_APPLICATION)
     }
 
     @Test

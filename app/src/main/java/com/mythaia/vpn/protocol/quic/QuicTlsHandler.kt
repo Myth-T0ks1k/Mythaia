@@ -52,6 +52,10 @@ class QuicTlsHandler(
     var cipherSuite: Int = 0
         private set
 
+    /** The protocol the server picked from what was offered. */
+    var negotiatedAlpn: String? = null
+        private set
+
     /** What the server advertised, available after EncryptedExtensions. */
     var peerTransportParameters: List<QuicTuning.TransportParameter> = emptyList()
         private set
@@ -169,7 +173,7 @@ class QuicTlsHandler(
             val body = message.copyOfRange(4, message.size)
             val outcome = when (type) {
                 SERVER_HELLO -> processServerHello(connection, body)
-                ENCRYPTED_EXTENSIONS -> processEncryptedExtensions(body)
+                ENCRYPTED_EXTENSIONS -> processEncryptedExtensions(connection, body)
                 CERTIFICATE -> processCertificate(body)
                 CERTIFICATE_VERIFY -> processCertificateVerify(body)
                 FINISHED -> processServerFinished(connection)
@@ -244,7 +248,7 @@ class QuicTlsHandler(
      * Anything unreadable there is the server's half of the transport contract,
      * so it is a reason to stop rather than to carry on with defaults.
      */
-    private fun processEncryptedExtensions(body: ByteArray): Outcome {
+    private fun processEncryptedExtensions(connection: Long, body: ByteArray): Outcome {
         if (body.size < 2) return Outcome.OK
         val total = ((body[0].toInt() and 0xFF) shl 8) or (body[1].toInt() and 0xFF)
         var at = 2
@@ -257,9 +261,23 @@ class QuicTlsHandler(
             if (at + length > end) break
 
             if (type == QuicTransportParameters.EXTENSION_TYPE) {
-                val parsed = QuicTransportParameters.decode(body.copyOfRange(at, at + length))
+                val raw = body.copyOfRange(at, at + length)
+                val parsed = QuicTransportParameters.decode(raw)
                     ?: return fail("server sent malformed transport parameters")
                 peerTransportParameters = parsed
+
+                // ngtcp2 is the authority on these — it enforces the limits.
+                // The parsed list above is for anything that wants to look.
+                if (NativeBridge.nativeQuicSetRemoteParams(connection, raw) != 0) {
+                    return fail("ngtcp2 refused the peer transport parameters")
+                }
+            }
+
+            if (type == EXTENSION_ALPN) {
+                negotiatedAlpn = readAlpn(body, at, length)
+                if (alpn.isNotEmpty() && negotiatedAlpn !in alpn) {
+                    return fail("server selected ALPN '$negotiatedAlpn', which was not offered")
+                }
             }
             at += length
         }
@@ -359,8 +377,12 @@ class QuicTlsHandler(
         // be carrying real traffic to whoever answered.
         if (validateCertificate() == Outcome.FAILED) return Outcome.FAILED
 
+        // RFC 8446 7.1: the application secrets are derived over the
+        // transcript through the server Finished, which `transcript` already
+        // includes. The earlier snapshot is what verifies that Finished, and
+        // using it here would derive keys the server does not share.
         val (clientApplication, serverApplication) =
-            derivation.deriveApplicationSecrets(secret, transcriptBeforeServerFinished)
+            derivation.deriveApplicationSecrets(secret, transcript)
         if (NativeBridge.nativeQuicInstallKeys(
                 connection, LEVEL_APPLICATION, serverApplication, clientApplication
             ) != 0
@@ -382,8 +404,22 @@ class QuicTlsHandler(
         }
         transcript += finished
 
+        // Strictly after the certificate check above: this is what promotes the
+        // connection to carrying application data, and a connection that has
+        // proved nothing must never be promoted.
+        NativeBridge.nativeQuicHandshakeCompleted(connection)
+
         phase = Phase.ESTABLISHED
         return Outcome.OK
+    }
+
+    /** The single protocol name in an ALPN extension, or null. */
+    private fun readAlpn(body: ByteArray, at: Int, length: Int): String? {
+        // list length(2) name length(1) name
+        if (length < 3) return null
+        val nameLength = body[at + 2].toInt() and 0xFF
+        if (at + 3 + nameLength > body.size || nameLength == 0) return null
+        return String(body, at + 3, nameLength, Charsets.US_ASCII)
     }
 
     // MARK: - Helpers
@@ -423,10 +459,14 @@ class QuicTlsHandler(
     }
 
     companion object {
-        // ngtcp2_encryption_level
+        // The bridge's own numbering, translated to ngtcp2's enum in C.
+        // Deliberately not ngtcp2's values: that enum has been renumbered once
+        // already — `ngtcp2_crypto_level` ordered them initial, early,
+        // handshake, app — and a constant that silently survived the change
+        // installs handshake keys as 1-RTT keys with nothing to show for it.
         const val LEVEL_INITIAL = 0
-        const val LEVEL_HANDSHAKE = 2
-        const val LEVEL_APPLICATION = 3
+        const val LEVEL_HANDSHAKE = 1
+        const val LEVEL_APPLICATION = 2
 
         private const val SERVER_HELLO = 2
         private const val NEW_SESSION_TICKET = 4
@@ -435,6 +475,7 @@ class QuicTlsHandler(
         private const val CERTIFICATE_VERIFY = 15
         private const val FINISHED = 20
 
+        private const val EXTENSION_ALPN = 16
         private const val EXTENSION_KEY_SHARE = 51
         private const val GROUP_X25519 = 0x001D
     }

@@ -178,14 +178,22 @@ class QuicConnection(
         return stream
     }
 
-    /** Offers stream data to ngtcp2, returning how much it took. */
+    /**
+     * Offers stream data to ngtcp2 and puts the packet it built on the wire.
+     *
+     * The packet and the accepted byte count are different numbers, and both
+     * come back: sending only the count would leave ngtcp2 waiting to have a
+     * packet acknowledged that never left.
+     */
     internal fun writeStream(streamId: Long, data: ByteArray, fin: Boolean): Long {
-        val accepted = synchronized(engineLock) {
+        val accepted = LongArray(1)
+        val datagram = synchronized(engineLock) {
             if (handle == 0L) return -1
-            NativeBridge.nativeQuicConnWriteStream(handle, streamId, data, fin)
+            NativeBridge.nativeQuicConnWriteStream(handle, streamId, data, fin, accepted)
         }
+        datagram?.let { send(it) }
         flush()
-        return accepted
+        return accepted[0]
     }
 
     internal fun shutdownStream(streamId: Long) {
@@ -212,19 +220,30 @@ class QuicConnection(
 
     /** Drains everything ngtcp2 wants to send and puts it on the wire. */
     private fun flush() {
-        val target = endpoint ?: return
         while (true) {
             val datagram = synchronized(engineLock) {
                 if (handle == 0L) null else NativeBridge.nativeQuicConnWrite(handle)
-            } ?: return
+            } ?: break
+            if (!send(datagram)) return
+        }
+        // The burst is over, so ngtcp2 can pace the next one. Without this the
+        // pacing interval is never consulted and a window leaves as fast as the
+        // socket takes it.
+        synchronized(engineLock) {
+            if (handle != 0L) NativeBridge.nativeQuicConnFlushDone(handle)
+        }
+    }
 
-            val current = socket ?: return
-            try {
-                current.send(DatagramPacket(datagram, datagram.size, target))
-            } catch (e: Exception) {
-                if (running.get()) logger.warning("[QUIC] Send failed: ${e.message}")
-                return
-            }
+    /** Puts one datagram on the wire. False when the socket has gone. */
+    private fun send(datagram: ByteArray): Boolean {
+        val target = endpoint ?: return false
+        val current = socket ?: return false
+        return try {
+            current.send(DatagramPacket(datagram, datagram.size, target))
+            true
+        } catch (e: Exception) {
+            if (running.get()) logger.warning("[QUIC] Send failed: ${e.message}")
+            false
         }
     }
 

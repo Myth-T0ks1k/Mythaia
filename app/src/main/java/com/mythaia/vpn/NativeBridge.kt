@@ -258,18 +258,50 @@ object NativeBridge {
     external fun nativeQuicConnWrite(handle: Long): ByteArray?
 
     /**
-     * Offers stream data, returning how many bytes were accepted.
+     * Offers stream data and returns the datagram it produced, or null.
      *
-     * Fewer than offered, or none, is normal — flow control and congestion both
-     * say so — and the caller keeps the remainder for the next attempt.
+     * Both halves matter: ngtcp2 serialises a packet *and* reports how much of
+     * the payload went into it, and those are different numbers. The byte count
+     * lands in `acceptedOut[0]`. Taking fewer than offered, or none, is normal
+     * — flow control and congestion both say so — and the caller offers the
+     * remainder again.
      */
     @JvmStatic
     external fun nativeQuicConnWriteStream(
         handle: Long,
         streamId: Long,
         data: ByteArray?,
-        fin: Boolean
-    ): Long
+        fin: Boolean,
+        acceptedOut: LongArray
+    ): ByteArray?
+
+    /**
+     * Marks the end of a send burst so ngtcp2 can pace the next one.
+     *
+     * Without it the pacing interval is never consulted and a whole window
+     * leaves as fast as the socket accepts it.
+     */
+    @JvmStatic
+    external fun nativeQuicConnFlushDone(handle: Long)
+
+    /**
+     * Hands the peer's transport parameters to ngtcp2.
+     *
+     * These are the limits it actually enforces; decoding them in Kotlin is for
+     * diagnostics. Without this it keeps its own defaults and never learns the
+     * peer's stream or flow-control credit.
+     */
+    @JvmStatic
+    external fun nativeQuicSetRemoteParams(handle: Long, params: ByteArray): Int
+
+    /**
+     * Tells ngtcp2 the TLS handshake finished.
+     *
+     * Only after the server's Finished has been verified — this is what
+     * promotes the connection to carrying application data.
+     */
+    @JvmStatic
+    external fun nativeQuicHandshakeCompleted(handle: Long)
 
     /** When the connection next needs attention, in monotonic nanoseconds. */
     @JvmStatic
