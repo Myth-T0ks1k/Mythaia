@@ -157,12 +157,13 @@ class ShareLinkTest {
     }
 
     @Test
-    fun `these protocols are not dialable yet and say so`() {
-        // Parsing them keeps a subscription intact; the factory is what refuses.
-        assertTrue(OutboundProtocol.VLESS.isImplemented)
-        assertTrue(OutboundProtocol.TROJAN.isImplemented)
-        assertTrue(OutboundProtocol.ANYTLS.isImplemented)
-        // Hysteria2 is the last one still waiting on the QUIC stack.
-        assertEquals(false, OutboundProtocol.HYSTERIA2.isImplemented)
+    fun `every protocol a link can name is dialable`() {
+        // Hysteria2 was the last one waiting on the QUIC stack. The property
+        // stays because a subscription may carry something a future build adds,
+        // and failing at the dial with the protocol named beats a silent
+        // timeout — but nothing in this build is in that state.
+        for (protocol in OutboundProtocol.entries) {
+            assertTrue(protocol.name, protocol.isImplemented)
+        }
     }
 }
