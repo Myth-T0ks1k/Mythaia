@@ -95,6 +95,7 @@ set(JNI_BRIDGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/blake3_jni_bridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/yaml_jni_bridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/quic_jni_bridge.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/quic_conn_bridge.c
 )
 
 # --------------------------------------------------------------------------

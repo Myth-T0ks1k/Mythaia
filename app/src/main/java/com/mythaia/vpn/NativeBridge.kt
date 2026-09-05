@@ -206,6 +206,107 @@ object NativeBridge {
      * "compiles" and "links" are the strongest claims available for code that
      * only ever executes on the device.
      */
+    /**
+     * A QUIC connection, as ngtcp2 models one.
+     *
+     * ngtcp2 is a state machine rather than a socket: it is fed the datagrams
+     * that arrived, asked for the datagrams to send, and told when its timer
+     * expired. The socket, the event loop and the TLS handshake are all above
+     * this line — which is why the handshake callbacks hand their bytes up
+     * rather than answering in C. A second TLS implementation next to the
+     * Kotlin one would be a second thing to get wrong.
+     */
+    interface QuicCallback {
+        /**
+         * Handshake bytes, or a request for the first flight.
+         *
+         * [level] is the encryption level the bytes arrived at, or -1 to mean
+         * "produce the ClientHello" — at which point the implementation is
+         * expected to call [nativeQuicSubmitCrypto] before returning.
+         */
+        fun onCryptoData(level: Int, data: ByteArray?)
+
+        fun onStreamData(streamId: Long, data: ByteArray, fin: Boolean)
+        fun onStreamClose(streamId: Long, errorCode: Long)
+        fun onHandshakeComplete()
+    }
+
+    /** Zero when the connection could not be created. */
+    @JvmStatic
+    external fun nativeQuicConnCreate(
+        remoteIp: String,
+        remotePort: Int,
+        localIp: String,
+        localPort: Int,
+        callback: QuicCallback
+    ): Long
+
+    @JvmStatic
+    external fun nativeQuicConnFree(handle: Long)
+
+    /** Feeds one received datagram in. Negative is an ngtcp2 error code. */
+    @JvmStatic
+    external fun nativeQuicConnRead(handle: Long, packet: ByteArray, length: Int): Int
+
+    /**
+     * The next datagram to send, or null when there is nothing.
+     *
+     * Call it in a loop until it returns null: ngtcp2 decides from its own
+     * pacing and congestion state how much may go out now.
+     */
+    @JvmStatic
+    external fun nativeQuicConnWrite(handle: Long): ByteArray?
+
+    /**
+     * Offers stream data, returning how many bytes were accepted.
+     *
+     * Fewer than offered, or none, is normal — flow control and congestion both
+     * say so — and the caller keeps the remainder for the next attempt.
+     */
+    @JvmStatic
+    external fun nativeQuicConnWriteStream(
+        handle: Long,
+        streamId: Long,
+        data: ByteArray?,
+        fin: Boolean
+    ): Long
+
+    /** When the connection next needs attention, in monotonic nanoseconds. */
+    @JvmStatic
+    external fun nativeQuicConnExpiry(handle: Long): Long
+
+    @JvmStatic
+    external fun nativeQuicConnHandleExpiry(handle: Long): Int
+
+    /** Hands the handshake bytes produced by the TLS layer to the connection. */
+    @JvmStatic
+    external fun nativeQuicSubmitCrypto(handle: Long, level: Int, data: ByteArray): Int
+
+    /** Installs the traffic secrets for one encryption level, both directions. */
+    @JvmStatic
+    external fun nativeQuicInstallKeys(
+        handle: Long,
+        level: Int,
+        rxSecret: ByteArray?,
+        txSecret: ByteArray?
+    ): Int
+
+    /** The new stream's id, or a negative ngtcp2 error code. */
+    @JvmStatic
+    external fun nativeQuicOpenBidiStream(handle: Long): Long
+
+    @JvmStatic
+    external fun nativeQuicShutdownStream(handle: Long, streamId: Long, errorCode: Long)
+
+    /**
+     * Reports that [count] bytes of a stream have been consumed.
+     *
+     * Without it the peer's flow-control window closes and the transfer stalls
+     * partway through with nothing logged anywhere.
+     */
+    @JvmStatic
+    external fun nativeQuicExtendOffsets(handle: Long, streamId: Long, count: Int)
+
     @JvmStatic
     external fun nativeQuicSelfTest(): String?
 
