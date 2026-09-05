@@ -66,6 +66,17 @@ set(LIBYAML_SOURCES
 )
 
 # --------------------------------------------------------------------------
+# ngtcp2 (QUIC)
+#
+# A flattened vendor copy of upstream 1.25.0 — see ngtcp2/UPSTREAM_MAP.md for
+# what is stock and what is ours. `shared.c` is the backend-agnostic half of
+# the crypto helper; the backend half is ngtcp2_crypto_android.c.
+# --------------------------------------------------------------------------
+set(NGTCP2_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ngtcp2)
+
+file(GLOB NGTCP2_SOURCES ${NGTCP2_DIR}/*.c)
+
+# --------------------------------------------------------------------------
 # JNI bridge files
 # --------------------------------------------------------------------------
 set(JNI_BRIDGE_SOURCES
@@ -75,37 +86,65 @@ set(JNI_BRIDGE_SOURCES
 )
 
 # --------------------------------------------------------------------------
+# Vendored libraries are built as separate static targets.
+#
+# libyaml and ngtcp2 each ship their own `config.h`, and libyaml reaches its
+# with a quoted include that falls through to the include path. In one target
+# they share that path and whichever directory is listed first wins for both —
+# so they get a target each, with the config they mean on a private path.
+# --------------------------------------------------------------------------
+set(VENDOR_FLAGS -Wall -Wno-unused-variable -Wno-unused-function -O2)
+
+add_library(yaml_static STATIC ${LIBYAML_SOURCES})
+target_include_directories(yaml_static PRIVATE ${LIBYAML_DIR}/include)
+target_compile_definitions(yaml_static PRIVATE YAML_DECLARE_STATIC HAVE_CONFIG_H)
+target_compile_options(yaml_static PRIVATE ${VENDOR_FLAGS})
+
+add_library(ngtcp2_static STATIC ${NGTCP2_SOURCES})
+target_include_directories(ngtcp2_static PRIVATE ${NGTCP2_DIR})
+target_compile_definitions(ngtcp2_static PRIVATE HAVE_CONFIG_H)
+target_compile_options(ngtcp2_static PRIVATE
+    ${VENDOR_FLAGS}
+    # Upstream is warning-clean under its own build; these two fire only from
+    # the way the sources are compiled here and say nothing about the code.
+    -Wno-unused-but-set-variable
+    -Wno-unreachable-code
+)
+
+# --------------------------------------------------------------------------
 # Build single shared library
 # --------------------------------------------------------------------------
 add_library(mythaia_native SHARED
     ${LWIP_SOURCES}
     ${BLAKE3_SOURCES}
-    ${LIBYAML_SOURCES}
     ${JNI_BRIDGE_SOURCES}
 )
 
 # --------------------------------------------------------------------------
 # Include paths
+#
+# ngtcp2's directory carries both its public headers (ngtcp2/ngtcp2.h) and its
+# private config.h. Nothing outside the vendor tree includes <config.h>, so
+# putting it last keeps it from shadowing anything.
 # --------------------------------------------------------------------------
 target_include_directories(mythaia_native PRIVATE
     ${LWIP_INCLUDE_DIRS}
     ${LIBYAML_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/compat
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${NGTCP2_DIR}
 )
 
-# --------------------------------------------------------------------------
-# libyaml needs YAML_DECLARE_STATIC and HAVE_CONFIG_H
-# --------------------------------------------------------------------------
 target_compile_definitions(mythaia_native PRIVATE
     YAML_DECLARE_STATIC
-    HAVE_CONFIG_H
 )
 
 # --------------------------------------------------------------------------
 # Link libraries
 # --------------------------------------------------------------------------
 target_link_libraries(mythaia_native
+    yaml_static
+    ngtcp2_static
     log
 )
 
