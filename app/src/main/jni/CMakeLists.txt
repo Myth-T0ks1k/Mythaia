@@ -77,6 +77,17 @@ set(NGTCP2_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ngtcp2)
 file(GLOB NGTCP2_SOURCES ${NGTCP2_DIR}/*.c)
 
 # --------------------------------------------------------------------------
+# mbedTLS — the primitives behind ngtcp2_crypto_android.c
+#
+# A minimal subset: the AEADs and hashes a TLS 1.3 suite can name, plus HKDF.
+# No X.509, no TLS, no PSA — the handshake is Kotlin's, and this is only the
+# record-protection half. See mbedtls_config.h.
+# --------------------------------------------------------------------------
+set(MBEDTLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls)
+
+file(GLOB MBEDTLS_SOURCES ${MBEDTLS_DIR}/library/*.c)
+
+# --------------------------------------------------------------------------
 # JNI bridge files
 # --------------------------------------------------------------------------
 set(JNI_BRIDGE_SOURCES
@@ -100,9 +111,18 @@ target_include_directories(yaml_static PRIVATE ${LIBYAML_DIR}/include)
 target_compile_definitions(yaml_static PRIVATE YAML_DECLARE_STATIC HAVE_CONFIG_H)
 target_compile_options(yaml_static PRIVATE ${VENDOR_FLAGS})
 
+add_library(mbedcrypto_static STATIC ${MBEDTLS_SOURCES})
+target_include_directories(mbedcrypto_static PUBLIC ${MBEDTLS_DIR}/include)
+target_include_directories(mbedcrypto_static PRIVATE ${MBEDTLS_DIR}/library)
+target_compile_definitions(mbedcrypto_static PUBLIC
+    MBEDTLS_CONFIG_FILE="${MBEDTLS_DIR}/mbedtls_config.h"
+)
+target_compile_options(mbedcrypto_static PRIVATE ${VENDOR_FLAGS})
+
 add_library(ngtcp2_static STATIC ${NGTCP2_SOURCES})
 target_include_directories(ngtcp2_static PRIVATE ${NGTCP2_DIR})
 target_compile_definitions(ngtcp2_static PRIVATE HAVE_CONFIG_H)
+target_link_libraries(ngtcp2_static mbedcrypto_static)
 target_compile_options(ngtcp2_static PRIVATE
     ${VENDOR_FLAGS}
     # Upstream is warning-clean under its own build; these two fire only from
