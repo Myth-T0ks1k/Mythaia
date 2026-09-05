@@ -1,5 +1,7 @@
 package com.mythaia.ui.navigation
 
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -49,7 +51,6 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.VerticalDivider
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.navigation.NavHostController
 import com.mythaia.ui.components.WingMark
 import com.mythaia.viewmodel.VpnViewModel
@@ -127,7 +128,12 @@ fun AppNavigation(viewModel: VpnViewModel) {
     // A rail once the window is wide enough for one: on a tablet or an unfolded
     // foldable a bottom bar wastes the height and puts the targets far from
     // where the hands are. 600dp is Material's own compact/medium boundary.
-    val wideLayout = LocalConfiguration.current.screenWidthDp >= WIDE_LAYOUT_BREAKPOINT_DP
+    // The window's own size rather than Configuration.screenWidthDp, which
+    // excludes system decorations and is not updated in every multi-window
+    // state — both of which matter exactly at a breakpoint.
+    val density = LocalDensity.current
+    val containerWidth = LocalWindowInfo.current.containerSize.width
+    val wideLayout = with(density) { containerWidth.toDp() } >= WIDE_LAYOUT_BREAKPOINT_DP.dp
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

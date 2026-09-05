@@ -1,5 +1,6 @@
 package com.mythaia.vpn.util
 
+import android.annotation.SuppressLint
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.SocketProtector
 import com.mythaia.vpn.protocol.Transport
@@ -648,6 +649,7 @@ class NioSocket : Transport {
  * for its underlying kernel fd. Returns null when the field isn't exposed
  * — the caller treats that as "skip optional tuning."
  */
+@SuppressLint("DiscouragedPrivateApi")
 private fun java.net.Socket.getFileDescriptorField(): java.io.FileDescriptor? {
     return try {
         val implField = java.net.Socket::class.java.getDeclaredField("impl")

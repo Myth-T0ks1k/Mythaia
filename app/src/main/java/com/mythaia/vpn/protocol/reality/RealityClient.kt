@@ -1023,6 +1023,12 @@ class RealityClient(
      * When non-null, sets [mlkemPrivateKey] for later decapsulation.
      */
     private fun tryGenerateMLKEMKeyPair(): ByteArray? {
+        // The version check is repeated here, rather than left to
+        // `mlkemSupported`, so it is visible at the call site: behind a lazy
+        // delegate the analyser cannot see it and reads the call below as
+        // unguarded. `mlkemSupported` still does the real work of probing for
+        // the provider once and caching the answer.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return null
         if (!mlkemSupported) return null
         return generateMLKEMKeyPairImpl()
     }

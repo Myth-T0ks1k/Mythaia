@@ -1,5 +1,6 @@
 package com.mythaia.vpn
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.ParcelFileDescriptor
@@ -433,7 +434,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
      *   (e.g., the TUN file descriptor) should do so inside this callback to
      *   avoid racing with in-flight I/O — resources must only be released
      *   after the queue drains. */
-    fun stop(onComplete: Runnable? = null) {
+    fun stop(onComplete: (() -> Unit)? = null) {
         logger.debug("[LWIPStack] Stopping")
         stopObservingSettings()
 
@@ -451,7 +452,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             tunFd = null
             configuration = null
             instance = null
-            onComplete?.run()
+            onComplete?.invoke()
         }
 
         // Orderly shutdown: the executor finishes the queued cleanup task,
@@ -1466,7 +1467,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
 
     /** Starts the lwIP periodic timeout timer (100ms interval). */
     private fun startTimeoutTimer() {
-        timeoutTimer = lwipExecutor.scheduleAtFixedRate({
+        // Fixed delay, not rate: coming back from a cached state must not
+        // replay every tick the process slept through in one burst.
+        timeoutTimer = lwipExecutor.scheduleWithFixedDelay({
             if (running) {
                 NativeBridge.nativeTimerPoll()
             }
@@ -1475,8 +1478,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
 
     /** Starts the UDP flow cleanup timer. */
     private fun startUdpCleanupTimer() {
-        udpCleanupTimer = lwipExecutor.scheduleAtFixedRate({
-            if (!running) return@scheduleAtFixedRate
+        udpCleanupTimer = lwipExecutor.scheduleWithFixedDelay({
+            if (!running) return@scheduleWithFixedDelay
             val now = System.nanoTime() / 1_000_000_000.0
             val keysToRemove = mutableListOf<String>()
             for ((key, flow) in udpFlows) {
@@ -1503,7 +1506,15 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         private const val MAX_TCP_CONNECTIONS = 128
         private const val MAX_UDP_FLOWS = 200
 
-        /** Singleton for callback access. */
+        /**
+         * Singleton for callback access.
+         *
+         * The context behind it is the VPN service, not an Activity, and the
+         * reference is set in start() and cleared in stop() — so it lives
+         * exactly as long as the tunnel does, which is the service's own
+         * lifetime.
+         */
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         var instance: LwipStack? = null
             private set

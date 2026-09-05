@@ -12,7 +12,7 @@
     <string name="auto">အလိုအလျောက်</string>
     <string name="cancel">ပယ်ဖျက်ရန်</string>
     <string name="connected">ချိတ်ဆက်ပြီး</string>
-    <string name="connecting">ချိတ်ဆက်နေသည်...</string>
+    <string name="connecting">ချိတ်ဆက်နေသည်…</string>
     <string name="continue_action">ဆက်လုပ်ရန်</string>
     <string name="country_bypass">နိုင်ငံရှောင်ကွင်း</string>
     <string name="direct">တိုက်ရိုက်</string>
@@ -20,14 +20,13 @@
     <string name="delete">ဖျက်ရန်</string>
     <string name="disable">ပိတ်ရန်</string>
     <string name="disconnected">ချိတ်ဆက်မှုပြတ်ပြီး</string>
-    <string name="disconnecting">ချိတ်ဆက်မှုဖြတ်နေသည်...</string>
+    <string name="disconnecting">ချိတ်ဆက်မှုဖြတ်နေသည်…</string>
     <string name="edit">တည်းဖြတ်</string>
     <string name="edit_configuration">ဖွဲ့စည်းမှုတည်းဖြတ်</string>
     <string name="enable_anyway">ဘယ်လိုပဲဖြစ်ဖြစ် ဖွင့်ရန်</string>
     <string name="encryption">ကုဒ်ဝှက်ခြင်း</string>
     <string name="fingerprint">လက်ဗွေ</string>
     <string name="flow">Flow</string>
-    <string name="go_to_settings">ဆက်တင်သို့သွားရန်</string>
     <string name="home">ပင်မ</string>
     <string name="host">Host</string>
     <string name="import_failed">တင်သွင်းမှု မအောင်မြင်ပါ</string>
@@ -38,7 +37,6 @@
     <string name="network">ကွန်ရက်</string>
     <string name="no_proxies">ပရောက်စီမရှိပါ</string>
     <string name="none">မရှိ</string>
-    <string name="not_configured">ဖွဲ့စည်းမထားပါ</string>
     <string name="ok">အိုကေ</string>
     <string name="path">လမ်းကြောင်း</string>
     <string name="permission_denied">ခွင့်ပြုချက်ငြင်းပယ်ခံရသည်</string>
@@ -46,10 +44,9 @@
     <string name="proxies">ပရောက်စီများ</string>
     <string name="public_key">အများသုံးသော့</string>
     <string name="qr_code">QR ကုဒ်</string>
-    <string name="reconnecting">ပြန်လည်ချိတ်ဆက်နေသည်...</string>
+    <string name="reconnecting">ပြန်လည်ချိတ်ဆက်နေသည်…</string>
     <string name="routing">လမ်းကြောင်းသတ်မှတ်ခြင်း</string>
     <string name="routing_rules">လမ်းကြောင်းသတ်မှတ်ချက်များ</string>
-    <string name="routing_rules_updated">လမ်းကြောင်းသတ်မှတ်ချက်များ အပ်ဒိတ်လုပ်ပြီးပါပြီ</string>
     <string name="save">သိမ်းရန်</string>
     <string name="scan_your_qr_code">သင့် QR ကုဒ်ကိုစကင်ဖတ်ပါ</string>
     <string name="security">လုံခြုံရေး</string>
@@ -62,24 +59,19 @@
     <string name="insecure">မလုံခြုံ</string>
     <string name="trademarks">ကုန်အမှတ်တံဆိပ်များ</string>
     <string name="transport">အပို့အဆောင်</string>
-    <string name="unknown">မသိ</string>
     <string name="update">အပ်ဒိတ်</string>
     <string name="update_failed">အပ်ဒိတ် မအောင်မြင်ပါ</string>
     <string name="vpn_error">VPN အမှား</string>
     <string name="latency_ms">%d ms</string>
-    <string name="routing_rules_reset">အောက်ပါ လမ်းကြောင်းသတ်မှတ်ချက်များတွင် အသုံးပြုထားသော ပရောက်စီကို ဖျက်လိုက်ပါပြီ။ ၎င်းတို့ကို မူရင်းသို့ ပြန်လည်သတ်မှတ်ထားပါသည်: %s</string>
-    <string name="doh_routing_warning">DNS over HTTPS ကိုဖွင့်ခြင်းသည် လမ်းကြောင်းသတ်မှတ်ချက်များ အလုပ်မလုပ်စေပါ။ ဒိုမိန်းအခြေခံ လမ်းကြောင်းသတ်မှတ်ခြင်းသည် DNS ရိုးရိုးဖြင့် မေးခွန်းများကို ကြားဖြတ်ရန် လိုအပ်ပါသည်။</string>
     <string name="trademarks_notice">ကုန်အမှတ်တံဆိပ်များ၊ ဝန်ဆောင်မှုအမှတ်တံဆိပ်များနှင့် ကုမ္ပဏီအမည်များအားလုံးသည် သက်ဆိုင်ရာပိုင်ရှင်များ၏ ပိုင်ဆိုင်မှုဖြစ်ပါသည်။</string>
     <string name="independent_project_notice">Mythaia သည် လွတ်လပ်သောပရောဂျက်တစ်ခုဖြစ်ပြီး အောက်တွင်ဖော်ပြထားသော ကုမ္ပဏီတစ်ခုခုနှင့် ဆက်စပ်ခြင်း၊ ထောက်ခံခြင်း သို့မဟုတ် ပံ့ပိုးကူညီခြင်းမရှိပါ။</string>
     <string name="upload">အပ်လုဒ်</string>
     <string name="download">ဒေါင်းလုဒ်</string>
     <string name="invalid_url">URL မမှန်ကန်ပါ</string>
     <string name="invalid_qr_code">QR ကုဒ် မမှန်ကန်ပါ</string>
-    <string name="qr_code_not_vless">QR ကုဒ်တွင် VLESS လင့်ခ် မပါဝင်ပါ</string>
     <string name="unknown_error">အမည်မသိ အမှား</string>
     <string name="subscription">စာရင်းသွင်းမှု</string>
     <string name="open_source_libraries">အွပ်ပင်းဆို့စ် စာကြည့်တိုက်များ</string>
-    <string name="supports_vless_link">VLESS လင့်ခ်၊ စာရင်းသွင်းမှုလင့်ခ်နှင့် Clash လင့်ခ်ကို ပံ့ပိုးပါသည်</string>
 
     <!-- Phase 9: Encrypted DNS -->
     <string name="encrypted_dns">ကုဒ်ဝှက် DNS</string>
@@ -119,7 +111,6 @@
     <string name="supports_proxy_link">VLESS၊ Shadowsocks၊ NaiveProxy၊ စာရင်းသွင်းမှုနှင့် Clash လင့်ခ်များကို ပံ့ပိုးပါသည်</string>
 
     <!-- Phase 9: QR Code -->
-    <string name="qr_code_not_supported">QR ကုဒ်တွင် ပံ့ပိုးထားသော ပရောက်စီလင့်ခ် မပါဝင်ပါ</string>
 
     <!-- Chains -->
     <string name="chains">ချိန်းများ</string>
@@ -127,7 +118,6 @@
     <string name="tap_to_add_chain">ပရောက်စီချိန်းဖန်တီးရန် + ကိုနှိပ်ပါ။</string>
     <string name="new_chain">ချိန်းအသစ်</string>
     <string name="edit_chain">ချိန်းတည်းဖြတ်</string>
-    <string name="chain_name">ချိန်းအမည်</string>
     <string name="add_proxy_to_chain">ပရောက်စီထည့်ရန်</string>
     <string name="proxies_in_chain">ပရောက်စီများ</string>
     <string name="chain_min_proxies">ချိန်းဖန်တီးရန် ပရောက်စီ အနည်းဆုံး ၂ ခု ထည့်ပါ။</string>
@@ -140,7 +130,6 @@
     <string name="entry">ဝင်ပေါက်</string>
     <string name="exit">ထွက်ပေါက်</string>
     <string name="route_preview">လမ်းကြောင်း အကြိုကြည့်ရှုမှု</string>
-    <string name="n_proxies">ပရောက်စီ %d ခု</string>
 
     <!-- Missing general -->
     <string name="join_telegram_group">Telegram အုပ်စုသို့ ဝင်ရောက်ရန်</string>
@@ -158,7 +147,6 @@
     <string name="back">နောက်သို့</string>
 
     <!-- HTTP/3 -->
-    <string name="not_yet_supported">မပံ့ပိုးရသေးပါ</string>
     <string name="disconnect">ချိတ်ဆက်မှုဖြတ်ရန်</string>
     <string name="vpn_service">VPN ဝန်ဆောင်မှု</string>
     <string name="vpn_channel_description">ဆက်သွယ်နေသော VPN အတွက် အသိပေးချက်</string>
@@ -189,7 +177,6 @@
     <string name="off">ပိတ်</string>
     <string name="every_day">နေ့စဉ်</string>
     <string name="every_week">အပတ်စဉ်</string>
-    <string name="every_n_hours">%1$d နာရီတိုင်း</string>
     <string name="subscription_refresh_footer">ချိတ်ဆက်မှုရှိချိန်တွင် စာရင်းသွင်းမှုအားလုံးကို နောက်ခံမှ ပြန်လည်ဆွဲယူပါသည်။ မူရင်းအတိုင်း ပိတ်ထားသဖြင့် သင်မတောင်းဆိုမချင်း ကွန်ရက်သို့ မည်သည့်အရာမျှ မထွက်ပါ။</string>
 
     <!-- GeoIP -->
@@ -207,7 +194,6 @@
     <string name="auto_select">အမြန်ဆုံးကို အလိုအလျောက်ရွေး</string>
     <string name="auto_select_now">အမြန်ဆုံးရွေးရန်</string>
     <string name="auto_select_none">မည်သည့်ဆာဗာမှ တုံ့ပြန်မှုမရှိပါ။</string>
-    <string name="auto_select_testing">ဆာဗာများကို တိုင်းတာနေသည်…</string>
     <string name="auto_select_footer">ဆာဗာအားလုံးကို တိုင်းတာပြီး အမြန်ဆုံးသို့ ချိတ်ဆက်ပါသည်။ ချိတ်ဆက်မှုတိုင်းတွင် စက္ကန့်အနည်းငယ် ပိုကြာပြီး သင့်ဆာဗာအားလုံးထံ ဆက်သွယ်ပါသည်။</string>
     <string name="connection">ချိတ်ဆက်မှု</string>
 
@@ -238,4 +224,66 @@
     <string name="theme_dark">အမှောင်</string>
     <string name="wireguard_configuration">WireGuard ဆက်တင်</string>
     <string name="wireguard_configuration_hint">သင့်ဝန်ဆောင်မှုပေးသူထံမှရသော [Interface] နှင့် [Peer] အပိုင်းများကို ကူးထည့်ပါ</string>
+    <string name="add_rule">စည်းမျဉ်း ထည့်ရန်</string>
+    <string name="advanced_settings">အဆင့်မြင့် ဆက်တင်များ</string>
+    <string name="block_quic">QUIC ကို ပိတ်ရန်</string>
+    <string name="copy_count">ကူးယူရန် (%1$d)</string>
+    <string name="custom">စိတ်ကြိုက်</string>
+    <string name="diagnostics">ရောဂါရှာဖွေမှု</string>
+    <string name="domain_keyword">ဒိုမိန်း အဓိကစကားလုံး</string>
+    <string name="domain_suffix">ဒိုမိန်း နောက်ဆက်</string>
+    <string name="download_from_internet">အင်တာနက်မှ ဒေါင်းလုဒ်</string>
+    <string name="enable">ဖွင့်ရန်</string>
+    <string name="encrypted_dns_footer">အကြံမပြုပါ။</string>
+    <string name="experimental">စမ်းသပ်</string>
+    <string name="experimental_features">စမ်းသပ် လုပ်ဆောင်ချက်များ</string>
+    <string name="experimental_footer">စိတ်ကြိုက် လမ်းကြောင်း စည်းမျဉ်းအစုများ ဖန်တီးခြင်းကဲ့သို့ ဖွံ့ဖြိုးဆဲ လုပ်ဆောင်ချက်များကို ဖွင့်ပေးသည်။</string>
+    <string name="global_mode">ကမ္ဘာလုံးဆိုင်ရာ မုဒ်</string>
+    <string name="grpc_authority">အခွင့်အာဏာ</string>
+    <string name="grpc_service_name">ဝန်ဆောင်မှု အမည်</string>
+    <string name="http2_proxy">HTTP/2 ပရောက်စီ</string>
+    <string name="https_proxy">HTTPS ပရောက်စီ</string>
+    <string name="import_action">တင်သွင်းရန်</string>
+    <string name="import_rules">စည်းမျဉ်းများ တင်သွင်းရန်</string>
+    <string name="ipv4_cidr">IPv4 CIDR</string>
+    <string name="ipv6_cidr">IPv6 CIDR</string>
+    <string name="logs">မှတ်တမ်းများ</string>
+    <string name="more">နောက်ထပ်</string>
+    <string name="move_down">အောက်သို့ ရွှေ့ရန်</string>
+    <string name="move_up">အပေါ်သို့ ရွှေ့ရန်</string>
+    <string name="name_label">အမည်</string>
+    <string name="new_rule_set">စည်းမျဉ်းအစု အသစ်</string>
+    <string name="no_recent_logs">မကြာသေးမီ မှတ်တမ်း မရှိပါ</string>
+    <string name="other">အခြား</string>
+    <string name="proxy_mode_global">ကမ္ဘာလုံး</string>
+    <string name="proxy_mode_rule">စည်းမျဉ်း</string>
+    <string name="remnawave_hwid">Remnawave HWID</string>
+    <string name="remnawave_hwid_prompt">ဆက်လက်ရန် Remnawave HWID ကို ဖွင့်ပါ။</string>
+    <string name="rename">အမည်ပြောင်းရန်</string>
+    <string name="rename_rule_set">စည်းမျဉ်းအစု အမည်ပြောင်းရန်</string>
+    <string name="rename_subscription">စာရင်းသွင်းမှု အမည်ပြောင်းရန်</string>
+    <string name="reset">ပြန်လည်သတ်မှတ်ရန်</string>
+    <string name="route_to">သို့ လမ်းကြောင်းပြရန်</string>
+    <string name="routing_rules_updated_message">အောက်ပါ လမ်းကြောင်း စည်းမျဉ်းများ သုံးသော ပရောက်စီကို ဖျက်လိုက်သည်။ မူလသို့ ပြန်သတ်မှတ်ပြီး: %1$s</string>
+    <string name="routing_rules_updated_title">လမ်းကြောင်း စည်းမျဉ်းများ မွမ်းမံပြီး</string>
+    <string name="rule_list_url">Mythaia စည်းမျဉ်းစာရင်း URL</string>
+    <string name="rule_set">စည်းမျဉ်းအစု</string>
+    <string name="rules">စည်းမျဉ်းများ</string>
+    <string name="select">ရွေးရန်</string>
+    <string name="standalone">သီးခြား</string>
+    <string name="type_label">အမျိုးအစား</string>
+    <string name="user_agent">User Agent</string>
+    <string name="value_label">တန်ဖိုး</string>
+    <plurals name="rules_count">
+        <item quantity="other">စည်းမျဉ်း %1$d ခု</item>
+    </plurals>
+    <plurals name="parsed_rules">
+        <item quantity="other">စည်းမျဉ်း %1$d ခု</item>
+    </plurals>
+    <plurals name="n_proxies">
+        <item quantity="other">ပရောက်စီ %1$d ခု</item>
+    </plurals>
+    <plurals name="every_n_hours">
+        <item quantity="other">%1$d နာရီတိုင်း</item>
+    </plurals>
 </resources>

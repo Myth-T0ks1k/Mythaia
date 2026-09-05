@@ -57,6 +57,33 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    lint {
+        // Fail the build on anything lint calls an error. Warnings are worked
+        // through rather than baselined, so the few that remain are here with
+        // a reason.
+        warningsAsErrors = false
+        abortOnError = true
+
+        disable += setOf(
+            // "A newer version exists." True of every dependency, always.
+            // Upgrading AGP, Kotlin or a library is a deliberate change with
+            // its own testing, not something to be prompted into by a build.
+            "GradleDependency",
+            "NewerVersionAvailable",
+            "AndroidGradlePluginVersion",
+
+            // The app ships arm64-v8a only, which is what every Android phone
+            // and TV box this targets runs. Adding x86_64 for ChromeOS would
+            // double the native build and the APK for a platform that cannot
+            // run a VPN service anyway.
+            "ChromeOsAbiSupport",
+
+            // mipmap-anydpi-v26 is where the adaptive icon belongs: dropping
+            // the qualifier makes AAPT fail to resolve mipmap/ic_launcher.
+            "ObsoleteSdkInt",
+        )
+    }
+
     testOptions {
         unitTests {
             // The android.jar on the unit-test classpath is a stub whose every
@@ -98,7 +125,7 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.androidx.work.runtime.ktx)
-    implementation("org.brotli:dec:0.1.2")
+    implementation(libs.brotli.dec)
     testImplementation(libs.junit)
     // android.jar ships org.json as stubs too, and these tests parse real
     // VMess links — so they need an implementation that actually parses.

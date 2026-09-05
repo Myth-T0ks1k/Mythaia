@@ -1,5 +1,6 @@
 package com.mythaia.data.network
 
+import android.annotation.SuppressLint
 import android.util.Base64
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
@@ -51,8 +52,15 @@ object SubscriptionFetcher {
 
             // Accept self-signed certificates only when the caller has indicated allowInsecure.
             if (connection is HttpsURLConnection && allowInsecure) {
+                // Reached only when the user has turned "allow insecure" on
+                // for a panel on a self-signed host. Refusing to build it
+                // would make that setting do nothing.
+                @SuppressLint("CustomX509TrustManager")
                 val trustAllManager = object : X509TrustManager {
+                    @SuppressLint("TrustAllX509TrustManager")
                     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+
+                    @SuppressLint("TrustAllX509TrustManager")
                     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                     override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
                 }

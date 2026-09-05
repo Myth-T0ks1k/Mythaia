@@ -286,9 +286,16 @@ private fun copyToClipboard(context: Context, text: String) {
     clipboard.setPrimaryClip(ClipData.newPlainText("Mythaia Logs", text))
 }
 
-private val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-
-private fun formatTime(timestampMs: Long): String = timeFormatter.format(Date(timestampMs))
+/**
+ * Built per call rather than held.
+ *
+ * A formatter cached in a top-level val captures the locale at class-init
+ * and keeps it after the user changes language, and SimpleDateFormat is not
+ * thread-safe besides. Log rows are formatted as they are drawn, so there is
+ * nothing here worth caching.
+ */
+private fun formatTime(timestampMs: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestampMs))
 
 private fun LogsModel.LogEntry.formatted(): String {
     val time = formatTime(timestamp)

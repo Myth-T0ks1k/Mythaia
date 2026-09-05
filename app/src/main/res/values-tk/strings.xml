@@ -12,7 +12,7 @@
     <string name="auto">Awto</string>
     <string name="cancel">Ýatyr</string>
     <string name="connected">Birikdirildi</string>
-    <string name="connecting">Birikdirilýär...</string>
+    <string name="connecting">Birikdirilýär…</string>
     <string name="continue_action">Dowam et</string>
     <string name="country_bypass">Ýurt aýlaw</string>
     <string name="direct">Göni</string>
@@ -20,14 +20,13 @@
     <string name="delete">Poz</string>
     <string name="disable">Öçür</string>
     <string name="disconnected">Aýryldy</string>
-    <string name="disconnecting">Aýrylýar...</string>
+    <string name="disconnecting">Aýrylýar…</string>
     <string name="edit">Üýtget</string>
     <string name="edit_configuration">Konfigurasiýany üýtget</string>
     <string name="enable_anyway">Şonda-da aç</string>
     <string name="encryption">Şifrlemek</string>
     <string name="fingerprint">Barmak yzy</string>
     <string name="flow">Flow</string>
-    <string name="go_to_settings">Sazlamalara git</string>
     <string name="home">Baş sahypa</string>
     <string name="host">Host</string>
     <string name="import_failed">Import şowsuz</string>
@@ -38,7 +37,6 @@
     <string name="network">Tor</string>
     <string name="no_proxies">Proksi ýok</string>
     <string name="none">Ýok</string>
-    <string name="not_configured">Sazlanmadyk</string>
     <string name="ok">Bolýar</string>
     <string name="path">Ýol</string>
     <string name="permission_denied">Rugsat berilmedi</string>
@@ -46,10 +44,9 @@
     <string name="proxies">Proksiler</string>
     <string name="public_key">Açyk açar</string>
     <string name="qr_code">QR kod</string>
-    <string name="reconnecting">Täzeden birikdirilýär...</string>
+    <string name="reconnecting">Täzeden birikdirilýär…</string>
     <string name="routing">Ugratma</string>
     <string name="routing_rules">Ugratma düzgünleri</string>
-    <string name="routing_rules_updated">Ugratma düzgünleri täzelendi</string>
     <string name="save">Sakla</string>
     <string name="scan_your_qr_code">QR koduňyzy skanirläň</string>
     <string name="security">Howpsuzlyk</string>
@@ -62,24 +59,19 @@
     <string name="insecure">howpsuz däl</string>
     <string name="trademarks">Haryt nyşanlary</string>
     <string name="transport">Transport</string>
-    <string name="unknown">Näbelli</string>
     <string name="update">Täzele</string>
     <string name="update_failed">Täzelemek şowsuz</string>
     <string name="vpn_error">VPN ýalňyşlygy</string>
     <string name="latency_ms">%d ms</string>
-    <string name="routing_rules_reset">Aşakdaky ugratma düzgünleri tarapyndan ulanylýan proksi pozuldy. Olar Bellenen-e gaýtaryldy: %s</string>
-    <string name="doh_routing_warning">DNS over HTTPS-i açmak ugratma düzgünleriniň işlemeginiň öňüni alar. Domen esasly ugratma soraglary tutmak üçin adaty DNS talap edýär.</string>
     <string name="trademarks_notice">Ähli haryt nyşanlary, hyzmat nyşanlary we kompaniýa atlary degişli eýeleriniň emlägidir.</string>
     <string name="independent_project_notice">Mythaia garaşsyz taslamadyr we aşakda görkezilen kompaniýalaryň hiç biri bilen baglanyşykly, goldanýan ýa-da maliýeleşdirilýän däldir.</string>
     <string name="upload">Ýüklemek</string>
     <string name="download">Göçürip almak</string>
     <string name="invalid_url">Nädogry URL</string>
     <string name="invalid_qr_code">Nädogry QR kod</string>
-    <string name="qr_code_not_vless">QR kodda VLESS baglanyşygy ýok</string>
     <string name="unknown_error">Näbelli ýalňyşlyk</string>
     <string name="subscription">Abuna</string>
     <string name="open_source_libraries">Açyk çeşme kitaphanalary</string>
-    <string name="supports_vless_link">VLESS baglanyşygyny, abuna baglanyşygyny we Clash baglanyşygyny goldaýar</string>
 
     <!-- Phase 9: Encrypted DNS -->
     <string name="encrypted_dns">Şifrlenen DNS</string>
@@ -119,7 +111,6 @@
     <string name="supports_proxy_link">VLESS, Shadowsocks, NaiveProxy, abuna we Clash baglanyşyklaryny goldaýar</string>
 
     <!-- Phase 9: QR Code -->
-    <string name="qr_code_not_supported">QR kodda goldanylýan proksi baglanyşygy ýok</string>
 
     <!-- Chains -->
     <string name="chains">Zynjyrlar</string>
@@ -127,7 +118,6 @@
     <string name="tap_to_add_chain">Proksi zynjyr döretmek üçin + basyň.</string>
     <string name="new_chain">Täze zynjyr</string>
     <string name="edit_chain">Zynjyry üýtget</string>
-    <string name="chain_name">Zynjyr ady</string>
     <string name="add_proxy_to_chain">Proksi goş</string>
     <string name="proxies_in_chain">Proksiler</string>
     <string name="chain_min_proxies">Zynjyr döretmek üçin azyndan 2 proksi goşuň.</string>
@@ -140,7 +130,6 @@
     <string name="entry">Giriş</string>
     <string name="exit">Çykyş</string>
     <string name="route_preview">Ugur öňünden görmek</string>
-    <string name="n_proxies">%d proksi</string>
 
     <!-- Missing general -->
     <string name="join_telegram_group">Telegram toparyna goşulyň</string>
@@ -158,7 +147,6 @@
     <string name="back">Yza</string>
 
     <!-- HTTP/3 -->
-    <string name="not_yet_supported">Entek goldanylmaýar</string>
     <string name="disconnect">Aýyrmak</string>
     <string name="vpn_service">VPN hyzmaty</string>
     <string name="vpn_channel_description">Işjeň VPN birikmesi üçin habarnama</string>
@@ -189,7 +177,6 @@
     <string name="off">Öçük</string>
     <string name="every_day">Her gün</string>
     <string name="every_week">Her hepde</string>
-    <string name="every_n_hours">Her %1$d sagatdan</string>
     <string name="subscription_refresh_footer">Birikme bar wagty ähli abunalary arka fonda täzeleýär. Öňünden öçük, şonuň üçin siz islemänkäňiz tora hiç zat gitmeýär.</string>
 
     <!-- GeoIP -->
@@ -207,7 +194,6 @@
     <string name="auto_select">Iň çalt serweri saýla</string>
     <string name="auto_select_now">Iň çalty saýla</string>
     <string name="auto_select_none">Hiç bir serwer jogap bermedi.</string>
-    <string name="auto_select_testing">Serwerler ölçenýär…</string>
     <string name="auto_select_footer">Ähli serwerleri ölçäp, iň çaltyna birigýär. Her birikmä birnäçe sekunt goşýar we ähli serweriňize ýüzlenýär.</string>
     <string name="connection">Birikme</string>
 
@@ -238,4 +224,70 @@
     <string name="theme_dark">Goýy</string>
     <string name="wireguard_configuration">WireGuard sazlamasy</string>
     <string name="wireguard_configuration_hint">Üpjün edijiniň beren [Interface] we [Peer] bölümlerini goýuň</string>
+    <string name="add_rule">Düzgün goş</string>
+    <string name="advanced_settings">Ösen sazlamalar</string>
+    <string name="block_quic">QUIC-i böw</string>
+    <string name="copy_count">Göçür (%1$d)</string>
+    <string name="custom">Öz</string>
+    <string name="diagnostics">Diagnostika</string>
+    <string name="domain_keyword">Domen açar sözi</string>
+    <string name="domain_suffix">Domen goşulmasy</string>
+    <string name="download_from_internet">Internetden ýükle</string>
+    <string name="enable">Işjeňleşdir</string>
+    <string name="encrypted_dns_footer">Maslahat berilmeýär.</string>
+    <string name="experimental">Synag</string>
+    <string name="experimental_features">Synag mümkinçilikleri</string>
+    <string name="experimental_footer">Işlenip düzülýän mümkinçilikleri açýar — meselem, öz marşrut düzgün toplumlaryňy döretmek.</string>
+    <string name="global_mode">Global režim</string>
+    <string name="grpc_authority">Authority</string>
+    <string name="grpc_service_name">Hyzmat ady</string>
+    <string name="http2_proxy">HTTP/2 proksi</string>
+    <string name="https_proxy">HTTPS proksi</string>
+    <string name="import_action">Import et</string>
+    <string name="import_rules">Düzgünleri import et</string>
+    <string name="ipv4_cidr">IPv4 CIDR</string>
+    <string name="ipv6_cidr">IPv6 CIDR</string>
+    <string name="logs">Žurnal</string>
+    <string name="more">Ýene</string>
+    <string name="move_down">Aşak</string>
+    <string name="move_up">Ýokary</string>
+    <string name="name_label">Ady</string>
+    <string name="new_rule_set">Täze düzgün toplumy</string>
+    <string name="no_recent_logs">Täze ýazgy ýok</string>
+    <string name="other">Beýleki</string>
+    <string name="proxy_mode_global">Global</string>
+    <string name="proxy_mode_rule">Düzgün</string>
+    <string name="remnawave_hwid">Remnawave HWID</string>
+    <string name="remnawave_hwid_prompt">Dowam etmek üçin Remnawave HWID-i açyň.</string>
+    <string name="rename">Adyny üýtget</string>
+    <string name="rename_rule_set">Düzgün toplumynyň adyny üýtget</string>
+    <string name="rename_subscription">Abunanyň adyny üýtget</string>
+    <string name="reset">Täzeden düz</string>
+    <string name="route_to">Şuňa ugrukdyr</string>
+    <string name="routing_rules_updated_message">Şu marşrut düzgünleriniň ulanan proksisi pozuldy. Olar Deslapky ýagdaýa täzeden düzüldi: %1$s</string>
+    <string name="routing_rules_updated_title">Marşrut düzgünleri täzelendi</string>
+    <string name="rule_list_url">Mythaia düzgün sanawynyň salgysy</string>
+    <string name="rule_set">Düzgün toplumy</string>
+    <string name="rules">Düzgünler</string>
+    <string name="select">Saýla</string>
+    <string name="standalone">Aýratyn</string>
+    <string name="type_label">Görnüş</string>
+    <string name="user_agent">User-Agent</string>
+    <string name="value_label">Bahasy</string>
+    <plurals name="rules_count">
+        <item quantity="one">%1$d düzgün</item>
+        <item quantity="other">%1$d düzgün</item>
+    </plurals>
+    <plurals name="parsed_rules">
+        <item quantity="one">%1$d düzgün</item>
+        <item quantity="other">%1$d düzgün</item>
+    </plurals>
+    <plurals name="n_proxies">
+        <item quantity="one">%1$d proksi</item>
+        <item quantity="other">%1$d proksi</item>
+    </plurals>
+    <plurals name="every_n_hours">
+        <item quantity="one">Her sagat</item>
+        <item quantity="other">Her %1$d sagatdan</item>
+    </plurals>
 </resources>

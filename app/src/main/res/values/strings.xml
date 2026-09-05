@@ -32,7 +32,6 @@
     <string name="encryption">Encryption</string>
     <string name="fingerprint">Fingerprint</string>
     <string name="flow">Flow</string>
-    <string name="go_to_settings">Go to Settings</string>
     <string name="home">Home</string>
     <string name="host">Host</string>
     <string name="import_failed">Import Failed</string>
@@ -44,7 +43,6 @@
     <string name="network">Network</string>
     <string name="no_proxies">No Proxies</string>
     <string name="none">None</string>
-    <string name="not_configured">Not Configured</string>
     <string name="ok">OK</string>
     <string name="open_source_libraries">Open Source Libraries</string>
     <string name="path">Path</string>
@@ -62,7 +60,6 @@
     <string name="proxy_mode_global">Global</string>
     <string name="rename">Rename</string>
     <string name="rename_subscription">Rename Subscription</string>
-    <string name="routing_rules_updated">Routing Rules Updated</string>
     <string name="save">Save</string>
     <string name="scan_your_qr_code">Scan your QR code</string>
     <string name="security">Security</string>
@@ -71,8 +68,6 @@
     <string name="subscription">Subscription</string>
     <string name="https_proxy">HTTPS Proxy</string>
     <string name="http2_proxy">HTTP/2 Proxy</string>
-    <string name="link_type">Link Type</string>
-    <string name="supports_vless_link">Supports VLESS link, subscription link and Clash link</string>
     <string name="tap_to_add_proxy">Tap + to add a VLESS proxy.</string>
     <string name="test_all">Test All</string>
     <string name="test_latency">Test Latency</string>
@@ -92,9 +87,7 @@
     <string name="back">Back</string>
 
     <!-- HTTP/3 -->
-    <string name="not_yet_supported">Not yet supported</string>
     <string name="transport">Transport</string>
-    <string name="unknown">Unknown</string>
     <string name="update">Update</string>
     <string name="update_failed">Update Failed</string>
     <string name="vpn_error">VPN Error</string>
@@ -102,8 +95,6 @@
     <string name="download">Download</string>
     <string name="invalid_url">Invalid URL</string>
     <string name="invalid_qr_code">Invalid QR code</string>
-    <string name="qr_code_not_vless">QR code does not contain a VLESS link</string>
-    <string name="qr_code_not_supported">QR code does not contain a supported proxy link</string>
     <string name="unknown_error">Unknown error</string>
 
     <!-- Phase 9: Encrypted DNS -->
@@ -147,7 +138,6 @@
     <string name="new_rule_set">New Rule Set</string>
     <string name="rule_set">Rule Set</string>
     <string name="rules">Rules</string>
-    <string name="rules_count">%1$d rule(s)</string>
     <string name="rename_rule_set">Rename Rule Set</string>
     <string name="add_rule">Add Rule</string>
     <string name="import_rules">Import Rules</string>
@@ -163,13 +153,11 @@
     <string name="reset">Reset</string>
     <string name="download_from_internet">Download From Internet</string>
     <string name="rule_list_url">Mythaia Rule List URL</string>
-    <string name="unknown_content">Unknown content.</string>
     <string name="import_action">Import</string>
-    <string name="parsed_rules">%1$d rule(s)</string>
-    <string name="example_domain">example.com</string>
-    <string name="example_keyword">example</string>
-    <string name="example_ipv4">10.0.0.0/8</string>
-    <string name="example_ipv6">2001:db8::/32</string>
+    <string name="example_domain" translatable="false">example.com</string>
+    <string name="example_keyword" translatable="false">example</string>
+    <string name="example_ipv4" translatable="false">10.0.0.0/8</string>
+    <string name="example_ipv6" translatable="false">2001:db8::/32</string>
 
     <!-- Chain editor -->
     <string name="move_up">Move Up</string>
@@ -201,7 +189,6 @@
 
     <!-- Formatted strings -->
     <string name="latency_ms">%d ms</string>
-    <string name="routing_rules_reset">The proxy used by the following routing rules was deleted. They have been reset to Default: %1$s</string>
 
     <!-- Chains -->
     <string name="chains">Chains</string>
@@ -209,7 +196,6 @@
     <string name="tap_to_add_chain">Tap + to create a proxy chain.</string>
     <string name="new_chain">New Chain</string>
     <string name="edit_chain">Edit Chain</string>
-    <string name="chain_name">Chain Name</string>
     <string name="add_proxy_to_chain">Add Proxy</string>
     <string name="proxies_in_chain">Proxies</string>
     <string name="chain_min_proxies">Add at least 2 proxies to form a chain.</string>
@@ -222,10 +208,8 @@
     <string name="entry">Entry</string>
     <string name="exit">Exit</string>
     <string name="route_preview">Route Preview</string>
-    <string name="n_proxies">%d proxies</string>
 
     <!-- Notices -->
-    <string name="doh_routing_warning">Enabling DNS over HTTPS will prevent routing rules from working. Domain-based routing requires plain DNS to intercept queries.</string>
     <string name="trademarks_notice">All trademarks, service marks, and company names are the property of their respective owners.</string>
     <string name="independent_project_notice">Mythaia is an independent project and is not affiliated with, endorsed by, or sponsored by any of the companies listed below.</string>
     <string name="disconnect">Disconnect</string>
@@ -258,7 +242,6 @@
     <string name="off">Off</string>
     <string name="every_day">Every day</string>
     <string name="every_week">Every week</string>
-    <string name="every_n_hours">Every %1$d hours</string>
     <string name="subscription_refresh_footer">Refreshes every subscription in the background when the device has a connection. Off by default, so nothing goes out over the network until you ask for it.</string>
 
     <!-- GeoIP -->
@@ -276,7 +259,6 @@
     <string name="auto_select">Auto-select fastest</string>
     <string name="auto_select_now">Auto-select</string>
     <string name="auto_select_none">No server answered.</string>
-    <string name="auto_select_testing">Measuring servers…</string>
     <string name="auto_select_footer">Measures every server and connects to the fastest one. Adds a few seconds to each connection, and contacts every server you have.</string>
     <string name="connection">Connection</string>
 
@@ -307,4 +289,20 @@
     <string name="theme_dark">Dark</string>
     <string name="wireguard_configuration">WireGuard configuration</string>
     <string name="wireguard_configuration_hint">Paste the [Interface] and [Peer] sections your provider gave you</string>
+    <plurals name="rules_count">
+        <item quantity="one">%1$d rule</item>
+        <item quantity="other">%1$d rules</item>
+    </plurals>
+    <plurals name="parsed_rules">
+        <item quantity="one">%1$d rule</item>
+        <item quantity="other">%1$d rules</item>
+    </plurals>
+    <plurals name="n_proxies">
+        <item quantity="one">%1$d proxy</item>
+        <item quantity="other">%1$d proxies</item>
+    </plurals>
+    <plurals name="every_n_hours">
+        <item quantity="one">Every hour</item>
+        <item quantity="other">Every %1$d hours</item>
+    </plurals>
 </resources>

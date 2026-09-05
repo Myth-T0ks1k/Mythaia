@@ -12,7 +12,7 @@
     <string name="auto">自动</string>
     <string name="cancel">取消</string>
     <string name="connected">已连接</string>
-    <string name="connecting">正在连接...</string>
+    <string name="connecting">正在连接…</string>
     <string name="continue_action">继续</string>
     <string name="country_bypass">国家分流</string>
     <string name="direct">直连</string>
@@ -20,14 +20,13 @@
     <string name="delete">删除</string>
     <string name="disable">禁用</string>
     <string name="disconnected">未连接</string>
-    <string name="disconnecting">正在断开...</string>
+    <string name="disconnecting">正在断开…</string>
     <string name="edit">编辑</string>
     <string name="edit_configuration">编辑配置</string>
     <string name="enable_anyway">仍然启用</string>
     <string name="encryption">加密</string>
     <string name="fingerprint">指纹</string>
     <string name="flow">流控</string>
-    <string name="go_to_settings">前往设置</string>
     <string name="home">主页</string>
     <string name="host">主机</string>
     <string name="import_failed">导入失败</string>
@@ -38,7 +37,6 @@
     <string name="network">网络</string>
     <string name="no_proxies">没有代理</string>
     <string name="none">无</string>
-    <string name="not_configured">未配置</string>
     <string name="ok">好</string>
     <string name="path">路径</string>
     <string name="permission_denied">权限被拒绝</string>
@@ -46,10 +44,9 @@
     <string name="proxies">代理</string>
     <string name="public_key">公钥</string>
     <string name="qr_code">二维码</string>
-    <string name="reconnecting">正在重连...</string>
+    <string name="reconnecting">正在重连…</string>
     <string name="routing">路由</string>
     <string name="routing_rules">路由规则</string>
-    <string name="routing_rules_updated">路由规则已更新</string>
     <string name="save">保存</string>
     <string name="scan_your_qr_code">扫描二维码</string>
     <string name="security">安全</string>
@@ -62,24 +59,19 @@
     <string name="insecure">不安全</string>
     <string name="trademarks">商标</string>
     <string name="transport">传输</string>
-    <string name="unknown">未知</string>
     <string name="update">更新</string>
     <string name="update_failed">更新失败</string>
     <string name="vpn_error">VPN 错误</string>
     <string name="latency_ms">%d 毫秒</string>
-    <string name="routing_rules_reset">以下路由规则使用的代理已被删除，它们已重置为默认: %s</string>
-    <string name="doh_routing_warning">启用 DNS over HTTPS 将导致路由规则无法工作。基于域名的路由需要使用普通 DNS 来拦截查询。</string>
     <string name="trademarks_notice">所有商标、服务标识和公司名称均为其各自所有者的财产。</string>
     <string name="independent_project_notice">Mythaia 是一个独立项目，与以下列出的任何公司无关，未获其认可或赞助。</string>
     <string name="upload">上传</string>
     <string name="download">下载</string>
     <string name="invalid_url">无效的 URL</string>
     <string name="invalid_qr_code">无效的二维码</string>
-    <string name="qr_code_not_vless">二维码不包含 VLESS 链接</string>
     <string name="unknown_error">未知错误</string>
     <string name="subscription">订阅</string>
     <string name="open_source_libraries">开源库</string>
-    <string name="supports_vless_link">支持 VLESS 链接、订阅链接和 Clash 链接</string>
 
     <!-- Phase 9: Encrypted DNS -->
     <string name="encrypted_dns">加密 DNS</string>
@@ -119,7 +111,6 @@
     <string name="supports_proxy_link">支持 VLESS、Shadowsocks、NaiveProxy、订阅和 Clash 链接</string>
 
     <!-- Phase 9: QR Code -->
-    <string name="qr_code_not_supported">二维码不包含受支持的代理链接</string>
 
     <!-- Chains -->
     <string name="chains">链路</string>
@@ -127,7 +118,6 @@
     <string name="tap_to_add_chain">点按 + 创建代理链路。</string>
     <string name="new_chain">新建链路</string>
     <string name="edit_chain">编辑链路</string>
-    <string name="chain_name">链路名称</string>
     <string name="add_proxy_to_chain">添加代理</string>
     <string name="proxies_in_chain">代理</string>
     <string name="chain_min_proxies">至少添加 2 个代理以组成链路。</string>
@@ -140,7 +130,6 @@
     <string name="entry">入口</string>
     <string name="exit">出口</string>
     <string name="route_preview">路由预览</string>
-    <string name="n_proxies">%d 个代理</string>
 
     <!-- Missing general -->
     <string name="join_telegram_group">加入 Telegram 群组</string>
@@ -158,7 +147,6 @@
     <string name="back">返回</string>
 
     <!-- HTTP/3 -->
-    <string name="not_yet_supported">暂不支持</string>
     <string name="disconnect">断开连接</string>
     <string name="vpn_service">VPN 服务</string>
     <string name="vpn_channel_description">活动 VPN 连接的通知</string>
@@ -189,7 +177,6 @@
     <string name="off">关闭</string>
     <string name="every_day">每天</string>
     <string name="every_week">每周</string>
-    <string name="every_n_hours">每 %1$d 小时</string>
     <string name="subscription_refresh_footer">在设备有网络时于后台刷新所有订阅。默认关闭，在你要求之前不会有任何数据发往网络。</string>
 
     <!-- GeoIP -->
@@ -207,7 +194,6 @@
     <string name="auto_select">自动选择最快</string>
     <string name="auto_select_now">选择最快</string>
     <string name="auto_select_none">没有服务器响应。</string>
-    <string name="auto_select_testing">正在测速…</string>
     <string name="auto_select_footer">测量所有服务器并连接最快的一个。每次连接会多花几秒，并会联系你的全部服务器。</string>
     <string name="connection">连接</string>
 
@@ -238,4 +224,66 @@
     <string name="theme_dark">深色</string>
     <string name="wireguard_configuration">WireGuard 配置</string>
     <string name="wireguard_configuration_hint">粘贴服务商提供的 [Interface] 与 [Peer] 段</string>
+    <string name="add_rule">添加规则</string>
+    <string name="advanced_settings">高级设置</string>
+    <string name="block_quic">阻止 QUIC</string>
+    <string name="copy_count">复制 (%1$d)</string>
+    <string name="custom">自定义</string>
+    <string name="diagnostics">诊断</string>
+    <string name="domain_keyword">域名关键词</string>
+    <string name="domain_suffix">域名后缀</string>
+    <string name="download_from_internet">从网络下载</string>
+    <string name="enable">启用</string>
+    <string name="encrypted_dns_footer">不推荐。</string>
+    <string name="experimental">实验性</string>
+    <string name="experimental_features">实验性功能</string>
+    <string name="experimental_footer">启用开发中的功能，例如创建自定义路由规则集。</string>
+    <string name="global_mode">全局模式</string>
+    <string name="grpc_authority">Authority</string>
+    <string name="grpc_service_name">服务名称</string>
+    <string name="http2_proxy">HTTP/2 代理</string>
+    <string name="https_proxy">HTTPS 代理</string>
+    <string name="import_action">导入</string>
+    <string name="import_rules">导入规则</string>
+    <string name="ipv4_cidr">IPv4 CIDR</string>
+    <string name="ipv6_cidr">IPv6 CIDR</string>
+    <string name="logs">日志</string>
+    <string name="more">更多</string>
+    <string name="move_down">下移</string>
+    <string name="move_up">上移</string>
+    <string name="name_label">名称</string>
+    <string name="new_rule_set">新建规则集</string>
+    <string name="no_recent_logs">暂无最近日志</string>
+    <string name="other">其他</string>
+    <string name="proxy_mode_global">全局</string>
+    <string name="proxy_mode_rule">规则</string>
+    <string name="remnawave_hwid">Remnawave HWID</string>
+    <string name="remnawave_hwid_prompt">请启用 Remnawave HWID 以继续。</string>
+    <string name="rename">重命名</string>
+    <string name="rename_rule_set">重命名规则集</string>
+    <string name="rename_subscription">重命名订阅</string>
+    <string name="reset">重置</string>
+    <string name="route_to">路由至</string>
+    <string name="routing_rules_updated_message">以下路由规则所用的代理已被删除，已重置为“默认”：%1$s</string>
+    <string name="routing_rules_updated_title">路由规则已更新</string>
+    <string name="rule_list_url">Mythaia 规则列表地址</string>
+    <string name="rule_set">规则集</string>
+    <string name="rules">规则</string>
+    <string name="select">选择</string>
+    <string name="standalone">独立</string>
+    <string name="type_label">类型</string>
+    <string name="user_agent">User-Agent</string>
+    <string name="value_label">值</string>
+    <plurals name="rules_count">
+        <item quantity="other">%1$d 条规则</item>
+    </plurals>
+    <plurals name="parsed_rules">
+        <item quantity="other">%1$d 条规则</item>
+    </plurals>
+    <plurals name="n_proxies">
+        <item quantity="other">%1$d 个代理</item>
+    </plurals>
+    <plurals name="every_n_hours">
+        <item quantity="other">每 %1$d 小时</item>
+    </plurals>
 </resources>

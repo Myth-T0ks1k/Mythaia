@@ -12,7 +12,7 @@
     <string name="auto">خودکار</string>
     <string name="cancel">لغو</string>
     <string name="connected">متصل</string>
-    <string name="connecting">در حال اتصال...</string>
+    <string name="connecting">در حال اتصال…</string>
     <string name="continue_action">ادامه</string>
     <string name="country_bypass">دور زدن کشور</string>
     <string name="direct">مستقیم</string>
@@ -20,14 +20,13 @@
     <string name="delete">حذف</string>
     <string name="disable">غیرفعال</string>
     <string name="disconnected">قطع شده</string>
-    <string name="disconnecting">در حال قطع...</string>
+    <string name="disconnecting">در حال قطع…</string>
     <string name="edit">ویرایش</string>
     <string name="edit_configuration">ویرایش پیکربندی</string>
     <string name="enable_anyway">فعال‌سازی در هر صورت</string>
     <string name="encryption">رمزگذاری</string>
     <string name="fingerprint">اثر انگشت</string>
     <string name="flow">جریان</string>
-    <string name="go_to_settings">رفتن به تنظیمات</string>
     <string name="home">خانه</string>
     <string name="host">میزبان</string>
     <string name="import_failed">وارد کردن ناموفق بود</string>
@@ -38,7 +37,6 @@
     <string name="network">شبکه</string>
     <string name="no_proxies">بدون پروکسی</string>
     <string name="none">هیچ</string>
-    <string name="not_configured">پیکربندی نشده</string>
     <string name="ok">تأیید</string>
     <string name="path">مسیر</string>
     <string name="permission_denied">اجازه رد شد</string>
@@ -46,10 +44,9 @@
     <string name="proxies">پروکسی‌ها</string>
     <string name="public_key">کلید عمومی</string>
     <string name="qr_code">کد QR</string>
-    <string name="reconnecting">در حال اتصال مجدد...</string>
+    <string name="reconnecting">در حال اتصال مجدد…</string>
     <string name="routing">مسیریابی</string>
     <string name="routing_rules">قوانین مسیریابی</string>
-    <string name="routing_rules_updated">قوانین مسیریابی به‌روزرسانی شد</string>
     <string name="save">ذخیره</string>
     <string name="scan_your_qr_code">کد QR خود را اسکن کنید</string>
     <string name="security">امنیت</string>
@@ -62,24 +59,19 @@
     <string name="insecure">ناامن</string>
     <string name="trademarks">علائم تجاری</string>
     <string name="transport">انتقال</string>
-    <string name="unknown">نامشخص</string>
     <string name="update">به‌روزرسانی</string>
     <string name="update_failed">به‌روزرسانی ناموفق بود</string>
     <string name="vpn_error">خطای VPN</string>
     <string name="latency_ms">%d میلی‌ثانیه</string>
-    <string name="routing_rules_reset">پروکسی استفاده‌شده در قوانین مسیریابی زیر حذف شد. آن‌ها به پیش‌فرض بازنشانی شده‌اند: %s</string>
-    <string name="doh_routing_warning">فعال‌سازی DNS از طریق HTTPS مانع عملکرد قوانین مسیریابی می‌شود. مسیریابی مبتنی بر دامنه نیاز به DNS ساده برای رهگیری درخواست‌ها دارد.</string>
     <string name="trademarks_notice">تمامی علائم تجاری، علائم خدماتی و نام‌های شرکت‌ها متعلق به صاحبان مربوطه آن‌ها است.</string>
     <string name="independent_project_notice">Mythaia یک پروژه مستقل است و هیچ‌گونه وابستگی، تأیید یا حمایت مالی از سوی شرکت‌های ذکر شده در زیر ندارد.</string>
     <string name="upload">آپلود</string>
     <string name="download">دانلود</string>
     <string name="invalid_url">آدرس نامعتبر</string>
     <string name="invalid_qr_code">کد QR نامعتبر</string>
-    <string name="qr_code_not_vless">کد QR حاوی لینک VLESS نیست</string>
     <string name="unknown_error">خطای ناشناخته</string>
     <string name="subscription">اشتراک</string>
     <string name="open_source_libraries">کتابخانه‌های متن‌باز</string>
-    <string name="supports_vless_link">از لینک VLESS، لینک اشتراک و لینک Clash پشتیبانی می‌کند</string>
 
     <!-- Phase 9: Encrypted DNS -->
     <string name="encrypted_dns">DNS رمزگذاری‌شده</string>
@@ -119,7 +111,6 @@
     <string name="supports_proxy_link">از لینک‌های VLESS، Shadowsocks، NaiveProxy، اشتراک و Clash پشتیبانی می‌کند</string>
 
     <!-- Phase 9: QR Code -->
-    <string name="qr_code_not_supported">کد QR حاوی لینک پروکسی پشتیبانی‌شده نیست</string>
 
     <!-- Chains -->
     <string name="chains">زنجیره‌ها</string>
@@ -127,7 +118,6 @@
     <string name="tap_to_add_chain">برای ایجاد زنجیره پروکسی روی + بزنید.</string>
     <string name="new_chain">زنجیره جدید</string>
     <string name="edit_chain">ویرایش زنجیره</string>
-    <string name="chain_name">نام زنجیره</string>
     <string name="add_proxy_to_chain">افزودن پروکسی</string>
     <string name="proxies_in_chain">پروکسی‌ها</string>
     <string name="chain_min_proxies">حداقل ۲ پروکسی برای تشکیل زنجیره اضافه کنید.</string>
@@ -140,7 +130,6 @@
     <string name="entry">ورودی</string>
     <string name="exit">خروجی</string>
     <string name="route_preview">پیش‌نمایش مسیر</string>
-    <string name="n_proxies">%d پروکسی</string>
 
     <!-- Missing general -->
     <string name="join_telegram_group">عضویت در گروه تلگرام</string>
@@ -158,7 +147,6 @@
     <string name="back">بازگشت</string>
 
     <!-- HTTP/3 -->
-    <string name="not_yet_supported">هنوز پشتیبانی نمی‌شود</string>
     <string name="disconnect">قطع اتصال</string>
     <string name="vpn_service">سرویس VPN</string>
     <string name="vpn_channel_description">اعلان برای اتصال VPN فعال</string>
@@ -189,7 +177,6 @@
     <string name="off">خاموش</string>
     <string name="every_day">هر روز</string>
     <string name="every_week">هر هفته</string>
-    <string name="every_n_hours">هر %1$d ساعت</string>
     <string name="subscription_refresh_footer">همهٔ اشتراک‌ها را در پس‌زمینه و هنگام وجود اتصال به‌روز می‌کند. به‌طور پیش‌فرض خاموش است؛ تا نخواهید چیزی به شبکه نمی‌رود.</string>
 
     <!-- GeoIP -->
@@ -207,7 +194,6 @@
     <string name="auto_select">گزینش خودکار سریع‌ترین</string>
     <string name="auto_select_now">گزینش سریع‌ترین</string>
     <string name="auto_select_none">هیچ سروری پاسخ نداد.</string>
-    <string name="auto_select_testing">در حال سنجش سرورها…</string>
     <string name="auto_select_footer">همهٔ سرورها را می‌سنجد و به سریع‌ترین وصل می‌شود. چند ثانیه به هر اتصال می‌افزاید و با همهٔ سرورهای شما تماس می‌گیرد.</string>
     <string name="connection">اتصال</string>
 
@@ -238,4 +224,70 @@
     <string name="theme_dark">تیره</string>
     <string name="wireguard_configuration">پیکربندی WireGuard</string>
     <string name="wireguard_configuration_hint">بخش‌های [Interface] و [Peer] را که ارائه‌دهنده به شما داده است اینجا بچسبانید</string>
+    <string name="add_rule">افزودن قاعده</string>
+    <string name="advanced_settings">تنظیمات پیشرفته</string>
+    <string name="block_quic">مسدودسازی QUIC</string>
+    <string name="copy_count">کپی (%1$d)</string>
+    <string name="custom">سفارشی</string>
+    <string name="diagnostics">عیب‌یابی</string>
+    <string name="domain_keyword">کلیدواژه دامنه</string>
+    <string name="domain_suffix">پسوند دامنه</string>
+    <string name="download_from_internet">دانلود از اینترنت</string>
+    <string name="enable">فعال‌سازی</string>
+    <string name="encrypted_dns_footer">توصیه نمی‌شود.</string>
+    <string name="experimental">آزمایشی</string>
+    <string name="experimental_features">قابلیت‌های آزمایشی</string>
+    <string name="experimental_footer">قابلیت‌های در حال توسعه مانند ساخت مجموعه‌قواعد مسیریابی سفارشی را فعال می‌کند.</string>
+    <string name="global_mode">حالت سراسری</string>
+    <string name="grpc_authority">مرجع</string>
+    <string name="grpc_service_name">نام سرویس</string>
+    <string name="http2_proxy">پراکسی HTTP/2</string>
+    <string name="https_proxy">پراکسی HTTPS</string>
+    <string name="import_action">وارد کردن</string>
+    <string name="import_rules">وارد کردن قواعد</string>
+    <string name="ipv4_cidr">IPv4 CIDR</string>
+    <string name="ipv6_cidr">IPv6 CIDR</string>
+    <string name="logs">گزارش‌ها</string>
+    <string name="more">بیشتر</string>
+    <string name="move_down">انتقال به پایین</string>
+    <string name="move_up">انتقال به بالا</string>
+    <string name="name_label">نام</string>
+    <string name="new_rule_set">مجموعه‌قواعد جدید</string>
+    <string name="no_recent_logs">گزارش تازه‌ای نیست</string>
+    <string name="other">سایر</string>
+    <string name="proxy_mode_global">سراسری</string>
+    <string name="proxy_mode_rule">قاعده‌ای</string>
+    <string name="remnawave_hwid">Remnawave HWID</string>
+    <string name="remnawave_hwid_prompt">برای ادامه Remnawave HWID را فعال کنید.</string>
+    <string name="rename">تغییر نام</string>
+    <string name="rename_rule_set">تغییر نام مجموعه‌قواعد</string>
+    <string name="rename_subscription">تغییر نام اشتراک</string>
+    <string name="reset">بازنشانی</string>
+    <string name="route_to">مسیردهی به</string>
+    <string name="routing_rules_updated_message">پراکسی مورد استفادهٔ قواعد مسیریابی زیر حذف شد. آن‌ها به پیش‌فرض بازنشانی شدند: %1$s</string>
+    <string name="routing_rules_updated_title">قواعد مسیریابی به‌روزرسانی شد</string>
+    <string name="rule_list_url">نشانی فهرست قواعد Mythaia</string>
+    <string name="rule_set">مجموعه‌قواعد</string>
+    <string name="rules">قواعد</string>
+    <string name="select">انتخاب</string>
+    <string name="standalone">مستقل</string>
+    <string name="type_label">نوع</string>
+    <string name="user_agent">عامل کاربر</string>
+    <string name="value_label">مقدار</string>
+    <plurals name="rules_count">
+        <item quantity="one">%1$d قاعده</item>
+        <item quantity="other">%1$d قاعده</item>
+    </plurals>
+    <plurals name="parsed_rules">
+        <item quantity="one">%1$d قاعده</item>
+        <item quantity="other">%1$d قاعده</item>
+    </plurals>
+    <plurals name="n_proxies">
+        <item quantity="one">%1$d پراکسی</item>
+        <item quantity="other">%1$d پراکسی</item>
+    </plurals>
+    <plurals name="every_n_hours">
+        <item quantity="one">هر %1$d ساعت</item>
+        <item quantity="other">هر %1$d ساعت</item>
+    </plurals>
 </resources>

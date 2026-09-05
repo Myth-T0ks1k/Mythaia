@@ -52,8 +52,10 @@ class ActivityTimer(
     }
 
     private fun startTimer(timeoutMs: Long) {
-        future = executor.scheduleAtFixedRate({
-            if (cancelled) return@scheduleAtFixedRate
+        // Fixed *delay*: a cached process that resumes after minutes
+        // would otherwise run the whole backlog of a fixed rate at once.
+        future = executor.scheduleWithFixedDelay({
+            if (cancelled) return@scheduleWithFixedDelay
             if (hasActivity) {
                 hasActivity = false
             } else {

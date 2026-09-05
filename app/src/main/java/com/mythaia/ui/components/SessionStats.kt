@@ -46,8 +46,8 @@ fun SessionStatsRow(
     downloadSpeed: Long,
     uploadSpeed: Long,
     uptimeSeconds: Long,
-    contentColor: Color = MaterialTheme.colorScheme.onSurface,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

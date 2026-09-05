@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -356,7 +357,7 @@ private fun intervalLabel(hours: Int): String = when (hours) {
     0 -> stringResource(R.string.off)
     168 -> stringResource(R.string.every_week)
     24 -> stringResource(R.string.every_day)
-    else -> stringResource(R.string.every_n_hours, hours)
+    else -> pluralStringResource(R.plurals.every_n_hours, hours, hours)
 }
 
 @Composable

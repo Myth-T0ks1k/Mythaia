@@ -205,7 +205,7 @@ class MythaiaVpnService : VpnService() {
         lwipStack?.let { oldStack ->
             lwipStack = null
             val latch = java.util.concurrent.CountDownLatch(1)
-            oldStack.stop(onComplete = Runnable { latch.countDown() })
+            oldStack.stop { latch.countDown() }
             try {
                 latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
             } catch (_: InterruptedException) {}
@@ -322,7 +322,7 @@ class MythaiaVpnService : VpnService() {
             // Use the completion callback so the TUN file descriptor is closed
             // AFTER the lwIP executor finishes draining — avoids racing with the
             // packet reader thread.
-            stack.stop(onComplete = Runnable { finishStopVpn(fdToClose, generation) })
+            stack.stop { finishStopVpn(fdToClose, generation) }
         } else {
             finishStopVpn(fdToClose, generation)
         }

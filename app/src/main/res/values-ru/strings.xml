@@ -12,7 +12,7 @@
     <string name="auto">Авто</string>
     <string name="cancel">Отмена</string>
     <string name="connected">Подключено</string>
-    <string name="connecting">Подключение...</string>
+    <string name="connecting">Подключение…</string>
     <string name="continue_action">Продолжить</string>
     <string name="country_bypass">Обход по стране</string>
     <string name="direct">Прямое</string>
@@ -20,14 +20,13 @@
     <string name="delete">Удалить</string>
     <string name="disable">Отключить</string>
     <string name="disconnected">Отключено</string>
-    <string name="disconnecting">Отключение...</string>
+    <string name="disconnecting">Отключение…</string>
     <string name="edit">Изменить</string>
     <string name="edit_configuration">Изменить конфигурацию</string>
     <string name="enable_anyway">Всё равно включить</string>
     <string name="encryption">Шифрование</string>
     <string name="fingerprint">Отпечаток</string>
     <string name="flow">Flow</string>
-    <string name="go_to_settings">Перейти в Настройки</string>
     <string name="home">Главная</string>
     <string name="host">Хост</string>
     <string name="import_failed">Ошибка импорта</string>
@@ -38,7 +37,6 @@
     <string name="network">Сеть</string>
     <string name="no_proxies">Нет прокси</string>
     <string name="none">Нет</string>
-    <string name="not_configured">Не настроено</string>
     <string name="ok">ОК</string>
     <string name="path">Путь</string>
     <string name="permission_denied">Нет разрешения</string>
@@ -46,10 +44,9 @@
     <string name="proxies">Прокси</string>
     <string name="public_key">Публичный ключ</string>
     <string name="qr_code">QR-код</string>
-    <string name="reconnecting">Переподключение...</string>
+    <string name="reconnecting">Переподключение…</string>
     <string name="routing">Маршрутизация</string>
     <string name="routing_rules">Правила маршрутизации</string>
-    <string name="routing_rules_updated">Правила маршрутизации обновлены</string>
     <string name="save">Сохранить</string>
     <string name="scan_your_qr_code">Отсканируйте QR-код</string>
     <string name="security">Безопасность</string>
@@ -62,24 +59,19 @@
     <string name="insecure">небезопасно</string>
     <string name="trademarks">Товарные знаки</string>
     <string name="transport">Транспорт</string>
-    <string name="unknown">Неизвестно</string>
     <string name="update">Обновить</string>
     <string name="update_failed">Ошибка обновления</string>
     <string name="vpn_error">Ошибка VPN</string>
     <string name="latency_ms">%d мс</string>
-    <string name="routing_rules_reset">Прокси, используемый следующими правилами маршрутизации, был удалён. Они сброшены на значение по умолчанию: %s</string>
-    <string name="doh_routing_warning">Включение DNS через HTTPS помешает работе правил маршрутизации. Маршрутизация по доменам требует обычного DNS для перехвата запросов.</string>
     <string name="trademarks_notice">Все товарные знаки, знаки обслуживания и названия компаний являются собственностью их владельцев.</string>
     <string name="independent_project_notice">Mythaia — независимый проект, не связанный ни с одной из перечисленных ниже компаний и не одобренный или спонсируемый ими.</string>
     <string name="upload">Отправка</string>
     <string name="download">Загрузка</string>
     <string name="invalid_url">Неверный URL</string>
     <string name="invalid_qr_code">Неверный QR-код</string>
-    <string name="qr_code_not_vless">QR-код не содержит ссылку VLESS</string>
     <string name="unknown_error">Неизвестная ошибка</string>
     <string name="subscription">Подписка</string>
     <string name="open_source_libraries">Библиотеки с открытым кодом</string>
-    <string name="supports_vless_link">Поддержка VLESS-ссылки, ссылки подписки и Clash-ссылки</string>
 
     <!-- Phase 9: Encrypted DNS -->
     <string name="encrypted_dns">Зашифрованный DNS</string>
@@ -119,7 +111,6 @@
     <string name="supports_proxy_link">Поддержка ссылок VLESS, Shadowsocks, NaiveProxy, подписки и Clash</string>
 
     <!-- Phase 9: QR Code -->
-    <string name="qr_code_not_supported">QR-код не содержит поддерживаемую ссылку на прокси</string>
 
     <!-- Chains -->
     <string name="chains">Цепочки</string>
@@ -127,7 +118,6 @@
     <string name="tap_to_add_chain">Нажмите +, чтобы создать цепочку прокси.</string>
     <string name="new_chain">Новая цепочка</string>
     <string name="edit_chain">Изменить цепочку</string>
-    <string name="chain_name">Название цепочки</string>
     <string name="add_proxy_to_chain">Добавить прокси</string>
     <string name="proxies_in_chain">Прокси</string>
     <string name="chain_min_proxies">Добавьте минимум 2 прокси для создания цепочки.</string>
@@ -140,7 +130,6 @@
     <string name="entry">Вход</string>
     <string name="exit">Выход</string>
     <string name="route_preview">Предпросмотр маршрута</string>
-    <string name="n_proxies">%d прокси</string>
 
     <!-- Missing general -->
     <string name="join_telegram_group">Присоединиться к группе Telegram</string>
@@ -158,7 +147,6 @@
     <string name="back">Назад</string>
 
     <!-- HTTP/3 -->
-    <string name="not_yet_supported">Пока не поддерживается</string>
     <string name="disconnect">Отключить</string>
     <string name="vpn_service">Служба VPN</string>
     <string name="vpn_channel_description">Уведомление об активном подключении VPN</string>
@@ -189,7 +177,6 @@
     <string name="off">Выкл.</string>
     <string name="every_day">Каждый день</string>
     <string name="every_week">Каждую неделю</string>
-    <string name="every_n_hours">Каждые %1$d ч.</string>
     <string name="subscription_refresh_footer">Обновляет все подписки в фоне, когда есть соединение. По умолчанию выключено — без вашего запроса ничего в сеть не уходит.</string>
 
     <!-- GeoIP -->
@@ -207,7 +194,6 @@
     <string name="auto_select">Выбирать самый быстрый</string>
     <string name="auto_select_now">Выбрать быстрый</string>
     <string name="auto_select_none">Ни один сервер не ответил.</string>
-    <string name="auto_select_testing">Проверка серверов…</string>
     <string name="auto_select_footer">Замеряет все серверы и подключается к самому быстрому. Добавляет несколько секунд к каждому подключению и обращается ко всем вашим серверам.</string>
     <string name="connection">Подключение</string>
 
@@ -238,4 +224,78 @@
     <string name="theme_dark">Тёмная</string>
     <string name="wireguard_configuration">Конфигурация WireGuard</string>
     <string name="wireguard_configuration_hint">Вставьте разделы [Interface] и [Peer], которые выдал провайдер</string>
+    <string name="add_rule">Добавить правило</string>
+    <string name="advanced_settings">Расширенные настройки</string>
+    <string name="block_quic">Блокировать QUIC</string>
+    <string name="copy_count">Копировать (%1$d)</string>
+    <string name="custom">Свой</string>
+    <string name="diagnostics">Диагностика</string>
+    <string name="domain_keyword">Ключевое слово домена</string>
+    <string name="domain_suffix">Суффикс домена</string>
+    <string name="download_from_internet">Загрузить из интернета</string>
+    <string name="enable">Включить</string>
+    <string name="encrypted_dns_footer">Не рекомендуется.</string>
+    <string name="experimental">Экспериментальное</string>
+    <string name="experimental_features">Экспериментальные функции</string>
+    <string name="experimental_footer">Включает функции в разработке — например, создание своих наборов правил маршрутизации.</string>
+    <string name="global_mode">Глобальный режим</string>
+    <string name="grpc_authority">Authority</string>
+    <string name="grpc_service_name">Имя сервиса</string>
+    <string name="http2_proxy">Прокси HTTP/2</string>
+    <string name="https_proxy">Прокси HTTPS</string>
+    <string name="import_action">Импорт</string>
+    <string name="import_rules">Импорт правил</string>
+    <string name="ipv4_cidr">IPv4 CIDR</string>
+    <string name="ipv6_cidr">IPv6 CIDR</string>
+    <string name="logs">Журнал</string>
+    <string name="more">Ещё</string>
+    <string name="move_down">Вниз</string>
+    <string name="move_up">Вверх</string>
+    <string name="name_label">Название</string>
+    <string name="new_rule_set">Новый набор правил</string>
+    <string name="no_recent_logs">Нет свежих записей</string>
+    <string name="other">Прочее</string>
+    <string name="proxy_mode_global">Глобальный</string>
+    <string name="proxy_mode_rule">По правилам</string>
+    <string name="remnawave_hwid">Remnawave HWID</string>
+    <string name="remnawave_hwid_prompt">Включите Remnawave HWID, чтобы продолжить.</string>
+    <string name="rename">Переименовать</string>
+    <string name="rename_rule_set">Переименовать набор правил</string>
+    <string name="rename_subscription">Переименовать подписку</string>
+    <string name="reset">Сбросить</string>
+    <string name="route_to">Направить в</string>
+    <string name="routing_rules_updated_message">Прокси, который использовали эти правила маршрутизации, удалён. Они сброшены на «По умолчанию»: %1$s</string>
+    <string name="routing_rules_updated_title">Правила маршрутизации обновлены</string>
+    <string name="rule_list_url">Ссылка на список правил Mythaia</string>
+    <string name="rule_set">Набор правил</string>
+    <string name="rules">Правила</string>
+    <string name="select">Выбрать</string>
+    <string name="standalone">Отдельно</string>
+    <string name="type_label">Тип</string>
+    <string name="user_agent">User-Agent</string>
+    <string name="value_label">Значение</string>
+    <plurals name="rules_count">
+        <item quantity="one">%1$d правило</item>
+        <item quantity="few">%1$d правила</item>
+        <item quantity="many">%1$d правил</item>
+        <item quantity="other">%1$d правила</item>
+    </plurals>
+    <plurals name="parsed_rules">
+        <item quantity="one">%1$d правило</item>
+        <item quantity="few">%1$d правила</item>
+        <item quantity="many">%1$d правил</item>
+        <item quantity="other">%1$d правила</item>
+    </plurals>
+    <plurals name="n_proxies">
+        <item quantity="one">%1$d прокси</item>
+        <item quantity="few">%1$d прокси</item>
+        <item quantity="many">%1$d прокси</item>
+        <item quantity="other">%1$d прокси</item>
+    </plurals>
+    <plurals name="every_n_hours">
+        <item quantity="one">Каждый %1$d час</item>
+        <item quantity="few">Каждые %1$d часа</item>
+        <item quantity="many">Каждые %1$d часов</item>
+        <item quantity="other">Каждые %1$d часа</item>
+    </plurals>
 </resources>

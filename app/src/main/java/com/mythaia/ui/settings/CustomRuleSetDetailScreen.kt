@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -222,7 +223,7 @@ fun CustomRuleSetDetailScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = stringResource(R.string.rules_count, 0),
+                        text = pluralStringResource(R.plurals.rules_count, 0, 0),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -677,7 +678,7 @@ private fun ImportRulesSheet(
             if (parsed.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = stringResource(R.string.parsed_rules, parsed.size),
+                    text = pluralStringResource(R.plurals.parsed_rules, parsed.size, parsed.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier

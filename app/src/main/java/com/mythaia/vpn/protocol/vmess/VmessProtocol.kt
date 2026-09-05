@@ -171,6 +171,9 @@ object VmessProtocol {
         plain[15] = (crc and 0xFF).toByte()
 
         val key = VmessKdf.kdf16(cmdKey, salt(VmessKdf.SALT_AUTH_ID_ENCRYPTION))
+        // One block, as the VMess AEAD header specifies. A chaining mode
+        // would change the bytes on the wire.
+        @Suppress("GetInstance")
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
         return cipher.doFinal(plain)

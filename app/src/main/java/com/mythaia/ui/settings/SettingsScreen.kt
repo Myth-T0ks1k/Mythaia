@@ -1,5 +1,6 @@
 package com.mythaia.ui.settings
 
+import androidx.core.net.toUri
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -170,7 +171,7 @@ fun SettingsScreen(viewModel: VpnViewModel) {
                 onThemeModeChange = { viewModel.setThemeMode(it) },
                 onOpenTelegram = {
                     com.mythaia.BrandLinks.TELEGRAM_COMMUNITY?.let { link ->
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW, link.toUri()))
                     }
                 },
                 onOpenRoutingRules = { showRoutingRules = true },

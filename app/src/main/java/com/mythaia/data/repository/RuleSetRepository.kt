@@ -1,5 +1,6 @@
 package com.mythaia.data.repository
 
+import androidx.core.content.edit
 import android.content.Context
 import android.content.SharedPreferences
 import com.mythaia.data.model.DomainRule
@@ -297,9 +298,9 @@ class RuleSetRepository(private val context: Context) {
         // Bump the cross-component counter so the running VPN service's prefs
         // listener (LwipStack.prefsListener) reloads the routing config in-flight.
         // Mirrors iOS AWCore.notifyRoutingChanged().
-        prefs.edit()
-            .putLong("routingChanged", System.currentTimeMillis())
-            .apply()
+        prefs.edit {
+            putLong("routingChanged", System.currentTimeMillis())
+        }
     }
 
     private fun resolveConfigurationAddresses(
@@ -329,7 +330,7 @@ class RuleSetRepository(private val context: Context) {
 
     private fun saveAssignmentMap(map: Map<String, String>) {
         val set = map.map { (k, v) -> "$k=$v" }.toSet()
-        prefs.edit().putStringSet(ASSIGNMENTS_KEY, set).apply()
+        prefs.edit { putStringSet(ASSIGNMENTS_KEY, set) }
     }
 
     private fun loadCustomRuleSets(): List<CustomRuleSet> {
@@ -347,7 +348,7 @@ class RuleSetRepository(private val context: Context) {
             kotlinx.serialization.builtins.ListSerializer(CustomRuleSet.serializer()),
             _customRuleSets.value
         )
-        prefs.edit().putString(CUSTOM_RULE_SETS_KEY, encoded).apply()
+        prefs.edit { putString(CUSTOM_RULE_SETS_KEY, encoded) }
     }
 
     companion object {

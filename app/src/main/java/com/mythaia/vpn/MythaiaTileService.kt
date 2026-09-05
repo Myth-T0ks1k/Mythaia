@@ -74,7 +74,10 @@ class MythaiaTileService : TileService() {
                 )
                 startActivityAndCollapse(pending)
             } else {
-                @Suppress("DEPRECATION")
+                // The PendingIntent overload only exists from 34, and the
+                // branch above takes it there; below 34 this is the only form
+                // that exists, so the deprecation cannot be acted on.
+                @Suppress("DEPRECATION", "StartActivityAndCollapseDeprecated")
                 startActivityAndCollapse(intent)
             }
         } catch (e: Exception) {

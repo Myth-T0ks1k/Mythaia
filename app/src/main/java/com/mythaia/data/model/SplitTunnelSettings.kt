@@ -1,5 +1,6 @@
 package com.mythaia.data.model
 
+import androidx.core.content.edit
 import android.content.SharedPreferences
 
 /** Which apps the tunnel carries. */
@@ -53,10 +54,10 @@ data class SplitTunnelSettings(
         )
 
         fun write(prefs: SharedPreferences, settings: SplitTunnelSettings) {
-            prefs.edit()
-                .putString(KEY_MODE, settings.mode.raw)
-                .putStringSet(KEY_PACKAGES, settings.packages.toSet())
-                .apply()
+            prefs.edit {
+                putString(KEY_MODE, settings.mode.raw)
+                putStringSet(KEY_PACKAGES, settings.packages.toSet())
+            }
         }
     }
 }

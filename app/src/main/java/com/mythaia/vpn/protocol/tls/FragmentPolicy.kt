@@ -1,5 +1,6 @@
 package com.mythaia.vpn.protocol.tls
 
+import androidx.core.content.edit
 import android.content.Context
 import android.content.SharedPreferences
 import com.mythaia.data.model.FragmentSettings
@@ -48,13 +49,13 @@ object FragmentPolicy {
 
     /** Persists [settings] and publishes it to the running tunnel. */
     fun write(prefs: SharedPreferences, settings: FragmentSettings) {
-        prefs.edit()
-            .putBoolean(KEY_ENABLED, settings.isEnabled)
-            .putInt(KEY_MIN_LENGTH, settings.minLength)
-            .putInt(KEY_MAX_LENGTH, settings.maxLength)
-            .putInt(KEY_MIN_INTERVAL, settings.minInterval)
-            .putInt(KEY_MAX_INTERVAL, settings.maxInterval)
-            .apply()
+        prefs.edit {
+            putBoolean(KEY_ENABLED, settings.isEnabled)
+            putInt(KEY_MIN_LENGTH, settings.minLength)
+            putInt(KEY_MAX_LENGTH, settings.maxLength)
+            putInt(KEY_MIN_INTERVAL, settings.minInterval)
+            putInt(KEY_MAX_INTERVAL, settings.maxInterval)
+        }
         set(settings)
     }
 }

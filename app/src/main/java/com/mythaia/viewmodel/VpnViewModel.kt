@@ -1,5 +1,7 @@
 package com.mythaia.viewmodel
 
+import androidx.core.content.edit
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
@@ -123,7 +125,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setThemeMode(mode: ThemeMode) {
         if (_themeMode.value == mode) return
-        prefs.edit().putString(ThemeMode.KEY, mode.raw).apply()
+        prefs.edit { putString(ThemeMode.KEY, mode.raw) }
         _themeMode.value = mode
         applySystemNightMode(mode)
     }
@@ -185,6 +187,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeepLinkUrl.value = null
     }
 
+    // A bound Service, not an Activity, and released in onServiceDisconnected
+    // and again in onCleared — so it cannot outlive the binding.
+    @SuppressLint("StaticFieldLeak")
     private var vpnService: MythaiaVpnService? = null
     private var serviceBound = false
     // True from bindService() until unbindService(). Unbinding must key off this
@@ -284,9 +289,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSelectedConfiguration(config: ProxyConfiguration) {
         _selectedChainId.value = null
-        prefs.edit().remove("selectedChainId").apply()
+        prefs.edit { remove("selectedChainId") }
         _selectedConfigId.value = config.id
-        prefs.edit().putString("selectedConfigurationId", config.id.toString()).apply()
+        prefs.edit { putString("selectedConfigurationId", config.id.toString()) }
 
         if (_vpnStatus.value == VpnStatus.CONNECTED) {
             switchConfig(config)
@@ -314,7 +319,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     var autoSelectEnabled: Boolean
         get() = prefs.getBoolean("autoSelectEnabled", false)
-        set(value) = prefs.edit().putBoolean("autoSelectEnabled", value).apply()
+        set(value) = prefs.edit { putBoolean("autoSelectEnabled", value) }
 
     /**
      * Measures every candidate and selects the fastest.
@@ -667,14 +672,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (_selectedConfigId.value == config.id) {
             val remaining = configRepository.getAll()
             _selectedConfigId.value = remaining.firstOrNull()?.id
-            prefs.edit().putString("selectedConfigurationId", _selectedConfigId.value?.toString()).apply()
+            prefs.edit { putString("selectedConfigurationId", _selectedConfigId.value?.toString()) }
         }
         val chainId = _selectedChainId.value
         if (chainId != null) {
             val chain = chainRepository.get(chainId)
             if (chain == null || resolveChain(chain) == null) {
                 _selectedChainId.value = null
-                prefs.edit().remove("selectedChainId").apply()
+                prefs.edit { remove("selectedChainId") }
                 ensureValidSelection()
             }
         }
@@ -784,7 +789,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         chainRepository.delete(chain.id)
         if (_selectedChainId.value == chain.id) {
             _selectedChainId.value = null
-            prefs.edit().remove("selectedChainId").apply()
+            prefs.edit { remove("selectedChainId") }
             ensureValidSelection()
         }
     }
@@ -792,10 +797,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun selectChain(chain: ProxyChain) {
         val resolved = resolveChain(chain) ?: return
         _selectedChainId.value = chain.id
-        prefs.edit()
-            .putString("selectedChainId", chain.id.toString())
-            .remove("selectedConfigurationId")
-            .apply()
+        prefs.edit {
+            putString("selectedChainId", chain.id.toString())
+            remove("selectedConfigurationId")
+        }
         _selectedConfigId.value = null
 
         if (_vpnStatus.value == VpnStatus.CONNECTED) {
@@ -870,7 +875,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             configRepository.getAll()
         ) { address -> resolveServerAddress(address) }
         if (_vpnStatus.value == VpnStatus.CONNECTED) {
-            prefs.edit().putLong("routingChanged", System.currentTimeMillis()).apply()
+            prefs.edit { putLong("routingChanged", System.currentTimeMillis()) }
         }
     }
 
@@ -886,7 +891,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Written unconditionally: LwipStack only listens while a tunnel is up,
         // so a stray write costs nothing, and gating on the view model own
         // status would drop the signal whenever that status is behind.
-        prefs.edit().putLong("routingChanged", System.currentTimeMillis()).apply()
+        prefs.edit { putLong("routingChanged", System.currentTimeMillis()) }
     }
 
     /** Collects all proxy server addresses (domains + resolved IPs) from all
@@ -903,7 +908,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val persisted = addresses.toList()
-        prefs.edit().putString("proxyServerAddresses", json.encodeToString(persisted)).apply()
+        prefs.edit { putString("proxyServerAddresses", json.encodeToString(persisted)) }
         vpnService?.updateProxyServerAddresses(persisted)
     }
 
@@ -922,11 +927,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** "rule" (default) applies routing rules per-destination; "global" routes everything through the proxy. */
     var proxyMode: String
         get() = prefs.getString("proxyMode", "rule") ?: "rule"
-        set(value) = prefs.edit().putString("proxyMode", value).apply()
+        set(value) = prefs.edit { putString("proxyMode", value) }
 
     var bypassCountryCode: String
         get() = prefs.getString("bypassCountryCode", "") ?: ""
-        set(value) = prefs.edit().putString("bypassCountryCode", value).apply()
+        set(value) = prefs.edit { putString("bypassCountryCode", value) }
 
     /**
      * IPv6 DNS lookup toggle — a single knob that controls both IPv6 routes
@@ -935,19 +940,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     var ipv6DnsEnabled: Boolean
         get() = prefs.getBoolean("ipv6DnsEnabled", false)
-        set(value) = prefs.edit().putBoolean("ipv6DnsEnabled", value).apply()
+        set(value) = prefs.edit { putBoolean("ipv6DnsEnabled", value) }
 
     var encryptedDnsEnabled: Boolean
         get() = prefs.getBoolean("encryptedDnsEnabled", false)
         set(value) {
-            prefs.edit().putBoolean("encryptedDnsEnabled", value).apply()
+            prefs.edit { putBoolean("encryptedDnsEnabled", value) }
             EncryptedDnsPolicy.reload(getApplication())
         }
 
     var encryptedDnsProtocol: String
         get() = prefs.getString("encryptedDnsProtocol", "doh") ?: "doh"
         set(value) {
-            prefs.edit().putString("encryptedDnsProtocol", value).apply()
+            prefs.edit { putString("encryptedDnsProtocol", value) }
             EncryptedDnsPolicy.reload(getApplication())
         }
 
@@ -957,7 +962,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             // Published straight away, like CertificatePolicy and
             // FragmentPolicy: without this the resolver keeps using the old
             // setting until the tunnel happens to reload.
-            prefs.edit().putString("encryptedDnsServer", value).apply()
+            prefs.edit { putString("encryptedDnsServer", value) }
             EncryptedDnsPolicy.reload(getApplication())
         }
 
@@ -967,13 +972,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     var blockQuicEnabled: Boolean
         get() = prefs.getBoolean("blockQuicEnabled", true)
-        set(value) = prefs.edit().putBoolean("blockQuicEnabled", value).apply()
+        set(value) = prefs.edit { putBoolean("blockQuicEnabled", value) }
 
     var allowInsecure: Boolean
         get() = prefs.getBoolean("allowInsecure", false)
         set(value) {
             if (value == allowInsecure) return
-            prefs.edit().putBoolean("allowInsecure", value).apply()
+            prefs.edit { putBoolean("allowInsecure", value) }
             // Update the in-memory policy immediately so non-tunnel callers
             // (e.g. SubscriptionFetcher) observe the new value without waiting
             // for LwipStack to reload after a prefs listener fires.
@@ -1005,7 +1010,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** UI-only flag gating experimental features (e.g. custom rule set creation). */
     var experimentalEnabled: Boolean
         get() = prefs.getBoolean("experimentalEnabled", false)
-        set(value) = prefs.edit().putBoolean("experimentalEnabled", value).apply()
+        set(value) = prefs.edit { putBoolean("experimentalEnabled", value) }
 
     /**
      * Toggle for Remnawave-panel subscriptions that require an `x-hwid` header keyed
@@ -1014,7 +1019,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     var remnawaveHWIDEnabled: Boolean
         get() = prefs.getBoolean("remnawaveHWIDEnabled", false)
-        set(value) = prefs.edit().putBoolean("remnawaveHWIDEnabled", value).apply()
+        set(value) = prefs.edit { putBoolean("remnawaveHWIDEnabled", value) }
 
     /**
      * Persistent per-install identifier used as the `x-hwid` header value for
@@ -1025,7 +1030,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         get() {
             prefs.getString("identifier", null)?.let { return it }
             val generated = java.util.UUID.randomUUID().toString()
-            prefs.edit().putString("identifier", generated).apply()
+            prefs.edit { putString("identifier", generated) }
             return generated
         }
 
@@ -1034,7 +1039,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * tears down active connections.
      */
     fun signalCertificatePolicyChanged() {
-        prefs.edit().putLong("certificatePolicyChanged", System.currentTimeMillis()).apply()
+        prefs.edit { putLong("certificatePolicyChanged", System.currentTimeMillis()) }
     }
 
     val hasCompletedOnboarding: Boolean
@@ -1054,7 +1059,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         syncRoutingConfigurationToNE()
 
-        prefs.edit().putBoolean("hasCompletedOnboarding", true).apply()
+        prefs.edit { putBoolean("hasCompletedOnboarding", true) }
     }
 
     private fun ensureValidSelection() {
@@ -1062,7 +1067,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedId == null || configRepository.get(selectedId) == null) {
             val newId = configRepository.getAll().firstOrNull()?.id
             _selectedConfigId.value = newId
-            prefs.edit().putString("selectedConfigurationId", newId?.toString()).apply()
+            prefs.edit { putString("selectedConfigurationId", newId?.toString()) }
         }
     }
 

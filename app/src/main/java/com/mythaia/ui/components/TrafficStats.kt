@@ -39,8 +39,8 @@ import com.mythaia.R
 fun TrafficStatsRow(
     bytesIn: Long,
     bytesOut: Long,
-    contentColor: Color = MaterialTheme.colorScheme.onSurface,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),

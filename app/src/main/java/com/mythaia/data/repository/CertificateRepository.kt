@@ -1,5 +1,6 @@
 package com.mythaia.data.repository
 
+import androidx.core.content.edit
 import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,13 +65,13 @@ class CertificateRepository(context: Context) {
         fp.replace(":", "").replace(" ", "").lowercase()
 
     private fun save(list: List<String>) {
-        prefs.edit()
-            .putStringSet(KEY, list.toSet())
+        prefs.edit {
+            putStringSet(KEY, list.toSet())
             // Bumping this counter triggers the VPN service's prefs listener
             // (LwipStack.prefsListener) which throttles → CertificatePolicy.reload.
             // Mirrors iOS AWCore.notifyCertificatePolicyChanged().
-            .putLong("certificatePolicyChanged", System.currentTimeMillis())
-            .apply()
+            putLong("certificatePolicyChanged", System.currentTimeMillis())
+        }
     }
 
     private fun load() {

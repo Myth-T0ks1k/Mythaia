@@ -252,6 +252,9 @@ object AesEcb {
     private val tlCipher = ThreadLocal<Cipher>()
 
     private fun cipher(): Cipher {
+        // ECB over a single block, which is what Shadowsocks-2022 asks for:
+        // there is no second block for a mode to chain to.
+        @Suppress("GetInstance")
         return tlCipher.get() ?: Cipher.getInstance("AES/ECB/NoPadding").also { tlCipher.set(it) }
     }
 

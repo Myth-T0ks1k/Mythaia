@@ -1,5 +1,6 @@
 package com.mythaia.data.network
 
+import androidx.core.content.edit
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -103,7 +104,7 @@ object SubscriptionRefreshScheduler {
 
     fun setIntervalHours(context: Context, hours: Int) {
         context.getSharedPreferences("mythaia_settings", Context.MODE_PRIVATE)
-            .edit().putInt(KEY_INTERVAL_HOURS, hours).apply()
+            .edit { putInt(KEY_INTERVAL_HOURS, hours) }
         apply(context)
     }
 
