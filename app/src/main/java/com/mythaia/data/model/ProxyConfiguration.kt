@@ -543,7 +543,7 @@ enum class OutboundProtocol(val raw: String) {
      * a subscription carrying them is not silently truncated — but dialling one
      * fails with a clear message instead of pretending.
      */
-    val isImplemented: Boolean get() = this != HYSTERIA2 && this != ANYTLS
+    val isImplemented: Boolean get() = this != HYSTERIA2
 
     /**
      * Whether this outbound is a layer-3 interface rather than a stream proxy.

@@ -28,10 +28,13 @@ object ProxyClientFactory {
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 ->
                 NaiveClient(config, tunnel).connect(host, port, initialData)
             OutboundProtocol.VMESS -> VmessClient(config, tunnel).connect(host, port, initialData)
+            OutboundProtocol.ANYTLS ->
+                com.mythaia.vpn.protocol.anytls.AnyTlsClient(config, tunnel)
+                    .connect(host, port, initialData)
             // Parsed, stored and exported, but not yet dialable — both wait on
             // the QUIC stack and the AnyTLS implementation. Failing here with
             // the protocol named beats a silent timeout.
-            OutboundProtocol.HYSTERIA2, OutboundProtocol.ANYTLS -> throw ProxyError.ProtocolError(
+            OutboundProtocol.HYSTERIA2 -> throw ProxyError.ProtocolError(
                 "${config.outboundProtocol.displayName} is not supported yet"
             )
             // WireGuard is a layer-3 interface, not a stream proxy: it carries
@@ -61,6 +64,8 @@ object ProxyClientFactory {
             OutboundProtocol.TROJAN -> TrojanClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.SOCKS5 -> SocksClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.VMESS -> VmessClient(config, tunnel).connectUDP(host, port)
+            OutboundProtocol.ANYTLS ->
+                com.mythaia.vpn.protocol.anytls.AnyTlsClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.WIREGUARD -> throw ProxyError.ProtocolError(
                 "WireGuard carries IP packets and cannot be dialled per flow"
             )
@@ -68,7 +73,7 @@ object ProxyClientFactory {
             OutboundProtocol.SHADOWSOCKS -> throw ProxyError.ProtocolError(
                 "UDP not supported through TCP factory for Shadowsocks"
             )
-            OutboundProtocol.HYSTERIA2, OutboundProtocol.ANYTLS -> throw ProxyError.ProtocolError(
+            OutboundProtocol.HYSTERIA2 -> throw ProxyError.ProtocolError(
                 "${config.outboundProtocol.displayName} is not supported yet"
             )
         }

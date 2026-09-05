@@ -161,7 +161,8 @@ class ShareLinkTest {
         // Parsing them keeps a subscription intact; the factory is what refuses.
         assertTrue(OutboundProtocol.VLESS.isImplemented)
         assertTrue(OutboundProtocol.TROJAN.isImplemented)
+        assertTrue(OutboundProtocol.ANYTLS.isImplemented)
+        // Hysteria2 is the last one still waiting on the QUIC stack.
         assertEquals(false, OutboundProtocol.HYSTERIA2.isImplemented)
-        assertEquals(false, OutboundProtocol.ANYTLS.isImplemented)
     }
 }
