@@ -101,7 +101,12 @@ class QuicConnection(
         endpoint = target
 
         handle = NativeBridge.nativeQuicConnCreate(
-            address, serverPort, bound.localAddress.hostAddress ?: "0.0.0.0", bound.localPort, this
+            address,
+            serverPort,
+            bound.localAddress.hostAddress ?: "0.0.0.0",
+            bound.localPort,
+            tuning.toNativeArray(),
+            this
         )
         if (handle == 0L) {
             bound.close()
@@ -164,6 +169,26 @@ class QuicConnection(
      * how many streams may be open, and the answer then is to wait rather than
      * to force one.
      */
+    /**
+     * Opens a unidirectional stream, which only this end may write to.
+     *
+     * HTTP/3 needs one for its control stream. Null when the peer has granted
+     * no credit for them, which is what a plain tunnel profile does.
+     */
+    fun openUniStream(): QuicStream? {
+        val id = synchronized(engineLock) {
+            if (handle == 0L) return null
+            NativeBridge.nativeQuicOpenUniStream(handle)
+        }
+        if (id < 0) {
+            logger.debug("[QUIC] No unidirectional stream credit (ngtcp2 $id)")
+            return null
+        }
+        val stream = QuicStream(id, this)
+        streams[id] = stream
+        return stream
+    }
+
     fun openStream(): QuicStream? {
         val id = synchronized(engineLock) {
             if (handle == 0L) return null

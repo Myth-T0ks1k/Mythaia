@@ -89,6 +89,17 @@ class QuicStream(
         }
     }
 
+    /**
+     * Ends our side of the stream without abandoning it.
+     *
+     * A request that has sent its whole body says so with a FIN; the response
+     * still comes back afterwards, which is why this is not [cancel].
+     */
+    suspend fun finish() {
+        if (cancelled.get()) return
+        connection.writeStream(streamId, ByteArray(0), fin = true)
+    }
+
     override fun cancel() {
         if (!cancelled.compareAndSet(false, true)) return
         ended.set(true)

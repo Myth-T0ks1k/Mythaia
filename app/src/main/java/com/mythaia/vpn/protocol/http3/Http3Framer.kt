@@ -190,6 +190,24 @@ object Http3Framer {
      * Both the type and the length are varints, so the header is between two
      * and sixteen bytes wide depending on the numbers involved.
      */
+    /**
+     * The first bytes of a unidirectional stream say what it is (RFC 9114 §6.2).
+     *
+     * A varint, not a byte: the registry allows large values, and greasing
+     * deliberately uses them. Reading it as a byte works right up until a peer
+     * greases and the stream is misidentified.
+     */
+    const val STREAM_TYPE_CONTROL = 0x00L
+    const val STREAM_TYPE_PUSH = 0x01L
+    const val STREAM_TYPE_QPACK_ENCODER = 0x02L
+    const val STREAM_TYPE_QPACK_DECODER = 0x03L
+
+    /** The opening bytes that declare a unidirectional stream's type. */
+    fun uniStreamType(type: Long): ByteArray = QuicVarInt.encode(type)
+
+    /** Reads that declaration, or null when the buffer is still short of it. */
+    fun readUniStreamType(bytes: ByteArray): QuicVarInt.Decoded? = QuicVarInt.decode(bytes)
+
     fun frame(type: Long, payload: ByteArray): ByteArray {
         val out = ByteArray(
             QuicVarInt.sizeOf(type) + QuicVarInt.sizeOf(payload.size.toLong()) + payload.size

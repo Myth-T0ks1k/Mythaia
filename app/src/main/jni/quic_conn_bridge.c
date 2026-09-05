@@ -380,7 +380,7 @@ static int parse_sockaddr(const char *ip, uint16_t port,
 JNIEXPORT jlong JNICALL
 Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   JNIEnv *env, jclass clazz, jstring remote_ip, jint remote_port,
-  jstring local_ip, jint local_port, jobject callback) {
+  jstring local_ip, jint local_port, jlongArray tuning, jobject callback) {
   (void)clazz;
 
   quic_conn *qc = calloc(1, sizeof(quic_conn));
@@ -465,18 +465,25 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
      fallback once it has been ruled out. */
   settings.max_tx_udp_payload_size = MAX_DATAGRAM;
 
+  /* The limits come from the caller's tuning profile rather than being fixed
+     here: HTTP/3 requires the server to open a control stream, so a profile
+     for it must grant unidirectional credit, while a plain tunnel grants none
+     and treats an attempt as a connection error. Order matches
+     QuicTuning.toNativeArray. */
+  jlong values[7] = {0};
+  if (tuning != NULL && (*env)->GetArrayLength(env, tuning) >= 7) {
+    (*env)->GetLongArrayRegion(env, tuning, 0, 7, values);
+  }
+
   ngtcp2_transport_params params;
   ngtcp2_transport_params_default(&params);
-  /* Every stream here is opened by us; a server that opens one is not
-     something any protocol on this transport does, and granting no credit
-     makes such an attempt a connection error rather than a silent surprise. */
-  params.initial_max_streams_bidi = 0;
-  params.initial_max_streams_uni = 0;
-  params.initial_max_stream_data_bidi_local = 1024 * 1024;
-  params.initial_max_stream_data_bidi_remote = 1024 * 1024;
-  params.initial_max_stream_data_uni = 1024 * 1024;
-  params.initial_max_data = 8 * 1024 * 1024;
-  params.max_idle_timeout = 30 * NGTCP2_SECONDS;
+  params.initial_max_data = (uint64_t)values[0];
+  params.initial_max_stream_data_bidi_local = (uint64_t)values[1];
+  params.initial_max_stream_data_bidi_remote = (uint64_t)values[2];
+  params.initial_max_stream_data_uni = (uint64_t)values[3];
+  params.initial_max_streams_bidi = (uint64_t)values[4];
+  params.initial_max_streams_uni = (uint64_t)values[5];
+  params.max_idle_timeout = (ngtcp2_duration)values[6];
   params.active_connection_id_limit = 4;
 
   ngtcp2_path path;
@@ -877,6 +884,21 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicOpenBidiStream(JNIEnv *env,
   }
   int64_t stream_id = -1;
   int rv = ngtcp2_conn_open_bidi_stream(qc->conn, &stream_id, NULL);
+  return rv == 0 ? (jlong)stream_id : (jlong)rv;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicOpenUniStream(JNIEnv *env,
+                                                          jclass clazz,
+                                                          jlong handle) {
+  (void)env;
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return NGTCP2_ERR_INVALID_STATE;
+  }
+  int64_t stream_id = -1;
+  int rv = ngtcp2_conn_open_uni_stream(qc->conn, &stream_id, NULL);
   return rv == 0 ? (jlong)stream_id : (jlong)rv;
 }
 

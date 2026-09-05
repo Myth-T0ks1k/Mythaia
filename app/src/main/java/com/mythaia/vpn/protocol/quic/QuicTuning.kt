@@ -120,6 +120,23 @@ data class QuicTuning(
      * ClientHello, since that is where the extension lives; what this settles,
      * in one place, is which field goes under which number.
      */
+    /**
+     * The seven limits the JNI bridge sets on the connection, in its order.
+     *
+     * A flat array rather than seven parameters: the bridge reads them by
+     * index, and adding one in the wrong place there is a mistake that shows up
+     * as a connection whose limits are quietly not what was asked for.
+     */
+    fun toNativeArray(): LongArray = longArrayOf(
+        initialMaxData,
+        initialMaxStreamDataBidiLocal,
+        initialMaxStreamDataBidiRemote,
+        initialMaxStreamDataUni,
+        initialMaxStreamsBidi,
+        initialMaxStreamsUni,
+        maxIdleTimeoutNanos
+    )
+
     val advertisedParameters: List<TransportParameter>
         get() = buildList {
             add(TransportParameter(QuicTransportParameterId.MAX_IDLE_TIMEOUT, maxIdleTimeoutMillis))

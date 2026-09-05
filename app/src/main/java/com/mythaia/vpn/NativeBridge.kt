@@ -238,6 +238,8 @@ object NativeBridge {
         remotePort: Int,
         localIp: String,
         localPort: Int,
+        /** The seven transport limits, in [QuicTuning.toNativeArray] order. */
+        tuning: LongArray,
         callback: QuicCallback
     ): Long
 
@@ -338,6 +340,10 @@ object NativeBridge {
     /** The new stream's id, or a negative ngtcp2 error code. */
     @JvmStatic
     external fun nativeQuicOpenBidiStream(handle: Long): Long
+
+    /** A unidirectional stream, which only this end may write to. */
+    @JvmStatic
+    external fun nativeQuicOpenUniStream(handle: Long): Long
 
     @JvmStatic
     external fun nativeQuicShutdownStream(handle: Long, streamId: Long, errorCode: Long)
