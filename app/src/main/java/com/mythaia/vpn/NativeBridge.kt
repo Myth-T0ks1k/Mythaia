@@ -278,6 +278,18 @@ object NativeBridge {
     @JvmStatic
     external fun nativeQuicConnHandleExpiry(handle: Long): Int
 
+    /**
+     * Tells the connection which cipher suite the handshake settled on.
+     *
+     * The Android crypto backend carries the suite *as* the TLS native handle —
+     * an integer where another backend would put a pointer to its TLS object —
+     * so nothing can be encrypted until this is set, and it must land as soon
+     * as the ServerHello names the suite. Returns 0, or a negative ngtcp2 error
+     * for a suite the backend does not implement.
+     */
+    @JvmStatic
+    external fun nativeQuicSetCipherSuite(handle: Long, suite: Int): Int
+
     /** Hands the handshake bytes produced by the TLS layer to the connection. */
     @JvmStatic
     external fun nativeQuicSubmitCrypto(handle: Long, level: Int, data: ByteArray): Int

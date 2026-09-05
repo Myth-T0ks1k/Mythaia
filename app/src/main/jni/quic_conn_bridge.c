@@ -424,7 +424,11 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
     return 0;
   }
 
-  ngtcp2_conn_set_tls_native_handle(qc->conn, &qc->conn_ref);
+  /* The TLS native handle is deliberately left unset until the cipher suite is
+     known. This backend does not point it at a TLS object — there is no C-side
+     TLS object — it reads it back as the negotiated suite, so setting it to
+     anything else makes ngtcp2_crypto_ctx_tls return NULL and every key
+     installation fail. See nativeQuicSetCipherSuite. */
   return (jlong)(intptr_t)qc;
 }
 
@@ -590,6 +594,36 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnHandleExpiry(JNIEnv *env,
 /* ------------------------------------------------------------------------- */
 /* Handshake, driven from Kotlin                                              */
 /* ------------------------------------------------------------------------- */
+
+/*
+ * Tells the connection which cipher suite the handshake settled on.
+ *
+ * The Android crypto backend carries the suite *as* the TLS native handle: an
+ * integer where another backend would put a pointer to its TLS object. Nothing
+ * can be encrypted before this is set, and the key-installation helpers read it
+ * back on every call, so it must land as soon as the ServerHello names it.
+ */
+JNIEXPORT jint JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicSetCipherSuite(JNIEnv *env,
+                                                           jclass clazz,
+                                                           jlong handle,
+                                                           jint suite) {
+  (void)env;
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return NGTCP2_ERR_INVALID_STATE;
+  }
+
+  ngtcp2_crypto_ctx ctx;
+  if (ngtcp2_crypto_ctx_tls(&ctx, (void *)(uintptr_t)suite) == NULL) {
+    return NGTCP2_ERR_INVALID_ARGUMENT;
+  }
+
+  ngtcp2_conn_set_tls_native_handle(qc->conn, (void *)(uintptr_t)suite);
+  ngtcp2_conn_set_crypto_ctx(qc->conn, &ctx);
+  return 0;
+}
 
 JNIEXPORT jint JNICALL
 Java_com_mythaia_vpn_NativeBridge_nativeQuicSubmitCrypto(
