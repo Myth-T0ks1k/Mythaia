@@ -71,15 +71,19 @@ class AnyTlsPaddingScheme private constructor(
         const val CHECK = -1
 
         /**
-         * A record size this client will not exceed.
+         * The largest record this client will produce.
          *
-         * The reference accepts any positive range, but a TLS record cannot
-         * carry more than 2^14 bytes anyway, so a larger request is clamped
-         * rather than dropped — dropping the part would emit fewer records than
-         * the server asked for, which changes the very signature the scheme
-         * exists to control.
+         * The reference accepts any positive range, and so does this — a part
+         * is clamped, never dropped, because dropping one would emit fewer
+         * records than the server asked for and change the very signature the
+         * scheme exists to control.
+         *
+         * The bound is the frame length field: padding travels inside a
+         * cmdWaste frame whose length is a uint16, so nothing larger can be
+         * expressed on the wire. It also stops a mistyped or hostile scheme
+         * (`2=2000000000-2000000000`) from asking for a two-gigabyte buffer.
          */
-        const val MAX_RECORD = 16384
+        const val MAX_RECORD = 65535
 
         /**
          * The scheme every client starts on, byte for byte as the reference
