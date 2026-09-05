@@ -174,6 +174,28 @@ internal object Tls13Crypto {
      *
      * Output layout: `clientKey(keyLen) || clientIV(12) || serverKey(keyLen) || serverIV(12)`
      */
+    /**
+     * The client and server application traffic secrets, concatenated.
+     *
+     * QUIC needs the secrets rather than the keys: ngtcp2 does its own
+     * `quic key`, `quic iv` and `quic hp` expansion from them, and handing it a
+     * key that had already been expanded with the TLS labels would produce
+     * something the peer cannot decrypt.
+     */
+    fun deriveApplicationSecrets(
+        cipherSuite: Int,
+        hsSecret: ByteArray,
+        transcript: ByteArray
+    ): ByteArray {
+        val params = suiteParams(cipherSuite)
+        val derivedHs = deriveSecret(params, hsSecret, "derived", ByteArray(0))
+        val masterSecret = hkdfExtract(params.hmacAlgo, params.hashLen, derivedHs, ByteArray(params.hashLen))
+
+        val clientATS = deriveSecret(params, masterSecret, "c ap traffic", transcript)
+        val serverATS = deriveSecret(params, masterSecret, "s ap traffic", transcript)
+        return clientATS + serverATS
+    }
+
     fun deriveApplicationKeys(
         cipherSuite: Int,
         hsSecret: ByteArray,

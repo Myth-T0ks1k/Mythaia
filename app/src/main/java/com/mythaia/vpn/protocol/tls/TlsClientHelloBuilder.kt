@@ -398,6 +398,13 @@ object TlsClientHelloBuilder {
      *   alongside `omitPQKeyShares = false`, an X25519MLKEM768 hybrid key share is added
      *   to fingerprints that support it. When `null`, no PQ key share is sent.
      */
+    /**
+     * @param extraExtensions extensions appended after the fingerprinted ones,
+     *        already in wire form. QUIC's transport parameters arrive this way:
+     *        they belong in the ClientHello but not in any browser's
+     *        fingerprint, and a QUIC connection is not trying to look like a
+     *        browser's TCP handshake in the first place.
+     */
     fun buildRawClientHello(
         fingerprint: TlsFingerprint,
         random: ByteArray,
@@ -406,7 +413,8 @@ object TlsClientHelloBuilder {
         publicKey: ByteArray,
         alpn: List<String>? = null,
         omitPQKeyShares: Boolean = false,
-        mlkemEncapsulationKey: ByteArray? = null
+        mlkemEncapsulationKey: ByteArray? = null,
+        extraExtensions: ByteArray? = null
     ): ByteArray {
         val resolved: TlsFingerprint = if (fingerprint == TlsFingerprint.RANDOM) {
             val options = TlsFingerprint.concreteFingerprints
@@ -429,8 +437,11 @@ object TlsClientHelloBuilder {
             random = random,
             sessionId = sessionId,
             cipherSuites = suites,
-            extensions = extensions,
-            applyBoringPadding = padded
+            extensions = if (extraExtensions == null) extensions else extensions + extraExtensions,
+            // The padding extension sizes the message to a fingerprint's own
+            // shape; appending after it would defeat the point, so a hello
+            // carrying extra extensions is not padded.
+            applyBoringPadding = padded && extraExtensions == null
         )
     }
 

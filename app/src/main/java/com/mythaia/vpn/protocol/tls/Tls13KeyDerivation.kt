@@ -1,6 +1,7 @@
 package com.mythaia.vpn.protocol.tls
 
 import com.mythaia.vpn.NativeBridge
+import com.mythaia.vpn.Tls13Crypto
 
 object TlsCipherSuite {
     // TLS 1.3
@@ -265,6 +266,24 @@ class Tls13KeyDerivation(
             serverKey = serverKey,
             serverIV = serverIV
         )
+    }
+
+    /**
+     * The application traffic secrets, for a transport that expands them itself.
+     *
+     * QUIC is the only caller: ngtcp2 derives its own packet-protection keys
+     * from these with the `quic key` / `quic iv` / `quic hp` labels, so handing
+     * it the already-expanded TLS keys would give the peer something it cannot
+     * decrypt.
+     */
+    fun deriveApplicationSecrets(
+        handshakeSecret: ByteArray,
+        fullTranscript: ByteArray
+    ): Pair<ByteArray, ByteArray> {
+        val result = Tls13Crypto.deriveApplicationSecrets(
+            cipherSuite, handshakeSecret, fullTranscript
+        )
+        return result.copyOfRange(0, hashLength) to result.copyOfRange(hashLength, 2 * hashLength)
     }
 
     fun computeFinishedVerifyData(
