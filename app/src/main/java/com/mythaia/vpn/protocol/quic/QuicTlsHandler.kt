@@ -2,6 +2,7 @@ package com.mythaia.vpn.protocol.quic
 
 import com.mythaia.data.model.TlsFingerprint
 import com.mythaia.vpn.NativeBridge
+import com.mythaia.vpn.Tls13Crypto
 import com.mythaia.vpn.X25519Crypto
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.Tls13KeyDerivation
@@ -95,6 +96,9 @@ class QuicTlsHandler(
     private var handshakeSecret: ByteArray? = null
     private var clientHandshakeSecret: ByteArray? = null
     private var clientHello: ByteArray? = null
+
+    /** Set with the application keys; what [exportKeyingMaterial] derives from. */
+    private var exporterMasterSecret: ByteArray? = null
 
     // MARK: - Outbound
 
@@ -383,6 +387,12 @@ class QuicTlsHandler(
         // using it here would derive keys the server does not share.
         val (clientApplication, serverApplication) =
             derivation.deriveApplicationSecrets(secret, transcript)
+
+        // Same transcript as the application secrets, for the same reason: an
+        // exporter taken over a different one is a value the peer does not have.
+        exporterMasterSecret = Tls13Crypto.deriveExporterMasterSecret(
+            cipherSuite, secret, transcript
+        )
         if (NativeBridge.nativeQuicInstallKeys(
                 connection, LEVEL_APPLICATION, serverApplication, clientApplication
             ) != 0
@@ -411,6 +421,18 @@ class QuicTlsHandler(
 
         phase = Phase.ESTABLISHED
         return Outcome.OK
+    }
+
+    /**
+     * Keying material bound to this session (RFC 5705).
+     *
+     * TUIC turns its password into a token this way, so a token captured on one
+     * connection proves nothing on another. Null before the handshake reaches
+     * the server Finished, since the secret it derives from does not exist yet.
+     */
+    fun exportKeyingMaterial(label: String, context: ByteArray, length: Int): ByteArray? {
+        val secret = exporterMasterSecret ?: return null
+        return Tls13Crypto.exportKeyingMaterial(cipherSuite, secret, label, context, length)
     }
 
     /** The single protocol name in an ALPN extension, or null. */

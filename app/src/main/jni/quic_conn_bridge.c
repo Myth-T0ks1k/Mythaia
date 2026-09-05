@@ -56,6 +56,7 @@ typedef struct {
   jmethodID on_stream_data;
   jmethodID on_stream_close;
   jmethodID on_handshake_done;
+  jmethodID on_datagram;
 
   struct sockaddr_storage local_addr;
   struct sockaddr_storage remote_addr;
@@ -294,6 +295,42 @@ static int on_stream_close(ngtcp2_conn *conn, uint32_t flags,
   return 0;
 }
 
+/*
+ * A DATAGRAM frame arrived.
+ *
+ * QUIC datagrams are unreliable and unordered by design — they are not a
+ * stream, and nothing retransmits them. TUIC uses them for heartbeats and for
+ * its native UDP relay mode, where losing one is exactly what UDP means.
+ */
+static int on_recv_datagram(ngtcp2_conn *conn, uint32_t flags,
+                            const uint8_t *data, size_t datalen,
+                            void *user_data) {
+  quic_conn *qc = (quic_conn *)user_data;
+  (void)conn;
+  (void)flags;
+
+  if (qc->on_datagram == NULL) {
+    return 0;
+  }
+
+  int attached = 0;
+  JNIEnv *env = attach(qc, &attached);
+  if (env == NULL) {
+    return 0;
+  }
+
+  jbyteArray bytes = to_java_bytes(env, data, datalen);
+  if (bytes != NULL) {
+    (*env)->CallVoidMethod(env, qc->callback, qc->on_datagram, bytes);
+    if ((*env)->ExceptionCheck(env)) {
+      (*env)->ExceptionClear(env);
+    }
+    (*env)->DeleteLocalRef(env, bytes);
+  }
+  detach(qc, attached);
+  return 0;
+}
+
 static int on_handshake_completed(ngtcp2_conn *conn, void *user_data) {
   quic_conn *qc = (quic_conn *)user_data;
   (void)conn;
@@ -422,6 +459,7 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   qc->on_stream_close = (*env)->GetMethodID(env, cb, "onStreamClose", "(JJ)V");
   qc->on_handshake_done =
     (*env)->GetMethodID(env, cb, "onHandshakeComplete", "()V");
+  qc->on_datagram = (*env)->GetMethodID(env, cb, "onDatagram", "([B)V");
   if (qc->on_crypto_data == NULL || qc->on_stream_data == NULL ||
       qc->on_stream_close == NULL || qc->on_handshake_done == NULL) {
     (*env)->DeleteGlobalRef(env, qc->callback);
@@ -454,6 +492,7 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   callbacks.handshake_completed = on_handshake_completed;
   callbacks.rand = on_rand;
   callbacks.get_new_connection_id = on_get_new_connection_id;
+  callbacks.recv_datagram = on_recv_datagram;
 
   ngtcp2_settings settings;
   ngtcp2_settings_default(&settings);
@@ -485,6 +524,9 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   params.initial_max_streams_uni = (uint64_t)values[5];
   params.max_idle_timeout = (ngtcp2_duration)values[6];
   params.active_connection_id_limit = 4;
+  /* Without this the peer may not send DATAGRAM frames at all — the extension
+     is opt-in per direction, and a zero here disables it silently. */
+  params.max_datagram_frame_size = MAX_DATAGRAM;
 
   ngtcp2_path path;
   path.local.addr = (struct sockaddr *)&qc->local_addr;
@@ -885,6 +927,51 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicOpenBidiStream(JNIEnv *env,
   int64_t stream_id = -1;
   int rv = ngtcp2_conn_open_bidi_stream(qc->conn, &stream_id, NULL);
   return rv == 0 ? (jlong)stream_id : (jlong)rv;
+}
+
+/*
+ * Sends one QUIC datagram, returning the packet carrying it.
+ *
+ * Null when ngtcp2 declined — a datagram larger than the peer allows, or no
+ * congestion window to put it in. Neither is an error: a datagram nobody
+ * promised to deliver is allowed to not be delivered.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicWriteDatagram(JNIEnv *env,
+                                                          jclass clazz,
+                                                          jlong handle,
+                                                          jbyteArray data) {
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return NULL;
+  }
+
+  jsize len = (*env)->GetArrayLength(env, data);
+  jbyte *bytes = (*env)->GetByteArrayElements(env, data, NULL);
+  if (bytes == NULL) {
+    return NULL;
+  }
+
+  ngtcp2_vec vec;
+  vec.base = (uint8_t *)bytes;
+  vec.len = (size_t)len;
+
+  ngtcp2_path_storage ps;
+  ngtcp2_path_storage_zero(&ps);
+  ngtcp2_pkt_info pi;
+  int accepted = 0;
+
+  ngtcp2_ssize written = ngtcp2_conn_writev_datagram(
+    qc->conn, &ps.path, &pi, qc->out, sizeof(qc->out), &accepted,
+    NGTCP2_WRITE_DATAGRAM_FLAG_NONE, 0, &vec, 1, timestamp_ns());
+
+  (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
+
+  if (written <= 0 || !accepted) {
+    return NULL;
+  }
+  return to_java_bytes(env, qc->out, (size_t)written);
 }
 
 JNIEXPORT jlong JNICALL

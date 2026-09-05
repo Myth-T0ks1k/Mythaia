@@ -229,6 +229,15 @@ object NativeBridge {
         fun onStreamData(streamId: Long, data: ByteArray, fin: Boolean)
         fun onStreamClose(streamId: Long, errorCode: Long)
         fun onHandshakeComplete()
+
+        /**
+         * An unreliable QUIC datagram arrived.
+         *
+         * Nothing retransmits these, which is the point: TUIC uses them for
+         * heartbeats and for native UDP relaying, where a lost packet is what
+         * UDP means rather than something to recover.
+         */
+        fun onDatagram(data: ByteArray)
     }
 
     /** Zero when the connection could not be created. */
@@ -340,6 +349,15 @@ object NativeBridge {
     /** The new stream's id, or a negative ngtcp2 error code. */
     @JvmStatic
     external fun nativeQuicOpenBidiStream(handle: Long): Long
+
+    /**
+     * Sends one QUIC datagram, returning the packet carrying it, or null.
+     *
+     * Null is not an error — ngtcp2 declines a datagram larger than the peer
+     * allows, or one with no congestion window to put it in.
+     */
+    @JvmStatic
+    external fun nativeQuicWriteDatagram(handle: Long, data: ByteArray): ByteArray?
 
     /** A unidirectional stream, which only this end may write to. */
     @JvmStatic

@@ -182,6 +182,50 @@ internal object Tls13Crypto {
      * key that had already been expanded with the TLS labels would produce
      * something the peer cannot decrypt.
      */
+    /**
+     * The exporter master secret (RFC 8446 §7.5).
+     *
+     * Derived over the transcript through the server Finished, which is the
+     * same point the application secrets come from — an exporter taken over a
+     * different transcript produces a value the peer does not share, and
+     * nothing says so until authentication fails.
+     */
+    fun deriveExporterMasterSecret(
+        cipherSuite: Int,
+        hsSecret: ByteArray,
+        transcript: ByteArray
+    ): ByteArray {
+        val params = suiteParams(cipherSuite)
+        val derivedHs = deriveSecret(params, hsSecret, "derived", ByteArray(0))
+        val masterSecret = hkdfExtract(params.hmacAlgo, params.hashLen, derivedHs, ByteArray(params.hashLen))
+        return deriveSecret(params, masterSecret, "exp master", transcript)
+    }
+
+    /**
+     * Keying material bound to this TLS session (RFC 5705, RFC 8446 §7.5).
+     *
+     * A protocol above TLS uses this to prove it is on the same session as the
+     * peer without sending anything: TUIC turns its password into a token this
+     * way, so a token captured on one connection is worthless on another.
+     *
+     * The definition is exact and easy to get subtly wrong:
+     * `HKDF-Expand-Label(Derive-Secret(exporter_master_secret, label, ""),
+     * "exporter", Hash(context), length)` — note that the context is *hashed*,
+     * not fed in directly, and that the inner derivation uses an empty message.
+     */
+    fun exportKeyingMaterial(
+        cipherSuite: Int,
+        exporterMasterSecret: ByteArray,
+        label: String,
+        context: ByteArray,
+        length: Int
+    ): ByteArray {
+        val params = suiteParams(cipherSuite)
+        val secret = deriveSecret(params, exporterMasterSecret, label, ByteArray(0))
+        val contextHash = MessageDigest.getInstance(params.hashAlgo).digest(context)
+        return hkdfExpandLabel(params.hmacAlgo, params.hashLen, secret, "exporter", contextHash, length)
+    }
+
     fun deriveApplicationSecrets(
         cipherSuite: Int,
         hsSecret: ByteArray,

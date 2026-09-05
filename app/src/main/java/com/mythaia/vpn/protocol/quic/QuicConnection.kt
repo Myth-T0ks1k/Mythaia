@@ -59,10 +59,23 @@ class QuicConnection(
     private val handshake = CompletableDeferred<Boolean>()
     private val threads = mutableListOf<Thread>()
 
+    /** Where unreliable datagrams go, when anything wants them. */
+    @Volatile
+    var onDatagramReceived: ((ByteArray) -> Unit)? = null
+
     /** Streams by ngtcp2 stream id. */
     private val streams = ConcurrentHashMap<Long, QuicStream>()
 
     val isConnected: Boolean get() = handle != 0L && tls.phase == QuicTlsHandler.Phase.ESTABLISHED
+
+    /**
+     * Keying material bound to this session (RFC 5705).
+     *
+     * TUIC turns its password into a token this way, so a token captured on one
+     * connection proves nothing on another. Null before the handshake finishes.
+     */
+    fun exportKeyingMaterial(label: String, context: ByteArray, length: Int): ByteArray? =
+        tls.exportKeyingMaterial(label, context, length)
 
     /** What the peer advertised, once the handshake has got that far. */
     val peerTransportParameters: List<QuicTuning.TransportParameter>
@@ -221,6 +234,21 @@ class QuicConnection(
         return accepted[0]
     }
 
+    /**
+     * Sends one unreliable datagram.
+     *
+     * False when ngtcp2 declined it — too large for what the peer allows, or no
+     * window for it. Nothing retransmits a datagram, so that is the whole of
+     * the failure handling there is.
+     */
+    fun sendDatagram(data: ByteArray): Boolean {
+        val datagram = synchronized(engineLock) {
+            if (handle == 0L) return false
+            NativeBridge.nativeQuicWriteDatagram(handle, data)
+        } ?: return false
+        return send(datagram)
+    }
+
     internal fun shutdownStream(streamId: Long) {
         streams.remove(streamId)
         synchronized(engineLock) {
@@ -373,6 +401,11 @@ class QuicConnection(
 
     override fun onStreamClose(streamId: Long, errorCode: Long) {
         streams.remove(streamId)?.onPeerClosed()
+    }
+
+    /** Handed to whoever registered for datagrams; dropped when nobody has. */
+    override fun onDatagram(data: ByteArray) {
+        onDatagramReceived?.invoke(data)
     }
 
     override fun onHandshakeComplete() {

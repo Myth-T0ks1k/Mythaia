@@ -31,12 +31,12 @@ object ProxyClientFactory {
             OutboundProtocol.ANYTLS ->
                 com.mythaia.vpn.protocol.anytls.AnyTlsClient(config, tunnel)
                     .connect(host, port, initialData)
-            // Parsed, stored and exported, but not yet dialable — both wait on
-            // the QUIC stack and the AnyTLS implementation. Failing here with
-            // the protocol named beats a silent timeout.
-            OutboundProtocol.HYSTERIA2 -> throw ProxyError.ProtocolError(
-                "${config.outboundProtocol.displayName} is not supported yet"
-            )
+            OutboundProtocol.HYSTERIA2 ->
+                com.mythaia.vpn.protocol.hysteria.HysteriaClient(config)
+                    .connect(host, port, initialData)
+            OutboundProtocol.TUIC ->
+                com.mythaia.vpn.protocol.tuic.TuicClient(config)
+                    .connect(host, port, initialData)
             // WireGuard is a layer-3 interface, not a stream proxy: it carries
             // whole IP packets and runs instead of the lwIP stack, so nothing
             // should ever reach the per-flow dial path with it.
@@ -73,8 +73,8 @@ object ProxyClientFactory {
             OutboundProtocol.SHADOWSOCKS -> throw ProxyError.ProtocolError(
                 "UDP not supported through TCP factory for Shadowsocks"
             )
-            OutboundProtocol.HYSTERIA2 -> throw ProxyError.ProtocolError(
-                "${config.outboundProtocol.displayName} is not supported yet"
+            OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC -> throw ProxyError.ProtocolError(
+                "${config.outboundProtocol.displayName} UDP is not wired to the flow layer yet"
             )
         }
     }

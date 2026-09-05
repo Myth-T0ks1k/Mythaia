@@ -532,6 +532,7 @@ enum class OutboundProtocol(val raw: String) {
     HYSTERIA2("hysteria2"),
     ANYTLS("anytls"),
     VMESS("vmess"),
+    TUIC("tuic"),
     WIREGUARD("wireguard");
 
     val isNaive: Boolean get() = this == NAIVE_HTTP11 || this == NAIVE_HTTP2
@@ -568,6 +569,7 @@ enum class OutboundProtocol(val raw: String) {
             HYSTERIA2 -> "Hysteria2"
             ANYTLS -> "AnyTLS"
             VMESS -> "VMess"
+            TUIC -> "TUIC"
             WIREGUARD -> "WireGuard"
         }
 
@@ -605,6 +607,7 @@ object OutboundProtocolSerializer : KSerializer<OutboundProtocol> {
             "hysteria2", "hy2" -> OutboundProtocol.HYSTERIA2
             "anytls" -> OutboundProtocol.ANYTLS
             "vmess" -> OutboundProtocol.VMESS
+            "tuic" -> OutboundProtocol.TUIC
             "wireguard", "wg", "awg", "amneziawg" -> OutboundProtocol.WIREGUARD
             else -> throw SerializationException("Unknown outbound protocol: $raw")
         }
@@ -731,6 +734,7 @@ data class ProxyConfiguration(
         OutboundProtocol.HYSTERIA2 -> toHysteria2Url()
         OutboundProtocol.ANYTLS -> toAnyTlsUrl()
         OutboundProtocol.VMESS -> toVmessUrl()
+        OutboundProtocol.TUIC -> toTuicUrl()
         // WireGuard has no share-link scheme; peers hand out the INI itself,
         // so exporting one gives back exactly what was imported.
         OutboundProtocol.WIREGUARD -> wireGuardConfig.orEmpty()
@@ -794,6 +798,16 @@ data class ProxyConfiguration(
     }
 
     /** `anytls://password@host:port?sni=…&alpn=…&fp=…#name`. */
+    /** `tuic://uuid:password@host:port?sni=…#name`, the shape clients emit. */
+    private fun toTuicUrl(): String {
+        val params = mutableListOf<String>()
+        tls?.let { appendPasswordProtocolTlsParams(params, it) }
+
+        val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
+        return "tuic://$uuid:${urlEncode(password ?: "")}@$bracketedServerAddress:$serverPort" +
+            "$query#${urlEncode(name)}"
+    }
+
     private fun toAnyTlsUrl(): String {
         val params = mutableListOf<String>()
         tls?.let { appendPasswordProtocolTlsParams(params, it) }
@@ -944,7 +958,7 @@ data class ProxyConfiguration(
         /** URL scheme prefixes [fromUrl] recognises. */
         val parsableUrlPrefixes = listOf(
             "vless://", "trojan://", "ss://",
-            "hysteria2://", "hy2://", "anytls://", "vmess://",
+            "hysteria2://", "hy2://", "anytls://", "vmess://", "tuic://",
             "socks5://", "socks://", "https://"
         )
 
@@ -962,8 +976,43 @@ data class ProxyConfiguration(
             url.startsWith("hy2://") -> fromHysteria2Url(url, "hy2://")
             url.startsWith("anytls://") -> fromAnyTlsUrl(url)
             url.startsWith("vmess://") -> fromVmessUrl(url)
+            url.startsWith("tuic://") -> fromTuicUrl(url)
             else -> throw ProxyError.InvalidUrl(
                 "URL must start with vless://, trojan://, ss://, vmess://, hysteria2://, hy2://, anytls://, socks5://, or https://"
+            )
+        }
+
+        /**
+         * `tuic://uuid:password@host:port?sni=…&alpn=…#name`.
+         *
+         * The UUID is the user part and the password the password part, which
+         * is the shape every TUIC client uses even though the specification
+         * itself says nothing about links.
+         */
+        private fun fromTuicUrl(url: String): ProxyConfiguration {
+            val link = decomposeUserInfoLink(url, "tuic://", defaultPort = 443u)
+            // decomposeUserInfoLink hands back the whole userinfo as `password`
+            // because every other scheme that uses it has no user part; TUIC
+            // does, so it is split here rather than there.
+            val colon = link.password.indexOf(':')
+            if (colon <= 0) throw ProxyError.InvalidUrl("tuic:// needs uuid:password")
+
+            val uuid = runCatching { UUID.fromString(percentDecode(link.password.take(colon))) }
+                .getOrNull() ?: throw ProxyError.InvalidUrl("tuic:// user is not a UUID")
+            val password = percentDecode(link.password.substring(colon + 1))
+
+            val sni = link.params["sni"] ?: link.host
+            return ProxyConfiguration(
+                name = link.name ?: link.host,
+                serverAddress = link.host,
+                serverPort = link.port,
+                uuid = uuid,
+                encryption = "none",
+                transport = "quic",
+                security = "tls",
+                tls = TlsConfiguration(serverName = sni),
+                outboundProtocol = OutboundProtocol.TUIC,
+                password = password
             )
         }
 
