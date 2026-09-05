@@ -7,6 +7,28 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
+ * Which carrier a direction of a flow rides on.
+ *
+ * This is deliberately not the same idea as [NowhereProtocol.FlowKind]: a TCP
+ * flow can be carried over a QUIC uplink, and a UDP flow can be carried over a
+ * TLS stream. Keeping the two apart is what makes an asymmetric flow — request
+ * up one transport, response down another — expressible at all.
+ *
+ * Derived from the Anywhere reference implementation (GPL-3.0),
+ * Copyright (C) 2026 NodePassProject.
+ */
+enum class NowhereNetwork(val wireName: String) {
+    TCP("tcp"),
+    UDP("udp");
+
+    companion object {
+        /** Parses the spelling used in a share link's query string. */
+        fun fromWireName(value: String): NowhereNetwork? =
+            NowhereNetwork.entries.firstOrNull { it.wireName == value.lowercase() }
+    }
+}
+
+/**
  * The Nowhere wire format.
  *
  * Nowhere reaches a portal over either TLS-on-TCP or QUIC and then speaks one
@@ -103,15 +125,6 @@ object NowhereProtocol {
     private const val ATYP_DOMAIN = 0x03
     private const val ATYP_IPV6 = 0x04
 
-    /**
-     * Which carrier a direction of a flow rides on.
-     *
-     * This is deliberately not the same idea as [FlowKind]: a TCP flow can be
-     * carried over a QUIC uplink, and a UDP flow can be carried over a TLS
-     * stream.
-     */
-    enum class NowhereNetwork { TCP, UDP }
-
     /** Which carrier the auth frame is binding, mixed into the tag. */
     enum class AuthTransport(val value: Int) {
         TLS_TCP(0x01),
@@ -132,7 +145,7 @@ object NowhereProtocol {
         ATTACH(2);
 
         internal companion object {
-            fun from(value: Int): FlowRole? = entries.firstOrNull { it.value == value }
+            fun from(value: Int): FlowRole? = FlowRole.entries.firstOrNull { it.value == value }
         }
     }
 
@@ -153,7 +166,8 @@ object NowhereProtocol {
         INTERNAL_ERROR(7, "internal error");
 
         internal companion object {
-            fun from(value: Int): FlowRejectCode? = entries.firstOrNull { it.value == value }
+            fun from(value: Int): FlowRejectCode? =
+                FlowRejectCode.entries.firstOrNull { it.value == value }
         }
     }
 
@@ -302,6 +316,10 @@ object NowhereProtocol {
         data class Domain(val host: String, override val port: Int) : Target() {
             init {
                 require(port in 1..65535) { "port out of range: $port" }
+                require(host.isNotEmpty() && host.length <= MAX_DOMAIN_LENGTH) {
+                    "domain length out of range: ${host.length}"
+                }
+                require(host.all { it.code < 0x80 }) { "domain must be ASCII" }
             }
 
             override val encodedLength: Int get() = 1 + 1 + host.length + 2
@@ -357,7 +375,7 @@ object NowhereProtocol {
         CLOSE(2);
 
         internal companion object {
-            fun from(value: Int): UdpType? = entries.firstOrNull { it.value == value }
+            fun from(value: Int): UdpType? = UdpType.entries.firstOrNull { it.value == value }
         }
     }
 
@@ -587,8 +605,12 @@ object NowhereProtocol {
                 if (offset + 2 > bytes.size) return null
                 val length = bytes[offset + 1].toInt() and 0xFF
                 if (length == 0 || offset + 4 + length > bytes.size) return null
+                // A name is ASCII on the wire, so a high bit anywhere in it
+                // means this is not the address the encoder would have written.
+                for (at in offset + 2 until offset + 2 + length) {
+                    if (bytes[at].toInt() and 0x80 != 0) return null
+                }
                 val host = String(bytes, offset + 2, length, Charsets.US_ASCII)
-                if (host.toByteArray(Charsets.US_ASCII).size != length) return null
                 try {
                     validateDomain(host)
                 } catch (_: NowhereError) {
