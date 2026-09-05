@@ -3,9 +3,11 @@ package com.mythaia.vpn.protocol.quic
 import com.mythaia.data.model.TlsFingerprint
 import com.mythaia.vpn.NativeBridge
 import com.mythaia.vpn.X25519Crypto
+import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.Tls13KeyDerivation
 import com.mythaia.vpn.protocol.tls.TlsCipherSuite
 import com.mythaia.vpn.protocol.tls.TlsClientHelloBuilder
+import com.mythaia.vpn.protocol.tls.TlsPeerVerifier
 import com.mythaia.vpn.util.MythaiaLogger
 import java.security.SecureRandom
 
@@ -75,6 +77,12 @@ class QuicTlsHandler(
 
     /** The transcript as it stood before the server's Finished. */
     private var transcriptBeforeServerFinished = ByteArray(0)
+
+    /** The transcript CertificateVerify signs: everything up to but not itself. */
+    private var transcriptBeforeCertificateVerify: ByteArray? = null
+
+    private var certificateVerifyAlgorithm = 0
+    private var certificateVerifySignature: ByteArray? = null
 
     /** Handshake bytes that did not yet form a whole message. */
     private var pending = ByteArray(0)
@@ -155,6 +163,7 @@ class QuicTlsHandler(
             // The server's Finished proves the transcript *before* itself, so
             // the snapshot has to be taken before the message is appended.
             if (type == FINISHED) transcriptBeforeServerFinished = transcript
+            if (type == CERTIFICATE_VERIFY) transcriptBeforeCertificateVerify = transcript
             transcript += message
 
             val body = message.copyOfRange(4, message.size)
@@ -162,7 +171,7 @@ class QuicTlsHandler(
                 SERVER_HELLO -> processServerHello(connection, body)
                 ENCRYPTED_EXTENSIONS -> processEncryptedExtensions(body)
                 CERTIFICATE -> processCertificate(body)
-                CERTIFICATE_VERIFY -> Outcome.OK
+                CERTIFICATE_VERIFY -> processCertificateVerify(body)
                 FINISHED -> processServerFinished(connection)
                 NEW_SESSION_TICKET -> Outcome.OK
                 else -> {
@@ -282,6 +291,60 @@ class QuicTlsHandler(
         return Outcome.OK
     }
 
+    /** Keeps the signature; it is checked once the whole chain has arrived. */
+    private fun processCertificateVerify(body: ByteArray): Outcome {
+        if (body.size < 4) return fail("CertificateVerify is ${body.size} bytes")
+        certificateVerifyAlgorithm =
+            ((body[0].toInt() and 0xFF) shl 8) or (body[1].toInt() and 0xFF)
+        val length = ((body[2].toInt() and 0xFF) shl 8) or (body[3].toInt() and 0xFF)
+        if (4 + length > body.size) return fail("CertificateVerify signature runs past the message")
+        certificateVerifySignature = body.copyOfRange(4, 4 + length)
+        return Outcome.OK
+    }
+
+    /**
+     * Proves the server is who the certificate says it is.
+     *
+     * Without this the handshake authenticates nothing: anyone able to complete
+     * an ECDHE exchange — which is anyone at all, since it needs no secret —
+     * would be accepted, and the tunnel would carry traffic to whoever answered
+     * first. The chain, the hostname and the CertificateVerify signature are
+     * each necessary; the first two say the certificate is legitimate for this
+     * name, the third says the peer actually holds its private key.
+     */
+    private fun validateCertificate(): Outcome {
+        if (CertificatePolicy.allowInsecure) return Outcome.OK
+
+        val chain = try {
+            TlsPeerVerifier.parseChain(serverCertificates)
+        } catch (e: TlsPeerVerifier.Failure) {
+            return fail(e.message ?: "certificate did not parse")
+        }
+
+        try {
+            TlsPeerVerifier.verifyTrust(chain, serverName)
+        } catch (e: TlsPeerVerifier.Failure) {
+            return fail(e.message ?: "certificate not trusted")
+        }
+
+        val signature = certificateVerifySignature
+        val signed = transcriptBeforeCertificateVerify
+        val derivation = keyDerivation
+        if (signature == null || signed == null || derivation == null) {
+            return fail("server did not prove it holds the certificate key")
+        }
+        if (!TlsPeerVerifier.verifySignature(
+                chain.first(),
+                certificateVerifyAlgorithm,
+                signature,
+                derivation.transcriptHash(signed)
+            )
+        ) {
+            return fail("CertificateVerify signature did not check out")
+        }
+        return Outcome.OK
+    }
+
     /**
      * Verifies the server's Finished and moves to application keys.
      *
@@ -291,6 +354,10 @@ class QuicTlsHandler(
     private fun processServerFinished(connection: Long): Outcome {
         val derivation = keyDerivation ?: return fail("Finished arrived before ServerHello")
         val secret = handshakeSecret ?: return fail("no handshake secret")
+
+        // Before any application key exists: past this point the tunnel would
+        // be carrying real traffic to whoever answered.
+        if (validateCertificate() == Outcome.FAILED) return Outcome.FAILED
 
         val (clientApplication, serverApplication) =
             derivation.deriveApplicationSecrets(secret, transcriptBeforeServerFinished)
