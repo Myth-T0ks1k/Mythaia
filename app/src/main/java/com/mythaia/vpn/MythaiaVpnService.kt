@@ -1,5 +1,6 @@
 package com.mythaia.vpn
 
+import kotlinx.coroutines.launch
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -305,6 +306,12 @@ class MythaiaVpnService : VpnService() {
         wireGuardTunnel?.stop()
         wireGuardTunnel = null
         wireGuardSettings = null
+
+        // AnyTLS keeps TLS connections pooled across dials, so they outlive any
+        // one flow and have to be released with the tunnel rather than with it.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching { com.mythaia.vpn.protocol.anytls.AnyTlsClient.shutdown() }
+        }
 
         val stack = lwipStack
         lwipStack = null

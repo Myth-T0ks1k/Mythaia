@@ -7,7 +7,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -24,26 +23,39 @@ class AnyTlsStream(
 ) : ProxyConnection() {
 
     private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
-    private val closed = AtomicBoolean(false)
+
+    /** Set when no more data will arrive; queued data is still readable. */
+    private val ended = AtomicBoolean(false)
+
+    /** Set by [cancel], i.e. by this side giving up. */
+    private val cancelled = AtomicBoolean(false)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override val isConnected: Boolean
-        get() = !closed.get() && !session.isClosed
+        get() = !cancelled.get() && !session.isClosed
 
     override suspend fun sendRaw(data: ByteArray) {
-        if (closed.get()) return
+        if (cancelled.get()) return
         session.sendStreamData(streamId, data)
     }
 
     override fun sendRawAsync(data: ByteArray) {
-        if (closed.get()) return
+        if (cancelled.get()) return
         scope.launch { runCatching { session.sendStreamData(streamId, data) } }
     }
 
-    override suspend fun receiveRaw(): ByteArray? {
-        if (closed.get()) return null
-        return runCatching { incoming.receive() }.getOrNull()
-    }
+    /**
+     * The next chunk, or null once the stream has ended *and* been drained.
+     *
+     * Deliberately not gated on the ended flag: a server that finishes a
+     * response and closes usually delivers the last data frame and the FIN in
+     * one read, so refusing to read after the FIN would throw away the tail of
+     * every response. Closing the channel is what marks the end, and a closed
+     * channel still yields what is already in it.
+     */
+    override suspend fun receiveRaw(): ByteArray? =
+        incoming.receiveCatching().getOrNull()
 
     override suspend fun startReceiving(
         handler: suspend (ByteArray) -> Unit,
@@ -51,7 +63,7 @@ class AnyTlsStream(
     ) {
         scope.launch {
             try {
-                while (isConnected) {
+                while (true) {
                     val data = receive() ?: break
                     handler(data)
                 }
@@ -62,25 +74,37 @@ class AnyTlsStream(
         }
     }
 
+    /**
+     * Gives up on this stream from our side.
+     *
+     * The FIN goes out without waiting for it. This is called from the lwIP
+     * executor — a single thread driving the whole tunnel — and the write path
+     * suspends whenever the socket is not immediately writable, so blocking on
+     * it here would stall every other flow until the uplink drained.
+     */
     override fun cancel() {
-        if (!closed.compareAndSet(false, true)) return
+        if (!cancelled.compareAndSet(false, true)) return
+        ended.set(true)
         incoming.close()
-        // Tell the peer, but never let a dead session make closing throw.
-        runCatching { runBlocking { session.closeStream(streamId) } }
+        session.closeStreamAsync(streamId)
         scope.cancel()
     }
 
     /** Data the session routed to this stream. */
     internal fun onData(data: ByteArray) {
-        if (closed.get()) return
+        if (ended.get()) return
         incoming.trySend(data)
     }
 
-    /** The peer sent FIN, or refused the stream: no more data is coming. */
+    /**
+     * The peer sent FIN, or refused the stream.
+     *
+     * The channel is closed rather than emptied, so a reader still drains what
+     * arrived before the end.
+     */
     internal fun onPeerClosed() {
-        if (!closed.compareAndSet(false, true)) return
+        if (!ended.compareAndSet(false, true)) return
         incoming.close()
-        scope.cancel()
     }
 
     /** The whole session went away underneath this stream. */

@@ -22,8 +22,24 @@ class AnyTlsPaddingScheme private constructor(
     val raw: ByteArray,
     val md5: String,
     private val stop: Int,
-    private val sizes: Map<Int, List<Int>>
+    private val sizes: Map<Int, List<Part>>
 ) {
+
+    /**
+     * One entry in a packet's size list.
+     *
+     * A sealed type rather than an encoding into an Int. The first version of
+     * this packed a range into one negative int, which silently overflowed to a
+     * positive number once the minimum reached 32768 — and a positive value
+     * reads back as a *fixed* size of about 1.6 GB, which allocates a buffer
+     * that size. The reference keeps its bounds as plain 64-bit locals and
+     * accepts any positive range, so there is nothing to be clever about here.
+     */
+    private sealed interface Part {
+        data object Check : Part
+        data class Fixed(val size: Int) : Part
+        data class Range(val lo: Int, val hi: Int) : Part
+    }
 
     /**
      * The record sizes for packet [packet], or empty when the scheme says
@@ -31,17 +47,12 @@ class AnyTlsPaddingScheme private constructor(
      */
     fun recordSizes(packet: Int, random: SecureRandom): List<Int> {
         val spec = sizes[packet] ?: return emptyList()
-        return spec.map { value ->
-            when {
-                value == CHECK -> CHECK
-                value >= 0 -> value
-                else -> {
-                    // A negative non-check value encodes a range as -(min shl 16 or max).
-                    val packed = -value
-                    val lo = packed ushr 16
-                    val hi = packed and 0xFFFF
-                    if (hi <= lo) lo else lo + random.nextInt(hi - lo)
-                }
+        return spec.map { part ->
+            when (part) {
+                is Part.Check -> CHECK
+                is Part.Fixed -> part.size
+                // Go draws in [lo, hi), matching rand.Int over (hi - lo).
+                is Part.Range -> part.lo + random.nextInt(part.hi - part.lo)
             }
         }
     }
@@ -58,6 +69,17 @@ class AnyTlsPaddingScheme private constructor(
          * signature.
          */
         const val CHECK = -1
+
+        /**
+         * A record size this client will not exceed.
+         *
+         * The reference accepts any positive range, but a TLS record cannot
+         * carry more than 2^14 bytes anyway, so a larger request is clamped
+         * rather than dropped — dropping the part would emit fewer records than
+         * the server asked for, which changes the very signature the scheme
+         * exists to control.
+         */
+        const val MAX_RECORD = 16384
 
         /**
          * The scheme every client starts on, byte for byte as the reference
@@ -94,10 +116,10 @@ class AnyTlsPaddingScheme private constructor(
 
             val stop = entries["stop"]?.toIntOrNull() ?: return null
 
-            val sizes = HashMap<Int, List<Int>>()
+            val sizes = HashMap<Int, List<Part>>()
             for ((key, value) in entries) {
                 val packet = key.toIntOrNull() ?: continue
-                val spec = value.split(',').mapNotNull { part -> encodePart(part.trim()) }
+                val spec = value.split(',').mapNotNull { part -> parsePart(part.trim()) }
                 if (spec.isNotEmpty()) sizes[packet] = spec
             }
 
@@ -106,24 +128,22 @@ class AnyTlsPaddingScheme private constructor(
             return AnyTlsPaddingScheme(raw, md5, stop, sizes)
         }
 
-        /**
-         * A part is either `c`, a fixed size, or a range.
-         *
-         * A range is packed into a negative int rather than kept as a pair so
-         * the parsed form stays a flat list of ints; the sizes involved are
-         * record lengths, far below 16 bits each.
-         */
-        private fun encodePart(part: String): Int? {
-            if (part == "c") return CHECK
+        /** A part is either `c`, a fixed size, or a range — as the reference reads it. */
+        private fun parsePart(part: String): Part? {
+            if (part == "c") return Part.Check
+
             val dash = part.indexOf('-')
             if (dash <= 0) return null
             var lo = part.substring(0, dash).toIntOrNull() ?: return null
             var hi = part.substring(dash + 1).toIntOrNull() ?: return null
             if (lo > hi) { val t = lo; lo = hi; hi = t }
+
+            // The reference's only rejection: both bounds must be positive.
             if (lo <= 0 || hi <= 0) return null
-            if (lo == hi) return lo
-            if (lo > 0xFFFF || hi > 0xFFFF) return null
-            return -((lo shl 16) or hi)
+
+            lo = lo.coerceAtMost(MAX_RECORD)
+            hi = hi.coerceAtMost(MAX_RECORD)
+            return if (lo == hi) Part.Fixed(lo) else Part.Range(lo, hi)
         }
     }
 }

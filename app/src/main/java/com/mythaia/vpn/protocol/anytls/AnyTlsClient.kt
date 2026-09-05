@@ -64,14 +64,22 @@ class AnyTlsClient(
         // handshake and keeps the connection count down, which is itself part
         // of what the protocol is trying to look ordinary about.
         pool.takeIdle()?.let { session ->
-            return runCatching { session.openStream(host, port) }
-                .getOrElse {
-                    session.close()
-                    newSession(pool, password, tlsConfig).openStream(host, port)
-                }
+            try {
+                return session.openStream(host, port)
+            } catch (_: Exception) {
+                session.close()
+            }
         }
 
-        return newSession(pool, password, tlsConfig).openStream(host, port)
+        val session = newSession(pool, password, tlsConfig)
+        return try {
+            session.openStream(host, port)
+        } catch (e: Exception) {
+            // The session owns the TLS connection by now, so closing it is what
+            // releases the socket.
+            session.close()
+            throw e
+        }
     }
 
     private suspend fun newSession(
@@ -81,24 +89,31 @@ class AnyTlsClient(
     ): AnyTlsSession {
         val tls = connectTls(tlsConfig)
 
-        // Authentication rides in the same write as packet 0's padding, which
-        // the scheme sizes; it is the one packet that cannot be split.
-        val paddingLength = pool.scheme
-            .recordSizes(0, java.security.SecureRandom())
-            .firstOrNull()
-            ?.takeIf { it != AnyTlsPaddingScheme.CHECK }
-            ?: 0
-        tls.send(AnyTlsProtocol.authentication(password, paddingLength))
+        // Nothing else owns this socket until the session does, so every
+        // failure between here and there has to release it by hand.
+        try {
+            // Authentication rides in the same write as packet 0's padding,
+            // which the scheme sizes; it is the one packet that cannot be split.
+            val paddingLength = pool.scheme
+                .recordSizes(0, java.security.SecureRandom())
+                .firstOrNull()
+                ?.takeIf { it != AnyTlsPaddingScheme.CHECK }
+                ?: 0
+            tls.send(AnyTlsProtocol.authentication(password, paddingLength))
 
-        val session = AnyTlsSession(
-            tls = tls,
-            padding = pool.scheme,
-            clientName = CLIENT_NAME,
-            onPaddingScheme = { pool.scheme = it }
-        )
-        session.start()
-        pool.register(session)
-        return session
+            val session = AnyTlsSession(
+                tls = tls,
+                padding = pool.scheme,
+                clientName = CLIENT_NAME,
+                onPaddingScheme = { pool.scheme = it }
+            )
+            session.start()
+            pool.register(session)
+            return session
+        } catch (e: Throwable) {
+            runCatching { tls.cancel() }
+            throw e
+        }
     }
 
     private suspend fun connectTls(tlsConfig: TlsConfiguration): TlsRecordConnection {
@@ -134,40 +149,104 @@ class AnyTlsClient(
         private val lock = Mutex()
         private val sessions = ArrayList<AnyTlsSession>()
 
+        /** Idle sessions and when each became idle; the oldest retire first. */
+        private val idle = LinkedHashMap<AnyTlsSession, Long>()
+        private var lastSweep = 0L
+
         @Volatile
         var scheme: AnyTlsPaddingScheme = AnyTlsPaddingScheme.DEFAULT
 
         suspend fun register(session: AnyTlsSession) = lock.withLock {
+            session.onIdle = { markIdle(session) }
             sessions.add(session)
+            sweep()
         }
 
         /**
-         * The newest session with no streams on it.
+         * Claims the newest session with no streams on it.
          *
          * Newest first is the protocol's own advice: an older session has been
-         * visible for longer, and reusing the freshest keeps the oldest free to
-         * be retired.
+         * visible for longer, so reusing the freshest leaves the oldest free to
+         * retire. The session is removed from the idle set rather than merely
+         * read, because two dials that both saw it idle would each believe they
+         * were opening its first stream — and the first stream is what composes
+         * packet 1, whose shape the scheme defines.
          */
         suspend fun takeIdle(): AnyTlsSession? = lock.withLock {
             sessions.removeAll { it.isClosed }
-            sessions.lastOrNull { it.activeStreams == 0 }
+            sweep()
+            val chosen = idle.keys.lastOrNull { !it.isClosed && it.activeStreams == 0 }
+            if (chosen != null) idle.remove(chosen)
+            chosen
+        }
+
+        private fun markIdle(session: AnyTlsSession) {
+            if (!session.isClosed) idle[session] = System.currentTimeMillis()
+        }
+
+        /**
+         * Retires sessions that have been idle too long.
+         *
+         * A session is a live TLS connection: keeping one open forever is a
+         * socket held for nothing, and a long-lived flow for an observer to
+         * notice. A couple are kept back so the next request does not have to
+         * pay for a handshake.
+         */
+        private fun sweep() {
+            val now = System.currentTimeMillis()
+            if (now - lastSweep < SWEEP_INTERVAL_MS) return
+            lastSweep = now
+
+            val stale = idle.entries
+                .sortedBy { it.value }
+                .filter { now - it.value > IDLE_TIMEOUT_MS }
+                .dropLast(MIN_IDLE_SESSIONS.coerceAtMost(idle.size))
+                .map { it.key }
+            for (session in stale) {
+                idle.remove(session)
+                sessions.remove(session)
+                session.close()
+            }
+        }
+
+        suspend fun shutdown() = lock.withLock {
+            sessions.forEach { it.close() }
+            sessions.clear()
+            idle.clear()
         }
 
         companion object {
             private val pools = ConcurrentHashMap<UUID, Pool>()
             fun of(id: UUID): Pool = pools.getOrPut(id) { Pool() }
+
+            suspend fun shutdownAll() {
+                pools.values.forEach { it.shutdown() }
+                pools.clear()
+            }
         }
     }
 
-    private companion object {
-        const val MAX_RETRY_ATTEMPTS = 5
-        const val RETRY_BASE_DELAY_MS = 200L
+    companion object {
+        private const val MAX_RETRY_ATTEMPTS = 5
+        private const val RETRY_BASE_DELAY_MS = 200L
+
+        /** How often the pool looks for sessions to retire. */
+        private const val SWEEP_INTERVAL_MS = 30_000L
+
+        /** How long a session may sit idle before it is closed. */
+        private const val IDLE_TIMEOUT_MS = 60_000L
+
+        /** Kept back from retirement so the next request skips a handshake. */
+        private const val MIN_IDLE_SESSIONS = 2
 
         /**
          * Reported in the settings frame. The protocol asks third-party clients
          * to give their real name and version rather than impersonate the
          * reference one, so a server can tell implementations apart.
          */
-        const val CLIENT_NAME = "mythaia/1.9"
+        private const val CLIENT_NAME = "mythaia/1.9"
+
+        /** Releases every pooled session and its TLS connection. */
+        suspend fun shutdown() = Pool.shutdownAll()
     }
 }

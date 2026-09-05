@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -41,6 +42,13 @@ class AnyTlsSession(
     private val nextStreamId = AtomicInteger(0)
     private val packetCounter = AtomicInteger(0)
     private val closed = AtomicBoolean(false)
+
+    /** Per-stream SYNACK timers, armed only against a version-2 server. */
+    private val synWatchdogs = ConcurrentHashMap<Int, Job>()
+
+    /** Notified when the last stream goes, so the pool can retire the session. */
+    @Volatile
+    var onIdle: (() -> Unit)? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var receiveJob: Job? = null
@@ -102,13 +110,53 @@ class AnyTlsSession(
 
         val id = nextStreamId.incrementAndGet()
         val stream = AnyTlsStream(id, this)
-        streams[id] = stream
 
-        writeFrame(AnyTlsProtocol.CMD_SYN, id)
-        buffering = false
-        sendStreamData(id, AnyTlsProtocol.encodeAddress(host, port))
+        try {
+            writeFrame(AnyTlsProtocol.CMD_SYN, id)
+            buffering = false
+            // Registered only once the SYN is away, as the reference does:
+            // a stream in the map that the peer never heard about would sit
+            // there holding the session non-idle forever.
+            streams[id] = stream
+            sendStreamData(id, AnyTlsProtocol.encodeAddress(host, port))
+        } catch (e: Exception) {
+            streams.remove(id)
+            close()
+            throw e
+        }
 
+        armSynWatchdog(id)
         return stream
+    }
+
+    /**
+     * Closes the session if a version-2 server never acknowledges a stream.
+     *
+     * Without this the client waits on the operating system's own timeout,
+     * which on a tunnel that has silently died can be minutes. It is the whole
+     * reason the protocol added cmdSYNACK, and announcing v=2 without honouring
+     * it is announcing something untrue.
+     */
+    private fun armSynWatchdog(streamId: Int) {
+        if (peerVersion < 2 || streamId < 2) return
+        synWatchdogs[streamId] = scope.launch {
+            delay(SYNACK_TIMEOUT_MS)
+            if (synWatchdogs.remove(streamId) != null) {
+                logger.debug("[AnyTLS] No SYNACK for stream $streamId; session is stuck")
+                close()
+            }
+        }
+    }
+
+    /** Sends FIN without waiting, for callers that must not block. */
+    fun closeStreamAsync(streamId: Int) {
+        streams.remove(streamId) ?: return
+        synWatchdogs.remove(streamId)?.cancel()
+        if (closed.get()) return
+        scope.launch {
+            runCatching { writeFrame(AnyTlsProtocol.CMD_FIN, streamId) }
+            if (streams.isEmpty()) onIdle?.invoke()
+        }
     }
 
     /** Sends one stream's payload, split to fit the 16-bit length field. */
@@ -124,12 +172,16 @@ class AnyTlsSession(
     /** Tells the peer a stream is finished and forgets it. */
     suspend fun closeStream(streamId: Int) {
         streams.remove(streamId) ?: return
+        synWatchdogs.remove(streamId)?.cancel()
         if (closed.get()) return
         runCatching { writeFrame(AnyTlsProtocol.CMD_FIN, streamId) }
+        if (streams.isEmpty()) onIdle?.invoke()
     }
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        synWatchdogs.values.forEach { it.cancel() }
+        synWatchdogs.clear()
         streams.values.forEach { it.onSessionClosed() }
         streams.clear()
         runCatching { tls.cancel() }
@@ -200,7 +252,10 @@ class AnyTlsSession(
 
     private suspend fun dispatch(frame: Frame) {
         when (frame.command) {
-            AnyTlsProtocol.CMD_PSH -> streams[frame.streamId]?.onData(frame.data)
+            // A zero-length push is not data. Forwarding it would surface as
+            // an empty read, which the relay treats as end of stream.
+            AnyTlsProtocol.CMD_PSH ->
+                if (frame.data.isNotEmpty()) streams[frame.streamId]?.onData(frame.data)
 
             AnyTlsProtocol.CMD_FIN -> {
                 streams.remove(frame.streamId)?.onPeerClosed()
@@ -210,6 +265,9 @@ class AnyTlsSession(
             AnyTlsProtocol.CMD_WASTE -> Unit
 
             AnyTlsProtocol.CMD_SYNACK -> {
+                // Answered either way: an error body still means the server
+                // replied, so the stuck-tunnel watchdog has done its job.
+                synWatchdogs.remove(frame.streamId)?.cancel()
                 // Empty means the outbound connected; a body is an error text.
                 if (frame.data.isNotEmpty()) {
                     val reason = String(frame.data, Charsets.UTF_8)
@@ -287,5 +345,8 @@ class AnyTlsSession(
     private companion object {
         /** The length field is a uint16, so no frame can carry more than this. */
         const val MAX_FRAME_PAYLOAD = 65535
+
+        /** How long a version-2 server has to acknowledge a stream. */
+        const val SYNACK_TIMEOUT_MS = 3_000L
     }
 }

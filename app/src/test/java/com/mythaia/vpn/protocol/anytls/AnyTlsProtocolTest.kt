@@ -21,6 +21,10 @@ class AnyTlsProtocolTest {
 
     private val random = SecureRandom()
 
+    /** A one-packet scheme, built the way a server would send it. */
+    private fun scheme(line: String, stop: Int = 2): ByteArray =
+        listOf("stop=$stop", line).joinToString("\n").toByteArray()
+
     // MARK: - Padding scheme
 
     @Test
@@ -81,6 +85,42 @@ class AnyTlsProtocolTest {
         assertTrue(scheme.shapes(1))
         assertTrue(!scheme.shapes(2))
         assertTrue(scheme.md5 != AnyTlsPaddingScheme.DEFAULT.md5)
+    }
+
+    @Test
+    fun `a large range stays a range instead of overflowing into a huge fixed size`() {
+        // The first version packed a range into one negative Int. At a minimum
+        // of 32768 the shift set bit 31, the value came back positive, and a
+        // positive value reads as a FIXED size — about 1.6 GB, which is then
+        // allocated. This is the regression guard.
+        val scheme = AnyTlsPaddingScheme.parse(scheme("2=40000-50000", stop = 4))!!
+        repeat(50) {
+            val sizes = scheme.recordSizes(2, random)
+            assertEquals(1, sizes.size)
+            assertTrue(
+                "record size out of any sane range: ${sizes[0]}",
+                sizes[0] in 1..AnyTlsPaddingScheme.MAX_RECORD
+            )
+        }
+    }
+
+    @Test
+    fun `a range around the old overflow boundary behaves`() {
+        for (spec in listOf("32767-40000", "32768-40000", "65535-70000", "1-100000")) {
+            val scheme = AnyTlsPaddingScheme.parse(scheme("1=$spec"))!!
+            val sizes = scheme.recordSizes(1, random)
+            assertEquals("$spec produced ${sizes.size} sizes", 1, sizes.size)
+            assertTrue("$spec gave ${sizes[0]}", sizes[0] in 1..AnyTlsPaddingScheme.MAX_RECORD)
+        }
+    }
+
+    @Test
+    fun `a range the reference accepts is not silently dropped`() {
+        // Go rejects only non-positive bounds. Dropping a part would emit fewer
+        // records than the server asked for, changing the very signature the
+        // scheme exists to control.
+        val scheme = AnyTlsPaddingScheme.parse(scheme("1=1-100000,c,20000-30000"))!!
+        assertEquals(3, scheme.recordSizes(1, random).size)
     }
 
     @Test
