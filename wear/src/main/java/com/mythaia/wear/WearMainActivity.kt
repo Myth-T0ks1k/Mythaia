@@ -9,9 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -107,7 +105,12 @@ private fun TunnelScreen() {
                     modifier = Modifier.size(64.dp)
                 ) {
                     Icon(
-                        imageVector = if (isOn) Icons.Default.Lock else Icons.Default.LockOpen,
+                        // The same pair the phone app uses for the tunnel, so
+                        // the two faces of one product read as one product.
+                        painter = painterResource(
+                            if (isOn) R.drawable.ic_network_filled
+                            else R.drawable.ic_network_outlined
+                        ),
                         contentDescription = stringResource(
                             if (isOn) R.string.disconnect else R.string.connect
                         ),

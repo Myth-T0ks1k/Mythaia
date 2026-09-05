@@ -57,6 +57,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    testOptions {
+        unitTests {
+            // The android.jar on the unit-test classpath is a stub whose every
+            // method throws. Returning defaults instead lets code that logs on
+            // a branch be tested at all, rather than the logging call itself
+            // failing the test.
+            isReturnDefaultValues = true
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -90,6 +100,9 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation("org.brotli:dec:0.1.2")
     testImplementation(libs.junit)
+    // android.jar ships org.json as stubs too, and these tests parse real
+    // VMess links — so they need an implementation that actually parses.
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
