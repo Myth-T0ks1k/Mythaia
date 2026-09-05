@@ -94,6 +94,7 @@ set(JNI_BRIDGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/lwip_jni_bridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/blake3_jni_bridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/yaml_jni_bridge.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/quic_jni_bridge.c
 )
 
 # --------------------------------------------------------------------------
@@ -147,12 +148,17 @@ add_library(mythaia_native SHARED
 # private config.h. Nothing outside the vendor tree includes <config.h>, so
 # putting it last keeps it from shadowing anything.
 # --------------------------------------------------------------------------
+# ${NGTCP2_DIR} must come before ${CMAKE_CURRENT_SOURCE_DIR}: this directory
+# holds a folder called ngtcp2/, so with the source dir first
+# <ngtcp2/ngtcp2_crypto.h> resolves to the vendor tree's *lib-internal*
+# ngtcp2_crypto.h instead of the public helper header of the same name — which
+# compiles, and then every helper function reads as undeclared.
 target_include_directories(mythaia_native PRIVATE
+    ${NGTCP2_DIR}
     ${LWIP_INCLUDE_DIRS}
     ${LIBYAML_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/compat
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${NGTCP2_DIR}
 )
 
 target_compile_definitions(mythaia_native PRIVATE

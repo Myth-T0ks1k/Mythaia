@@ -195,6 +195,24 @@ object NativeBridge {
     fun nativeTls13TranscriptHash(cipherSuite: Int, messages: ByteArray): ByteArray? =
         Tls13Crypto.transcriptHash(cipherSuite, messages)
 
+    // QUIC (ngtcp2)
+
+    /**
+     * Runs the vendored QUIC stack through RFC 9001 Appendix A.
+     *
+     * Returns null when every intermediate matched the bytes the RFC prints,
+     * or a description of the first step that did not. It exists because the
+     * unit suite runs on a desktop JVM with no library to load: without it,
+     * "compiles" and "links" are the strongest claims available for code that
+     * only ever executes on the device.
+     */
+    @JvmStatic
+    external fun nativeQuicSelfTest(): String?
+
+    /** The vendored ngtcp2 version, for the log and the About screen. */
+    @JvmStatic
+    external fun nativeQuicVersion(): String
+
     // YAML Parsing (libyaml)
 
     /** Parse YAML content and return JSON string representation. Returns null on failure. */
