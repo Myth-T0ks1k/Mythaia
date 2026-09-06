@@ -159,6 +159,7 @@ data class TlsConfiguration(
             val fragment = params["fragment"]?.let(FragmentSettings::fromShareLink)
             return TlsConfiguration(
                 serverName = sni,
+                echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 allowInsecure = allowInsecure,
                 fingerprint = TlsFingerprint.fromRaw(fp),
@@ -851,6 +852,7 @@ data class ProxyConfiguration(
         }
         if (tls.fingerprint != TlsFingerprint.CHROME_133) params.add("fp=${tls.fingerprint.raw}")
         if (tls.allowInsecure) params.add("insecure=1")
+        tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
     }
 
     private fun toTrojanUrl(): String {
@@ -924,6 +926,9 @@ data class ProxyConfiguration(
         }
         if (tls.fingerprint != TlsFingerprint.CHROME_120) params.add("fp=${tls.fingerprint.raw}")
         if (tls.allowInsecure) params.add("allowInsecure=1")
+        // The config's exact bytes are what the server matches on, so it goes
+        // out as it came in rather than re-encoded.
+        tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
         tls.minVersion?.let { params.add("minVersion=${it.urlValue}") }
         tls.maxVersion?.let { params.add("maxVersion=${it.urlValue}") }
         // Only a per-server override is exported; a server following the
@@ -1031,7 +1036,10 @@ data class ProxyConfiguration(
                 encryption = "none",
                 transport = "quic",
                 security = "tls",
-                tls = TlsConfiguration(serverName = sni),
+                tls = TlsConfiguration(
+                    serverName = sni,
+                    echConfig = link.params["ech"]?.takeIf { it.isNotEmpty() }
+                ),
                 outboundProtocol = OutboundProtocol.TUIC,
                 password = password
             )
@@ -1125,6 +1133,7 @@ data class ProxyConfiguration(
             val fp = params["fp"] ?: "chrome_133"
             val tls = TlsConfiguration(
                 serverName = sni,
+                echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 fingerprint = TlsFingerprint.fromRaw(fp)
             )
@@ -1332,6 +1341,7 @@ data class ProxyConfiguration(
             val insecure = params["insecure"] == "1" || params["allowInsecure"] == "1"
             val tls = TlsConfiguration(
                 serverName = sni,
+                echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 allowInsecure = insecure,
                 fingerprint = TlsFingerprint.fromRaw(params["fp"] ?: "chrome_133")
@@ -1367,6 +1377,7 @@ data class ProxyConfiguration(
             val insecure = params["insecure"] == "1" || params["allowInsecure"] == "1"
             val tls = TlsConfiguration(
                 serverName = sni,
+                echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 allowInsecure = insecure,
                 fingerprint = TlsFingerprint.fromRaw(params["fp"] ?: "chrome_133")
