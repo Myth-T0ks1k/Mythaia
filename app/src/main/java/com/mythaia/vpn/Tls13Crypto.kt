@@ -226,6 +226,46 @@ internal object Tls13Crypto {
         return hkdfExpandLabel(params.hmacAlgo, params.hashLen, secret, "exporter", contextHash, length)
     }
 
+    /**
+     * Whether the server accepted ECH, read from its ServerHello.
+     *
+     * A server that decrypted the inner hello proves it by overwriting the last
+     * eight bytes of its random with a value only someone holding the inner
+     * random could compute: HKDF over the inner ClientHello and the ServerHello
+     * with those eight bytes zeroed. A server that ignored ECH sends an ordinary
+     * random, and the check fails, which is how a client learns it must use
+     * the outer transcript and that its name went out in the clear.
+     *
+     * The comparison is constant-time. The bytes are not secret, but the habit
+     * is worth keeping in a function whose whole subject is what an observer
+     * can infer.
+     */
+    fun echAcceptConfirmed(
+        cipherSuite: Int,
+        innerRandom: ByteArray,
+        innerClientHello: ByteArray,
+        serverHello: ByteArray
+    ): Boolean {
+        if (serverHello.size < 38) return false
+        val params = suiteParams(cipherSuite)
+
+        val confirmationInput = innerClientHello +
+            serverHello.copyOfRange(0, 30) +
+            ByteArray(8) +
+            serverHello.copyOfRange(38, serverHello.size)
+        val confirmationHash = MessageDigest.getInstance(params.hashAlgo).digest(confirmationInput)
+
+        val prk = hkdfExtract(params.hmacAlgo, params.hashLen, ByteArray(0), innerRandom)
+        val expected = hkdfExpandLabel(
+            params.hmacAlgo, params.hashLen, prk, "ech accept confirmation", confirmationHash, 8
+        )
+
+        val actual = serverHello.copyOfRange(30, 38)
+        var difference = 0
+        for (i in 0 until 8) difference = difference or (expected[i].toInt() xor actual[i].toInt())
+        return difference == 0
+    }
+
     fun deriveApplicationSecrets(
         cipherSuite: Int,
         hsSecret: ByteArray,

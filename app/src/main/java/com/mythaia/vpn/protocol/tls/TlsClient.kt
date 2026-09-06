@@ -3,6 +3,7 @@ package com.mythaia.vpn.protocol.tls
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.data.model.TlsConfiguration
 import com.mythaia.vpn.NativeBridge
+import com.mythaia.vpn.Tls13Crypto
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.NioSocket
 import java.io.IOException
@@ -56,6 +57,20 @@ class TlsClient(private val configuration: TlsConfiguration) {
     private var serverHandshakeSeqNum: Long = 0
 
     private var serverRandom: ByteArray? = null
+
+    /**
+     * ECH state, when a config is set.
+     *
+     * Two hellos exist at once until the ServerHello says which one the server
+     * answered. The inner is the one that was encrypted; its transcript form
+     * carries the outer's session id, which is what the server reconstructs.
+     */
+    private var echInnerTranscript: ByteArray? = null
+    private var echInnerRandom: ByteArray? = null
+
+    /** Whether the server proved it decrypted the inner hello. */
+    var echAccepted: Boolean = false
+        private set
     private var tls12CipherSuite: Int = 0
     private var negotiatedVersion: Int = 0x0303
     private var useExtendedMasterSecret: Boolean = false
@@ -171,17 +186,69 @@ class TlsClient(private val configuration: TlsConfiguration) {
         val sessionId = ByteArray(32)
         java.security.SecureRandom().nextBytes(sessionId)
 
-        val rawClientHello = TlsClientHelloBuilder.buildRawClientHello(
+        val alpn = configuration.alpn ?: listOf("h2", "http/1.1")
+
+        val rawClientHello = resolveEchConfig()?.let { (config, suite) ->
+            // The inner hello gets its own random: it is a different hello,
+            // and the accept confirmation is keyed on that random alone.
+            val innerRandom = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+
+            val result = com.mythaia.vpn.protocol.tls.ech.EchClientHello.build(
+                config = config,
+                cipherSuite = suite,
+                outerSessionId = sessionId,
+                innerServerName = configuration.serverName
+            ) { sid, name, extra ->
+                TlsClientHelloBuilder.buildRawClientHello(
+                    fingerprint = configuration.fingerprint,
+                    random = if (name == configuration.serverName) innerRandom else random,
+                    sessionId = sid,
+                    serverName = name,
+                    publicKey = publicKey,
+                    alpn = alpn,
+                    omitPQKeyShares = true,
+                    echExtension = extra
+                )
+            }
+            echInnerTranscript = result.innerTranscript
+            echInnerRandom = innerRandom
+            result.outerMessage
+        } ?: TlsClientHelloBuilder.buildRawClientHello(
             fingerprint = configuration.fingerprint,
             random = random,
             sessionId = sessionId,
             serverName = configuration.serverName,
             publicKey = publicKey,
-            alpn = configuration.alpn ?: listOf("h2", "http/1.1"),
+            alpn = alpn,
             omitPQKeyShares = true  // Omit PQ key shares for standard TLS to reduce ClientHello size.
         )
 
         return TlsClientHelloBuilder.wrapInTLSRecord(rawClientHello)
+    }
+
+    /**
+     * The ECH config to use, or null when there is none or it is unusable.
+     *
+     * Unusable is treated as absent rather than fatal: a stale config in a
+     * share link should degrade to an ordinary handshake, not refuse to
+     * connect at all. The log says which happened.
+     */
+    private fun resolveEchConfig():
+        Pair<com.mythaia.vpn.protocol.tls.ech.EchConfig, com.mythaia.vpn.protocol.tls.ech.EchCipherSuite>? {
+        val text = configuration.echConfig?.takeIf { it.isNotBlank() } ?: return null
+        return try {
+            val bytes = com.mythaia.vpn.protocol.tls.ech.EchConfig.decodeBase64(text)
+                ?: throw com.mythaia.vpn.protocol.tls.ech.EchError("not base64")
+            val config = com.mythaia.vpn.protocol.tls.ech.EchConfig.pick(
+                com.mythaia.vpn.protocol.tls.ech.EchConfig.parseList(bytes)
+            ) ?: throw com.mythaia.vpn.protocol.tls.ech.EchError("no usable config in the list")
+            val suite = config.pickCipherSuite()
+                ?: throw com.mythaia.vpn.protocol.tls.ech.EchError("no supported cipher suite")
+            config to suite
+        } catch (e: Exception) {
+            logger.warning("ECH config unusable, connecting without it: " + (e.message ?: e))
+            null
+        }
     }
 
     /**
@@ -254,7 +321,24 @@ class TlsClient(private val configuration: TlsConfiguration) {
 
             keyDerivation = Tls13KeyDerivation(cipherSuite)
 
-            val transcript = clientHello + serverHello
+            // With ECH there are two hellos and the ServerHello says which one
+            // the server answered. Accepted means the inner transcript; not
+            // accepted means the outer one, and that the name went out in the
+            // clear, which is worth saying in the log rather than hiding.
+            val effectiveClientHello = echInnerTranscript?.let { inner ->
+                val accepted = Tls13Crypto.echAcceptConfirmed(
+                    cipherSuite, echInnerRandom!!, inner, serverHello
+                )
+                echAccepted = accepted
+                if (accepted) {
+                    inner
+                } else {
+                    logger.warning("Server did not accept ECH; the server name was sent in the clear")
+                    clientHello
+                }
+            } ?: clientHello
+
+            val transcript = effectiveClientHello + serverHello
 
             val (hs, keys) = keyDerivation!!.deriveHandshakeKeys(sharedSecretData, transcript)
             handshakeSecret = hs

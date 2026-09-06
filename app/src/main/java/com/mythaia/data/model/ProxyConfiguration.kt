@@ -44,6 +44,18 @@ enum class TlsFingerprint(val raw: String) {
     @SerialName("edge_106") EDGE_106("edge_106"),
     @SerialName("random") RANDOM("random");
 
+    /**
+     * Whether this fingerprint's hello already carries an ECH extension.
+     *
+     * Modern Chrome and Firefox send a GREASE ECH stub on every connection, so
+     * a real one replaces the stub in place and the hello keeps its shape. The
+     * older profiles predate ECH and have no slot; a real extension on them is
+     * appended, which changes their shape and is the caller's decision.
+     */
+    val hasEchSlot: Boolean
+        get() = this == CHROME_133 || this == FIREFOX_148 ||
+            this == CHROME_120 || this == FIREFOX_120
+
     val displayName: String
         get() = when (this) {
             CHROME_133 -> "Chrome 133"
@@ -124,7 +136,16 @@ data class TlsConfiguration(
      * link carried no `fragment=`, so the tunnel-wide default applies — see
      * [com.mythaia.vpn.protocol.tls.FragmentPolicy].
      */
-    val fragment: FragmentSettings? = null
+    val fragment: FragmentSettings? = null,
+    /**
+     * An ECHConfigList, base64, as a DNS HTTPS record or a share link carries it.
+     *
+     * When present the real server name is encrypted and the config's public
+     * name goes out in the clear instead. Kept as the text it arrived as: the
+     * server matches on the config's exact bytes, and a re-serialised copy that
+     * differed by a byte would be silently ignored rather than rejected.
+     */
+    val echConfig: String? = null
 ) {
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): TlsConfiguration? {

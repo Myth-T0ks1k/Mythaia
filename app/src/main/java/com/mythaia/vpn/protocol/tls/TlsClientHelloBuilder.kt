@@ -414,7 +414,15 @@ object TlsClientHelloBuilder {
         alpn: List<String>? = null,
         omitPQKeyShares: Boolean = false,
         mlkemEncapsulationKey: ByteArray? = null,
-        extraExtensions: ByteArray? = null
+        extraExtensions: ByteArray? = null,
+        /**
+         * A real `encrypted_client_hello` extension, already in wire form.
+         * Where a fingerprint would emit the GREASE stub this takes its place,
+         * so the hello keeps the fingerprint's shape; where a fingerprint has
+         * no ECH slot it is appended. Null leaves every fingerprint exactly
+         * as it was.
+         */
+        echExtension: ByteArray? = null
     ): ByteArray {
         val resolved: TlsFingerprint = if (fingerprint == TlsFingerprint.RANDOM) {
             val options = TlsFingerprint.concreteFingerprints
@@ -430,18 +438,26 @@ object TlsClientHelloBuilder {
             publicKey = publicKey,
             alpn = alpn,
             omitPQKeyShares = omitPQKeyShares,
-            mlkemEncapsulationKey = mlkemEncapsulationKey
+            mlkemEncapsulationKey = mlkemEncapsulationKey,
+            echExtension = echExtension
         )
+
+        // Fingerprints without an ECH slot carry a real one appended; the
+        // four that have a slot already consumed it above.
+        val appended = if (echExtension != null && !resolved.hasEchSlot) echExtension else null
+        val extra = listOfNotNull(appended, extraExtensions)
+            .takeIf { it.isNotEmpty() }
+            ?.reduce { a, b -> a + b }
 
         return assembleClientHello(
             random = random,
             sessionId = sessionId,
             cipherSuites = suites,
-            extensions = if (extraExtensions == null) extensions else extensions + extraExtensions,
+            extensions = if (extra == null) extensions else extensions + extra,
             // The padding extension sizes the message to a fingerprint's own
             // shape; appending after it would defeat the point, so a hello
             // carrying extra extensions is not padded.
-            applyBoringPadding = padded && extraExtensions == null
+            applyBoringPadding = padded && extra == null
         )
     }
 
@@ -507,18 +523,19 @@ object TlsClientHelloBuilder {
         publicKey: ByteArray,
         alpn: List<String>?,
         omitPQKeyShares: Boolean = false,
-        mlkemEncapsulationKey: ByteArray? = null
+        mlkemEncapsulationKey: ByteArray? = null,
+        echExtension: ByteArray? = null
     ): FingerprintParts {
         return when (fingerprint) {
-            TlsFingerprint.CHROME_133 -> buildChrome133(random, serverName, publicKey, alpn, omitPQKeyShares, mlkemEncapsulationKey)
-            TlsFingerprint.FIREFOX_148 -> buildFirefox148(random, serverName, publicKey, alpn, omitPQKeyShares, mlkemEncapsulationKey)
+            TlsFingerprint.CHROME_133 -> buildChrome133(random, serverName, publicKey, alpn, omitPQKeyShares, mlkemEncapsulationKey, echExtension)
+            TlsFingerprint.FIREFOX_148 -> buildFirefox148(random, serverName, publicKey, alpn, omitPQKeyShares, mlkemEncapsulationKey, echExtension)
             TlsFingerprint.SAFARI_26 -> buildSafari26(random, serverName, publicKey, alpn, omitPQKeyShares, mlkemEncapsulationKey)
             TlsFingerprint.EDGE_85 -> buildEdge85(random, serverName, publicKey, alpn)
             TlsFingerprint.ANDROID_11 -> buildAndroid11(random, serverName, publicKey, alpn)
             TlsFingerprint.QQ_11 -> buildQQ11(random, serverName, publicKey, alpn)
             TlsFingerprint.BROWSER_360 -> buildBrowser360(random, serverName, publicKey, alpn)
-            TlsFingerprint.CHROME_120 -> buildChrome120(random, serverName, publicKey, alpn)
-            TlsFingerprint.FIREFOX_120 -> buildFirefox120(random, serverName, publicKey, alpn)
+            TlsFingerprint.CHROME_120 -> buildChrome120(random, serverName, publicKey, alpn, echExtension)
+            TlsFingerprint.FIREFOX_120 -> buildFirefox120(random, serverName, publicKey, alpn, echExtension)
             TlsFingerprint.SAFARI_16 -> buildSafari16(random, serverName, publicKey, alpn)
             TlsFingerprint.IOS_14 -> buildIOS14(random, serverName, publicKey, alpn)
             TlsFingerprint.EDGE_106 -> buildEdge106(random, serverName, publicKey, alpn)
@@ -531,7 +548,8 @@ object TlsClientHelloBuilder {
     private fun buildChrome133(
         random: ByteArray, serverName: String, publicKey: ByteArray, alpn: List<String>?,
         omitPQKeyShares: Boolean = false,
-        mlkemEncapsulationKey: ByteArray? = null
+        mlkemEncapsulationKey: ByteArray? = null,
+        echExtension: ByteArray? = null
     ): FingerprintParts {
         val gCipher  = grease(random[24])
         val gExt1    = grease(random[25])
@@ -597,7 +615,7 @@ object TlsClientHelloBuilder {
             supportedVersionsExt(intArrayOf(gVersion, 0x0304, 0x0303)),
             compressCertExt(intArrayOf(0x0002)),              // Brotli
             applicationSettingsNewExt(listOf("h2")),          // New ALPS codepoint 0x44CD
-            greaseECHExt(random, kdfId = 0x0001, aeadId = 0x0001, payloadLen = echPayloadLen),
+            echExtension ?: greaseECHExt(random, kdfId = 0x0001, aeadId = 0x0001, payloadLen = echPayloadLen),
             greaseExt(gExt2)
         )
 
@@ -612,7 +630,8 @@ object TlsClientHelloBuilder {
     private fun buildFirefox148(
         random: ByteArray, serverName: String, publicKey: ByteArray, alpn: List<String>?,
         omitPQKeyShares: Boolean = false,
-        mlkemEncapsulationKey: ByteArray? = null
+        mlkemEncapsulationKey: ByteArray? = null,
+        echExtension: ByteArray? = null
     ): FingerprintParts {
         val suites = cipherSuitesData(intArrayOf(
             0x1301, 0x1303, 0x1302,                           // TLS 1.3 (ChaCha20 before AES-256)
@@ -671,7 +690,7 @@ object TlsClientHelloBuilder {
             pskKeyExchangeModesExt(),
             recordSizeLimitExt(0x4001),
             compressCertExt(intArrayOf(0x0001, 0x0002, 0x0003)), // Zlib, Brotli, Zstd
-            greaseECHExt(random, kdfId = 0x0001, aeadId = echAead, payloadLen = 239)
+            echExtension ?: greaseECHExt(random, kdfId = 0x0001, aeadId = echAead, payloadLen = 239)
         )
 
         val extensionsData = concatenateArrays(exts)
@@ -936,7 +955,8 @@ object TlsClientHelloBuilder {
     // -- Chrome 120 --
 
     private fun buildChrome120(
-        random: ByteArray, serverName: String, publicKey: ByteArray, alpn: List<String>?
+        random: ByteArray, serverName: String, publicKey: ByteArray, alpn: List<String>?,
+        echExtension: ByteArray? = null
     ): FingerprintParts {
         val gCipher  = grease(random[24])
         val gExt1    = grease(random[25])
@@ -987,7 +1007,7 @@ object TlsClientHelloBuilder {
             supportedVersionsExt(intArrayOf(gVersion, 0x0304, 0x0303)),
             compressCertExt(intArrayOf(0x0002)),                        // Brotli
             applicationSettingsExt(listOf("h2")),
-            greaseECHExt(random, kdfId = 0x0001, aeadId = 0x0001, payloadLen = echPayloadLen),
+            echExtension ?: greaseECHExt(random, kdfId = 0x0001, aeadId = 0x0001, payloadLen = echPayloadLen),
             greaseExt(gExt2)
         )
 
@@ -1001,7 +1021,8 @@ object TlsClientHelloBuilder {
     // -- Firefox 120 --
 
     private fun buildFirefox120(
-        random: ByteArray, serverName: String, publicKey: ByteArray, alpn: List<String>?
+        random: ByteArray, serverName: String, publicKey: ByteArray, alpn: List<String>?,
+        echExtension: ByteArray? = null
     ): FingerprintParts {
         val suites = cipherSuitesData(intArrayOf(
             0x1301, 0x1303, 0x1302,                           // TLS 1.3 (ChaCha20 before AES-256)
@@ -1045,7 +1066,7 @@ object TlsClientHelloBuilder {
             )),
             pskKeyExchangeModesExt(),
             recordSizeLimitExt(0x4001),
-            greaseECHExt(random, kdfId = 0x0001, aeadId = echAead, payloadLen = 239)
+            echExtension ?: greaseECHExt(random, kdfId = 0x0001, aeadId = echAead, payloadLen = 239)
         )
 
         val extensionsData = concatenateArrays(exts)
