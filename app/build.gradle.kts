@@ -81,6 +81,13 @@ android {
             // mipmap-anydpi-v26 is where the adaptive icon belongs: dropping
             // the qualifier makes AAPT fail to resolve mipmap/ic_launcher.
             "ObsoleteSdkInt",
+
+            // Fires on an empty checkServerTrusted inside the BouncyCastle
+            // bcpkix jar, not our code. We pull bcpkix in only to mint X.509
+            // certificates for the MITM authority; our own TLS trust decisions
+            // live in TlsPeerVerifier, which this does not touch. Scanning a
+            // dependency's bytecode for this is a false positive here.
+            "TrustAllX509TrustManager",
         )
     }
 
@@ -124,6 +131,7 @@ dependencies {
     implementation(libs.play.services.wearable)
     implementation(libs.coroutines.android)
     implementation(libs.bouncycastle.bcprov)
+    implementation(libs.bouncycastle.bcpkix)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.brotli.dec)
     testImplementation(libs.junit)
