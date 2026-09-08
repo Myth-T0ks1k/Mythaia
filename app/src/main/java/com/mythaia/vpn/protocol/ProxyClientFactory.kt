@@ -37,6 +37,16 @@ object ProxyClientFactory {
             OutboundProtocol.TUIC ->
                 com.mythaia.vpn.protocol.tuic.TuicClient(config)
                     .connect(host, port, initialData)
+            // Sudoku and Nowhere follow the Hysteria/TUIC convention: their
+            // handshake does not carry the caller's first bytes, so the flow
+            // layer forwards initialData after connect. connect still accepts it
+            // for chain use, where the buffered bytes are handed straight on.
+            OutboundProtocol.SUDOKU ->
+                com.mythaia.vpn.protocol.sudoku.SudokuClient(config, config.toSudokuConfiguration(), tunnel)
+                    .connect(host, port, initialData)
+            OutboundProtocol.NOWHERE ->
+                com.mythaia.vpn.protocol.nowhere.NowhereClient(config, tunnel)
+                    .connect(host, port, initialData)
             // WireGuard is a layer-3 interface, not a stream proxy: it carries
             // whole IP packets and runs instead of the lwIP stack, so nothing
             // should ever reach the per-flow dial path with it.
@@ -66,6 +76,13 @@ object ProxyClientFactory {
             OutboundProtocol.VMESS -> VmessClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.ANYTLS ->
                 com.mythaia.vpn.protocol.anytls.AnyTlsClient(config, tunnel).connectUDP(host, port)
+            // Sudoku frames UDP over its TCP carrier; Nowhere's own UDP path is
+            // not wired to the flow layer yet and refuses with a message.
+            OutboundProtocol.SUDOKU ->
+                com.mythaia.vpn.protocol.sudoku.SudokuClient(config, config.toSudokuConfiguration(), tunnel)
+                    .connectUDP(host, port)
+            OutboundProtocol.NOWHERE ->
+                com.mythaia.vpn.protocol.nowhere.NowhereClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.WIREGUARD -> throw ProxyError.ProtocolError(
                 "WireGuard carries IP packets and cannot be dialled per flow"
             )

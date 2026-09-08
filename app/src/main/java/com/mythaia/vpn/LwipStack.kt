@@ -592,6 +592,16 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
 
         com.mythaia.vpn.protocol.naive.http2.Http2SessionPool.closeAll()
 
+        // Close every shared Nowhere QUIC session and forget its identities, so a
+        // fresh tunnel presents fresh session ids rather than reviving a portal's
+        // view of the old client.
+        com.mythaia.vpn.protocol.nowhere.NowhereClient.shutdown()
+
+        // Drop VLESS post-quantum 0-RTT tickets: they are single-use handshake
+        // state, and replaying one from a previous tunnel across a new connection
+        // would weaken the very forward secrecy 0-RTT trades against.
+        com.mythaia.vpn.protocol.vless.encryption.VlessEncryption0RttCache.shared.clear()
+
         val flowCount = udpFlows.size
         for (flow in udpFlows.values) {
             flow.close()
