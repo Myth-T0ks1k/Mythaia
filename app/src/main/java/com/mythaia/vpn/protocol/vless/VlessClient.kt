@@ -22,6 +22,8 @@ import com.mythaia.vpn.protocol.reality.RealityClient
 import com.mythaia.vpn.protocol.tls.TlsClient
 import com.mythaia.vpn.protocol.tls.TlsError
 import com.mythaia.vpn.protocol.tls.TlsRecordConnection
+import com.mythaia.vpn.protocol.vless.encryption.VlessEncryptionClient
+import com.mythaia.vpn.protocol.vless.encryption.VlessEncryptionConfig
 import com.mythaia.vpn.protocol.websocket.WebSocketConnection
 import com.mythaia.vpn.protocol.xhttp.TransportClosures
 import com.mythaia.vpn.protocol.xhttp.XHttpConnection
@@ -186,6 +188,18 @@ class VlessClient(
         // Vision silently drops UDP/443 unless the -udp443 flow variant is configured.
         if (command == VlessCommand.UDP && destinationPort == 443 && isVisionFlow && !allowUDP443) {
             throw ProxyError.Dropped()
+        }
+
+        // Post-quantum VLESS encryption stands in for the outer TLS/Reality: when
+        // `encryption` names a real scheme this dial seals the VLESS framing over a
+        // raw TCP/tunnel handshake, so it takes precedence over the transport/TLS
+        // selection below. A "none"/empty value parses to null and leaves every
+        // existing path byte-for-byte unchanged; a malformed value throws here and
+        // fails the dial rather than being swallowed — swallowing would silently
+        // downgrade to plaintext and leak the VLESS UUID and payload in the clear.
+        val encryption = VlessEncryptionConfig.parse(configuration.encryption)
+        if (encryption != null) {
+            return connectEncrypted(encryption, command, destinationHost, destinationPort, initialData)
         }
 
         return when (configuration.transport) {
@@ -898,6 +912,107 @@ class VlessClient(
         }
 
         throw lastError ?: ProxyError.ConnectionFailed("All retry attempts failed")
+    }
+
+    /**
+     * Dials VLESS through the post-quantum encryption layer. The raw TCP/tunnel
+     * transport is brought up exactly as [connectDirect] does — same
+     * tunnel-vs-socket split, same retry/backoff — because to everything above
+     * it this path is the plaintext direct path; the only difference is the
+     * encryption handshake that seals the transport before any VLESS byte is
+     * sent. The handshake failures (and 1-RTT server-hello reads) happen inside
+     * [performEncryptedHandshake], so they are caught and retried here like any
+     * other dial failure.
+     */
+    private suspend fun connectEncrypted(
+        encryption: VlessEncryptionConfig,
+        command: VlessCommand,
+        destinationHost: String,
+        destinationPort: Int,
+        initialData: ByteArray?
+    ): ProxyConnection {
+        // Tunneled connections reuse the existing tunnel — no NioSocket, no retries.
+        if (tunnel != null) {
+            val transport = requireTunnelTransport()
+            return performEncryptedHandshake(
+                encryption, transport, command, destinationHost, destinationPort, initialData
+            )
+        }
+
+        var lastError: Exception? = null
+
+        for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
+            if (attempt > 0) {
+                cleanupRetryResources()
+                delay(RETRY_BASE_DELAY_MS * attempt)
+            }
+
+            try {
+                val socket = NioSocket()
+                this.connection = socket
+
+                socket.connect(configuration.serverAddress, configuration.serverPort.toInt())
+
+                return performEncryptedHandshake(
+                    encryption, socket, command, destinationHost, destinationPort, initialData
+                )
+            } catch (e: Exception) {
+                logger.debug("Encrypted attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
+                if (e is TlsError.CertificateValidationFailed) throw e
+                lastError = e
+            }
+        }
+
+        throw lastError ?: ProxyError.ConnectionFailed("All retry attempts failed")
+    }
+
+    /**
+     * Runs the encryption handshake over [transport], then sends the VLESS
+     * request header as the first sealed application bytes and hands back a
+     * connection that seals/opens every byte after it. The handshake gets a
+     * header-free [VlessRawTransportConnection] view of the transport (a
+     * header-stripping VLESS connection would corrupt the handshake's own
+     * bytes), and the same [ProxyConfiguration.serverAddress]/`serverPort` go to
+     * every dial so a 0-RTT ticket cached under one connect keys the next.
+     *
+     * There is no Vision branch: the encryption replaces the outer TLS 1.3 that
+     * Vision requires, so the flow is always plain VLESS (`flow = null`) and any
+     * `initialData` is appended to the header just as the non-Vision paths do.
+     */
+    private suspend fun performEncryptedHandshake(
+        encryption: VlessEncryptionConfig,
+        transport: Transport,
+        command: VlessCommand,
+        destinationHost: String,
+        destinationPort: Int,
+        initialData: ByteArray?
+    ): ProxyConnection {
+        val encrypted = VlessEncryptionClient(
+            encryption,
+            configuration.serverAddress,
+            configuration.serverPort.toInt()
+        ).handshake(VlessRawTransportConnection(transport))
+
+        var requestData = VlessProtocol.encodeRequestHeader(
+            uuid = configuration.uuid,
+            command = command,
+            destinationAddress = destinationHost,
+            destinationPort = destinationPort,
+            flow = null
+        )
+
+        if (initialData != null) {
+            requestData = requestData + initialData
+        }
+
+        encrypted.sendRaw(requestData)
+
+        val baseConn = VlessEncryptionConnection(encrypted)
+        return if (command == VlessCommand.UDP) {
+            VlessUdpConnection(baseConn)
+        } else {
+            baseConn
+        }
     }
 
     private suspend fun connectWithReality(

@@ -286,6 +286,78 @@ open class VlessGrpcConnection(
     override fun cancel() = grpcConnection.cancel()
 }
 
+/**
+ * A header-free [ProxyConnection] view of the raw transport, handed to the VLESS
+ * post-quantum encryption handshake.
+ *
+ * The handshake exchanges its own bytes over this connection — the relay block,
+ * the PFS server hello, sealed length frames — none of which is VLESS framing.
+ * So unlike every other subclass here it does no response-header stripping: it
+ * must pass those bytes through untouched, or the handshake would try to read a
+ * VLESS response header where a PFS hello sits and corrupt the exchange. The
+ * VLESS request/response framing only appears one layer up, on top of the
+ * encrypted connection the handshake returns (see [VlessEncryptionConnection]).
+ */
+class VlessRawTransportConnection(private val transport: Transport) : ProxyConnection() {
+
+    override val isConnected: Boolean
+        get() = (transport as? NioSocket)?.state == NioSocket.State.READY || transport !is NioSocket
+
+    override suspend fun sendRaw(data: ByteArray) = transport.send(data)
+    override fun sendRawAsync(data: ByteArray) = transport.sendAsync(data)
+
+    override suspend fun receiveRaw(): ByteArray? {
+        val data = transport.receive() ?: return null
+        if (data.isEmpty()) return null
+        return data
+    }
+
+    override fun cancel() = transport.forceCancel()
+}
+
+/**
+ * VLESS carried over the post-quantum encryption layer.
+ *
+ * [encrypted] is what
+ * [com.mythaia.vpn.protocol.vless.encryption.VlessEncryptionClient.handshake]
+ * returns: it seals every byte written and opens every byte read, standing in
+ * for the outer TLS/Reality a plain VLESS dial would use. So the VLESS request
+ * header is the first plaintext written through it, and the 2-byte VLESS
+ * response header is stripped from the first decrypted bytes — exactly the
+ * contract every other VLESS transport subclass honours; only the sealing
+ * underneath is new, and it lives entirely inside [encrypted].
+ *
+ * [outerTlsVersion] delegates to [encrypted], which reports the raw transport's
+ * (null) — deliberately, so Vision is rejected up front: Vision needs outer TLS
+ * 1.3, and here the encryption has replaced it.
+ */
+open class VlessEncryptionConnection(
+    private val encrypted: ProxyConnection
+) : VlessConnection() {
+
+    override val isConnected: Boolean get() = encrypted.isConnected
+    override val outerTlsVersion: TlsVersion? get() = encrypted.outerTlsVersion
+
+    override suspend fun sendRaw(data: ByteArray) = encrypted.sendRaw(data)
+    override fun sendRawAsync(data: ByteArray) = encrypted.sendRawAsync(data)
+
+    override suspend fun receiveRaw(): ByteArray? {
+        val data = encrypted.receiveRaw() ?: return null
+        if (data.isEmpty()) return null
+        return processResponseHeader(data)
+    }
+
+    override fun cancel() = encrypted.cancel()
+
+    // Vision cannot run over this connection (outerTlsVersion is null, so it is
+    // rejected before wrapping), but the direct methods still delegate to the
+    // encryption's own AEAD-peeling path so the wrapper is a faithful, complete
+    // pass-through rather than silently falling back to the base sealed path.
+    override suspend fun receiveDirectRaw(): ByteArray? = encrypted.receiveDirectRaw()
+    override suspend fun sendDirectRaw(data: ByteArray) = encrypted.sendDirectRaw(data)
+    override fun sendDirectRawAsync(data: ByteArray) = encrypted.sendDirectRawAsync(data)
+}
+
 sealed class RealityError(message: String) : Exception(message) {
     class DecryptionFailed(val rawData: ByteArray? = null) : RealityError("TLS record decryption failed")
     class HandshakeFailed(msg: String) : RealityError("TLS handshake failed: $msg")
