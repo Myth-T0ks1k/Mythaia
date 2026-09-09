@@ -323,4 +323,28 @@ class MitmRewriterTest {
         assertEquals("image/gif", out.header("Content-Type"))
         assertArrayEquals(referenceTinyGif, out.body)
     }
+
+    // MARK: - bodyEditable gate (a body the codec could not decode)
+
+    @Test
+    fun bodyReplaceIsSkippedButHeaderRuleStillFiresWhenBodyNotEditable() {
+        // A body that arrived in a coding the codec could not decode is opaque
+        // compressed bytes; running a body-replace regex over them would corrupt
+        // the stream, so bodyEditable=false skips the body pass while the header
+        // pass still applies.
+        val opaque = byteArrayOf(0x1f.toByte(), 0x8b.toByte(), 0x08, 0x00, 0x13, 0x37, 0x00, 0x00)
+        val r = rewriterOf(
+            MitmRule(HttpPhase.RESPONSE, ".*", MitmOperation.BodyReplace(".", "X")),
+            MitmRule(HttpPhase.RESPONSE, ".*", MitmOperation.HeaderAdd("X-Mitm", "seen"))
+        )
+        val msg = response("https://x.example.com/a", body = opaque)
+
+        // Sanity: with an editable body the replace really fires, so the skip is
+        // a real guard rather than a vacuous pass.
+        assertTrue(!forward(r.rewrite(msg, bodyEditable = true)).body.contentEquals(opaque))
+
+        val out = forward(r.rewrite(msg, bodyEditable = false))
+        assertArrayEquals(opaque, out.body)
+        assertEquals("seen", out.header("X-Mitm"))
+    }
 }

@@ -107,8 +107,17 @@ class MitmRewriter(ruleSet: MitmRuleSet) {
         }
     }
 
-    /** Applies every matching rule to [message] and returns what to do with it. */
-    fun rewrite(message: HttpMessage): MitmRewriteResult {
+    /**
+     * Applies every matching rule to [message] and returns what to do with it.
+     *
+     * [bodyEditable] is false when [message]'s body is not text the rules can
+     * safely edit — a still-compressed body whose coding could not be decoded
+     * (unsupported, malformed, or past the decompression cap). Body-replace
+     * rules are then skipped so they cannot run a regex over opaque bytes and
+     * corrupt them; header, URL and reject/redirect rules still apply. The
+     * default is true, for a body that is already plain text.
+     */
+    fun rewrite(message: HttpMessage, bodyEditable: Boolean = true): MitmRewriteResult {
         val normalizedUrl = normalizeUrl(message.url)
 
         var url = message.url
@@ -161,7 +170,7 @@ class MitmRewriter(ruleSet: MitmRuleSet) {
                 rule.operation is MitmOperation.BodyReplace &&
                 matchGate(rule.gate, normalizedUrl) != null
         }
-        if (bodyOps.isNotEmpty()) {
+        if (bodyEditable && bodyOps.isNotEmpty()) {
             // The body's charset is the one it arrived with; a header rule that
             // rewrote Content-Type did not transcode the bytes.
             body = applyBodyReplaces(bodyOps, message.headers, body)
