@@ -1,5 +1,7 @@
 package com.mythaia.vpn.mitm
 
+import kotlinx.serialization.json.JsonElement
+
 /**
  * One `rewrite` sub-mode (operation `0`), the request-only verbs that answer or
  * redirect a request instead of, or before, letting it reach upstream.
@@ -35,10 +37,10 @@ sealed class MitmRewriteAction {
  * operation code.
  *
  * Only the operation codes with a native, socket-free transform are modelled:
- * `0` [Rewrite], `1` [HeaderAdd], `2` [HeaderDelete], `3` [HeaderReplace], and
- * `4` [BodyReplace]. The JavaScript operations (`100` / `101`) and the
- * declarative JSON edit (`5`) are deliberately absent — see [AmrsParser] and the
- * port notes for why they are dropped rather than half-implemented.
+ * `0` [Rewrite], `1` [HeaderAdd], `2` [HeaderDelete], `3` [HeaderReplace], `4`
+ * [BodyReplace], and `5` [BodyJson]. The JavaScript operations (`100` / `101`)
+ * are deliberately absent — see [AmrsParser] and the port notes for why they are
+ * dropped rather than half-implemented.
  */
 sealed class MitmOperation {
     /** Operation `0`: request-only URL rewrite / redirect / reject. */
@@ -63,6 +65,70 @@ sealed class MitmOperation {
      * [MitmRewriteAction.Transparent]. Every matching rule fires, in rule order.
      */
     data class BodyReplace(val search: String, val replacement: String) : MitmOperation()
+
+    /**
+     * Operation `5`: a declarative JSON-body patch. The [operation] carries the
+     * already-parsed JSON path (or recursive key) and JSON value — the parser
+     * compiles both up front and drops the rule if either is malformed, so
+     * [MitmRewriter] can hand [operation] straight to [MitmJsonPatch]. Unlike
+     * `body-replace` and `rewrite`, a `body-json` value carries no `$1` capture
+     * references (the reference patch algorithm expands none), so no
+     * [MitmCaptureTemplate] is compiled for it. Applied only to JSON bodies, in
+     * rule order, composing with `body-replace` — see [MitmRewriter].
+     */
+    data class BodyJson(val operation: MitmJsonOperation) : MitmOperation()
+}
+
+/**
+ * One resolved segment of a `body-json` path: an object [Key] or an array
+ * [Index]. The `.amrs` path grammar (`$.a.b[0]`, `$["a.b"]`, …) is parsed into a
+ * list of these by [MitmJsonPatch.parseJsonPath] at rule-compile time; a
+ * negative or non-numeric bracket token becomes a [Key], never an [Index]
+ * (matching the reference, which only reads an all-digit token as an index).
+ */
+sealed class JsonPathSegment {
+    data class Key(val name: String) : JsonPathSegment()
+    data class Index(val index: Int) : JsonPathSegment()
+}
+
+/**
+ * A parsed `body-json` operation (the `.amrs` op-`5` sub-actions), mirroring the
+ * reference's `MITMJSONOperation`. The path-based verbs carry a [JsonPathSegment]
+ * list resolved by the parser; the recursive verbs carry a bare key that
+ * [MitmJsonPatch] walks the whole document for. Values are pre-parsed into a
+ * [JsonElement] (a bare string that is not itself valid JSON becomes a JSON
+ * string), exactly as the reference's `parseValue` does.
+ *
+ * Derived from the Anywhere reference implementation (GPL-3.0), Copyright (C) 2026 NodePassProject.
+ */
+sealed class MitmJsonOperation {
+    /** `add`: set [value] at [path]; creates the leaf key, never missing intermediates. */
+    data class Add(val path: List<JsonPathSegment>, val value: JsonElement) : MitmJsonOperation()
+
+    /** `replace`: overwrite [value] at [path] only when the leaf already exists. */
+    data class Replace(val path: List<JsonPathSegment>, val value: JsonElement) : MitmJsonOperation()
+
+    /** `delete`: remove the leaf at [path] (a key, or an in-range array element). */
+    data class Delete(val path: List<JsonPathSegment>) : MitmJsonOperation()
+
+    /** `replace-recursive`: overwrite every occurrence of [key] anywhere in the document with [value]. */
+    data class ReplaceRecursive(val key: String, val value: JsonElement) : MitmJsonOperation()
+
+    /** `delete-recursive`: remove every occurrence of [key] anywhere in the document. */
+    data class DeleteRecursive(val key: String) : MitmJsonOperation()
+
+    /** `remove-where-key-exists`: from the array at [path], drop every object element that has [key]. */
+    data class RemoveWhereKeyExists(val path: List<JsonPathSegment>, val key: String) : MitmJsonOperation()
+
+    /**
+     * `remove-where-field-in`: from the array at [path], drop every object
+     * element whose [field] value equals one of [values].
+     */
+    data class RemoveWhereFieldIn(
+        val path: List<JsonPathSegment>,
+        val field: String,
+        val values: List<JsonElement>
+    ) : MitmJsonOperation()
 }
 
 /**

@@ -50,8 +50,10 @@ sealed class MitmRewriteResult {
  *     and `Host`, then processing continues.
  *  2. **Headers.** Every matching `header-add` / `header-delete` / `header-replace`
  *     of the message's phase applies, in rule order.
- *  3. **Body.** Every matching `body-replace` of the message's phase composes, in
- *     rule order, over the decoded text body.
+ *  3. **Body.** Every matching `body-replace` and `body-json` of the message's
+ *     phase composes, in rule order, over the body. A `body-replace` runs over
+ *     the decoded text body; a `body-json` patches the body only when its
+ *     `Content-Type` is a JSON media type, leaving any other body untouched.
  *
  * The gate for the header and body passes is tested against the message's URL as
  * it arrived — for a request, before any transparent rewrite of step 1. This is a
@@ -164,16 +166,16 @@ class MitmRewriter(ruleSet: MitmRuleSet) {
             }
         }
 
-        // 3. Body pass — every matching body-replace of this phase composes, in rule order.
+        // 3. Body pass — every matching body-replace / body-json of this phase composes, in rule order.
         val bodyOps = rules.filter { rule ->
             rule.phase == message.phase &&
-                rule.operation is MitmOperation.BodyReplace &&
+                (rule.operation is MitmOperation.BodyReplace || rule.operation is MitmOperation.BodyJson) &&
                 matchGate(rule.gate, normalizedUrl) != null
         }
         if (bodyEditable && bodyOps.isNotEmpty()) {
-            // The body's charset is the one it arrived with; a header rule that
-            // rewrote Content-Type did not transcode the bytes.
-            body = applyBodyReplaces(bodyOps, message.headers, body)
+            // The body's content-type and charset are the ones it arrived with; a header
+            // rule that rewrote Content-Type did not transcode or reshape the bytes.
+            body = applyBodyOps(bodyOps, message.headers, body)
         }
 
         return MitmRewriteResult.Forward(message.copy(url = url, headers = headers, body = body))
@@ -367,6 +369,70 @@ class MitmRewriter(ruleSet: MitmRuleSet) {
     }
 
     // MARK: - Body rewrite
+
+    /**
+     * Applies the matching body rules in rule order, composing over the bytes.
+     * Consecutive rules of one kind run as a single group: `body-replace` rules
+     * decode / compose / re-encode once (exactly as before, so the existing
+     * text-body behaviour is byte-for-byte unchanged), and `body-json` rules
+     * parse / patch / re-serialize once over one in-memory tree. When the two
+     * kinds interleave, the group boundary re-reads the bytes — which is what
+     * "compose in rule order" means for two transforms of the same body.
+     */
+    private fun applyBodyOps(ops: List<CompiledRule>, headers: List<HttpHeader>, body: ByteArray): ByteArray {
+        var current = body
+        var i = 0
+        while (i < ops.size) {
+            when (ops[i].operation) {
+                is MitmOperation.BodyReplace -> {
+                    val group = ArrayList<CompiledRule>()
+                    while (i < ops.size && ops[i].operation is MitmOperation.BodyReplace) {
+                        group.add(ops[i])
+                        i++
+                    }
+                    current = applyBodyReplaces(group, headers, current)
+                }
+                is MitmOperation.BodyJson -> {
+                    val group = ArrayList<MitmJsonOperation>()
+                    while (i < ops.size && ops[i].operation is MitmOperation.BodyJson) {
+                        group.add((ops[i].operation as MitmOperation.BodyJson).operation)
+                        i++
+                    }
+                    current = applyBodyJson(group, headers, current)
+                }
+                // A non-body operation can never appear here (bodyOps is filtered to the two
+                // body kinds), but skip defensively so the loop always makes progress.
+                else -> i++
+            }
+        }
+        return current
+    }
+
+    /**
+     * Applies a run of `body-json` patches, but only to a body whose
+     * `Content-Type` is a JSON media type; any other body is returned untouched.
+     * The patch itself is total and fails closed — an invalid-JSON,
+     * unresolved-path, oversized, or over-nested body comes back byte-identical
+     * (see [MitmJsonPatch]).
+     */
+    private fun applyBodyJson(operations: List<MitmJsonOperation>, headers: List<HttpHeader>, body: ByteArray): ByteArray {
+        if (!isJsonMediaType(headers)) return body
+        return MitmJsonPatch.applyAll(operations, body)
+    }
+
+    /**
+     * Whether the declared `Content-Type` is a JSON media type: `application/json`,
+     * `text/json`, or any `+json` structured-suffix type (`application/ld+json`,
+     * `application/vnd.api+json`, …). The media type is taken before the first
+     * `;`, so a `charset` parameter does not defeat the check. A body with no
+     * `Content-Type`, or a non-JSON one, is not patched.
+     */
+    private fun isJsonMediaType(headers: List<HttpHeader>): Boolean {
+        val contentType = headers.firstOrNull { it.isNamed("Content-Type") }?.value ?: return false
+        val mediaType = contentType.substringBefore(';').trim().lowercase()
+        return mediaType == "application/json" || mediaType == "text/json" ||
+            (mediaType.endsWith("+json") && mediaType.length > "+json".length)
+    }
 
     /**
      * Runs every matching `body-replace` over the body, all or nothing. The body

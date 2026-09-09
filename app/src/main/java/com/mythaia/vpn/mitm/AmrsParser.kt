@@ -21,10 +21,13 @@ package com.mythaia.vpn.mitm
  * would be dropped at compile time is dropped here instead — the end effect (the
  * rule never fires) is identical.
  *
- * Only operation codes `0`–`4` are supported. `body-json` (`5`) and the
- * JavaScript operations (`100` / `101`) have no native transform in this port,
- * so their rule lines are dropped like any other unsupported line; a rule set
- * that leans on them loses those rules but still imports the rest.
+ * Operation codes `0`–`5` are supported. `body-json` (`5`) is parsed into a
+ * [MitmOperation.BodyJson] whose JSON path and value are compiled up front, so a
+ * malformed path drops that single line (fail closed) exactly as an uncompilable
+ * `url-pattern` does. The JavaScript operations (`100` / `101`) still have no
+ * native transform in this port, so their rule lines are dropped like any other
+ * unsupported line; a rule set that leans on them loses those rules but still
+ * imports the rest.
  *
  * Derived from the Anywhere reference implementation (GPL-3.0), Copyright (C) 2026 NodePassProject.
  */
@@ -142,8 +145,65 @@ object AmrsParser {
                 if (search.isEmpty() || !isValidRegex(search)) return null
                 MitmRule(phase, urlPattern, MitmOperation.BodyReplace(search, replacement))
             }
-            // 5 (body-json), 100 (script), 101 (stream-script): valid format, no native
-            // transform in this port. Dropped like any other unsupported line.
+            5 -> {
+                if (args.size < 2) return null
+                val urlPattern = args[0]
+                if (!isValidUrlPattern(urlPattern)) return null
+                // The sub-action's path and value are compiled here; a malformed path drops
+                // the line (fail closed), matching how the reference refuses to compile it.
+                val operation = parseJsonOperation(args[1], args.drop(2)) ?: return null
+                MitmRule(phase, urlPattern, MitmOperation.BodyJson(operation))
+            }
+            // 100 (script), 101 (stream-script): valid format, no native transform in this
+            // port. Dropped like any other unsupported line.
+            else -> null
+        }
+    }
+
+    // MARK: - body-json (operation 5)
+
+    /**
+     * Parses a `body-json` sub-action and its fields into a [MitmJsonOperation],
+     * or `null` when the sub-action is unknown, the field count is wrong, or a
+     * JSON path fails to parse. Mirrors the reference's `parseJSONOperation`
+     * field-count contract; the path and value are compiled through
+     * [MitmJsonPatch] so a rule reaching [MitmRewriter] is already valid.
+     */
+    private fun parseJsonOperation(rawAction: String, fields: List<String>): MitmJsonOperation? {
+        return when (rawAction.trim().lowercase()) {
+            "add" -> {
+                if (fields.size != 2) return null
+                val path = MitmJsonPatch.parseJsonPath(fields[0]) ?: return null
+                MitmJsonOperation.Add(path, MitmJsonPatch.parseJsonValue(fields[1]))
+            }
+            "replace" -> {
+                if (fields.size != 2) return null
+                val path = MitmJsonPatch.parseJsonPath(fields[0]) ?: return null
+                MitmJsonOperation.Replace(path, MitmJsonPatch.parseJsonValue(fields[1]))
+            }
+            "delete" -> {
+                if (fields.size != 1) return null
+                val path = MitmJsonPatch.parseJsonPath(fields[0]) ?: return null
+                MitmJsonOperation.Delete(path)
+            }
+            "replace-recursive", "replacerecursive" -> {
+                if (fields.size != 2) return null
+                MitmJsonOperation.ReplaceRecursive(fields[0], MitmJsonPatch.parseJsonValue(fields[1]))
+            }
+            "delete-recursive", "deleterecursive" -> {
+                if (fields.size != 1) return null
+                MitmJsonOperation.DeleteRecursive(fields[0])
+            }
+            "remove-where-key-exists", "removewherekeyexists" -> {
+                if (fields.size != 2) return null
+                val path = MitmJsonPatch.parseJsonPath(fields[0]) ?: return null
+                MitmJsonOperation.RemoveWhereKeyExists(path, fields[1])
+            }
+            "remove-where-field-in", "removewherefieldin" -> {
+                if (fields.size != 3) return null
+                val path = MitmJsonPatch.parseJsonPath(fields[0]) ?: return null
+                MitmJsonOperation.RemoveWhereFieldIn(path, fields[1], MitmJsonPatch.parseJsonValues(fields[2]))
+            }
             else -> null
         }
     }

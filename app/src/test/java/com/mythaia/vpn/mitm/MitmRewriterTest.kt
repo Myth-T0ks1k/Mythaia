@@ -1,5 +1,6 @@
 package com.mythaia.vpn.mitm
 
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -275,6 +276,129 @@ class MitmRewriterTest {
         val msg = response("https://example.com/x", body = original.copyOf())
         val out = forward(r.rewrite(msg))
         assertArrayEquals(original, out.body)
+    }
+
+    // MARK: - body-json (5)
+
+    private fun jsonRule(operation: MitmJsonOperation) =
+        MitmRule(HttpPhase.RESPONSE, ".*", MitmOperation.BodyJson(operation))
+
+    private fun jsonResponse(body: String, contentType: String = "application/json") =
+        response(
+            "https://api.example.com/u",
+            listOf(HttpHeader("Content-Type", contentType)),
+            body.toByteArray(StandardCharsets.UTF_8)
+        )
+
+    @Test
+    fun bodyJsonPatchesJsonBody() {
+        val r = rewriterOf(jsonRule(MitmJsonOperation.Replace(listOf(JsonPathSegment.Key("vip")), JsonPrimitive(true))))
+        val out = forward(r.rewrite(jsonResponse("{\"vip\":false}")))
+        assertEquals("{\"vip\":true}", String(out.body, StandardCharsets.UTF_8))
+    }
+
+    @Test
+    fun bodyJsonLeavesNonJsonBodyByteIdentical() {
+        val r = rewriterOf(jsonRule(MitmJsonOperation.Replace(listOf(JsonPathSegment.Key("vip")), JsonPrimitive(true))))
+        val original = "{\"vip\":false}".toByteArray(StandardCharsets.UTF_8)
+        val msg = response(
+            "https://api.example.com/u",
+            listOf(HttpHeader("Content-Type", "text/plain")),
+            original.copyOf()
+        )
+        val out = forward(r.rewrite(msg))
+        // A non-JSON Content-Type is never patched — the body is byte-identical.
+        assertArrayEquals(original, out.body)
+    }
+
+    @Test
+    fun bodyJsonAcceptsStructuredJsonSuffixContentType() {
+        val r = rewriterOf(jsonRule(MitmJsonOperation.Delete(listOf(JsonPathSegment.Key("drop")))))
+        val out = forward(r.rewrite(jsonResponse("{\"drop\":1,\"keep\":2}", "application/ld+json; charset=utf-8")))
+        assertEquals("{\"keep\":2}", String(out.body, StandardCharsets.UTF_8))
+    }
+
+    @Test
+    fun bodyJsonLeavesMalformedJsonBodyUnchanged() {
+        val r = rewriterOf(jsonRule(MitmJsonOperation.Add(listOf(JsonPathSegment.Key("a")), JsonPrimitive(1))))
+        val original = "{not json".toByteArray(StandardCharsets.UTF_8)
+        val msg = response(
+            "https://api.example.com/u",
+            listOf(HttpHeader("Content-Type", "application/json")),
+            original.copyOf()
+        )
+        assertArrayEquals(original, forward(r.rewrite(msg)).body)
+    }
+
+    @Test
+    fun bodyJsonComposesWithBodyReplaceInRuleOrder() {
+        // Rule order: body-json flips vip to the JSON boolean true, then body-replace
+        // rewrites the token "true" to "1" over the re-serialized JSON text.
+        val r = rewriterOf(
+            jsonRule(MitmJsonOperation.Replace(listOf(JsonPathSegment.Key("vip")), JsonPrimitive(true))),
+            MitmRule(HttpPhase.RESPONSE, ".*", MitmOperation.BodyReplace("true", "1"))
+        )
+        val out = forward(r.rewrite(jsonResponse("{\"vip\":false}")))
+        assertEquals("{\"vip\":1}", String(out.body, StandardCharsets.UTF_8))
+    }
+
+    @Test
+    fun bodyReplaceThenBodyJsonComposeInRuleOrder() {
+        // The reverse order: a body-replace group runs first (false -> 0), then body-json
+        // appends a key over the resulting JSON. Exercises the group/patch boundary.
+        val r = rewriterOf(
+            MitmRule(HttpPhase.RESPONSE, ".*", MitmOperation.BodyReplace("false", "0")),
+            jsonRule(MitmJsonOperation.Add(listOf(JsonPathSegment.Key("added")), JsonPrimitive(true)))
+        )
+        val out = forward(r.rewrite(jsonResponse("{\"vip\":false}")))
+        assertEquals("{\"vip\":0,\"added\":true}", String(out.body, StandardCharsets.UTF_8))
+    }
+
+    @Test
+    fun bodyJsonSkippedWhenBodyNotEditable() {
+        val r = rewriterOf(jsonRule(MitmJsonOperation.Replace(listOf(JsonPathSegment.Key("vip")), JsonPrimitive(true))))
+        val original = "{\"vip\":false}".toByteArray(StandardCharsets.UTF_8)
+        val msg = response(
+            "https://api.example.com/u",
+            listOf(HttpHeader("Content-Type", "application/json")),
+            original.copyOf()
+        )
+        // Editable: the patch fires (so the skip below is a real guard, not a vacuous pass).
+        assertEquals("{\"vip\":true}", String(forward(r.rewrite(msg, bodyEditable = true)).body, StandardCharsets.UTF_8))
+        // Not editable: the body pass is skipped entirely, so the body is untouched.
+        assertArrayEquals(original, forward(r.rewrite(msg, bodyEditable = false)).body)
+    }
+
+    @Test
+    fun consecutiveBodyJsonRulesBatchSoNetNoOpKeepsOriginalBytes() {
+        // Two body-json rules that cancel out must batch over one parse and leave the body
+        // byte-identical (the space after ':' survives), not reformat it.
+        val r = rewriterOf(
+            jsonRule(MitmJsonOperation.Add(listOf(JsonPathSegment.Key("x")), JsonPrimitive(1))),
+            jsonRule(MitmJsonOperation.Delete(listOf(JsonPathSegment.Key("x"))))
+        )
+        val original = "{\"a\": 1}".toByteArray(StandardCharsets.UTF_8)
+        val msg = response(
+            "https://api.example.com/u",
+            listOf(HttpHeader("Content-Type", "application/json")),
+            original.copyOf()
+        )
+        assertArrayEquals(original, forward(r.rewrite(msg)).body)
+    }
+
+    @Test
+    fun bodyJsonEndToEndFromParsedRuleSet() {
+        val set = AmrsParser.parse(
+            """
+            name = Redact
+            hostname = api.example.com
+            1, 5, .*, delete, ${'$'}.token
+            """.trimIndent()
+        )
+        val out = forward(
+            MitmRewriter(set).rewrite(jsonResponse("{\"token\":\"secret\",\"user\":\"a\"}"))
+        )
+        assertEquals("{\"user\":\"a\"}", String(out.body, StandardCharsets.UTF_8))
     }
 
     // MARK: - URL gate

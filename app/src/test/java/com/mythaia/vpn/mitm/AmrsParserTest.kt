@@ -1,5 +1,6 @@
 package com.mythaia.vpn.mitm
 
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -183,11 +184,90 @@ class AmrsParserTest {
     }
 
     @Test
-    fun dropsUnsupportedOperations() {
-        // body-json (5), script (100), stream-script (101): valid format, unported.
-        assertNull(AmrsParser.parseRule("1, 5, ^/api/user, add, \$.user.vip, true"))
+    fun dropsUnportedScriptOperations() {
+        // script (100), stream-script (101): valid format, unported (no JS engine).
         assertNull(AmrsParser.parseRule("0, 100, .*, Zm9v"))
         assertNull(AmrsParser.parseRule("1, 101, ^/events, Zm9v"))
+    }
+
+    // MARK: - body-json (5)
+
+    @Test
+    fun parsesBodyJsonAddWithParsedPathAndValue() {
+        // The value `true` is JSON, so it parses to a boolean, not the string "true".
+        assertEquals(
+            MitmRule(
+                HttpPhase.RESPONSE,
+                "^/api/user",
+                MitmOperation.BodyJson(
+                    MitmJsonOperation.Add(
+                        listOf(JsonPathSegment.Key("user"), JsonPathSegment.Key("vip")),
+                        JsonPrimitive(true)
+                    )
+                )
+            ),
+            AmrsParser.parseRule("1, 5, ^/api/user, add, \$.user.vip, true")
+        )
+    }
+
+    @Test
+    fun parsesBodyJsonReplaceDeleteAndArrayIndex() {
+        assertEquals(
+            MitmRule(
+                HttpPhase.RESPONSE,
+                ".*",
+                MitmOperation.BodyJson(
+                    MitmJsonOperation.Replace(
+                        listOf(JsonPathSegment.Key("a"), JsonPathSegment.Index(0)),
+                        JsonPrimitive("x")
+                    )
+                )
+            ),
+            // A bare (non-JSON) value becomes a JSON string.
+            AmrsParser.parseRule("1, 5, .*, replace, \$.a[0], x")
+        )
+        assertEquals(
+            MitmRule(
+                HttpPhase.REQUEST,
+                ".*",
+                MitmOperation.BodyJson(MitmJsonOperation.Delete(listOf(JsonPathSegment.Key("token"))))
+            ),
+            AmrsParser.parseRule("0, 5, .*, delete, \$.token")
+        )
+    }
+
+    @Test
+    fun dropsBodyJsonWithMalformedPath() {
+        // An unterminated bracket is not a valid path, so the whole line is dropped (fail closed).
+        assertNull(AmrsParser.parseRule("1, 5, .*, add, \$.a[0, true"))
+        // A `.` segment with no name is malformed too.
+        assertNull(AmrsParser.parseRule("1, 5, .*, delete, \$."))
+    }
+
+    @Test
+    fun dropsBodyJsonWithUnknownSubActionOrWrongArity() {
+        assertNull(AmrsParser.parseRule("1, 5, .*, frobnicate, \$.a, 1"))
+        // delete takes exactly one field (the path); a stray value drops it.
+        assertNull(AmrsParser.parseRule("1, 5, .*, delete, \$.a, extra"))
+        // add takes exactly two fields (path, value).
+        assertNull(AmrsParser.parseRule("1, 5, .*, add, \$.a"))
+    }
+
+    @Test
+    fun bodyJsonMalformedLineDoesNotThrowDuringFullParse() {
+        // A malformed op-5 line must be dropped by parse() without raising, while
+        // the good rule after it still imports.
+        val set = AmrsParser.parse(
+            """
+            hostname = x.com
+            1, 5, .*, add, [unterminated, true
+            0, 1, .*, X-Kept, yes
+            """.trimIndent()
+        )
+        assertEquals(
+            listOf(MitmRule(HttpPhase.REQUEST, ".*", MitmOperation.HeaderAdd("X-Kept", "yes"))),
+            set.rules
+        )
     }
 
     @Test
