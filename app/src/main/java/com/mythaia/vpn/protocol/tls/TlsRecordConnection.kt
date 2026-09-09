@@ -39,7 +39,14 @@ class TlsRecordConnection private constructor(
     private val clientMACKey: ByteArray,
     private val serverMACKey: ByteArray,
     initialClientSeqNum: Long,
-    initialServerSeqNum: Long
+    initialServerSeqNum: Long,
+    /**
+     * Which side of the connection this is. A client encrypts with the client
+     * key/IV/sequence and decrypts with the server's; a server is the exact
+     * mirror. The public constructors default it to the client (false), so
+     * every existing caller is byte-for-byte unchanged.
+     */
+    private val isServer: Boolean
 ) {
     /** TLS 1.3 constructor. */
     constructor(
@@ -47,9 +54,10 @@ class TlsRecordConnection private constructor(
         clientIV: ByteArray,
         serverKey: ByteArray,
         serverIV: ByteArray,
-        cipherSuite: Int = TlsCipherSuite.TLS_AES_128_GCM_SHA256
+        cipherSuite: Int = TlsCipherSuite.TLS_AES_128_GCM_SHA256,
+        isServer: Boolean = false
     ) : this(clientKey, clientIV, serverKey, serverIV, cipherSuite,
-        0x0304, ByteArray(0), ByteArray(0), 0, 0)
+        0x0304, ByteArray(0), ByteArray(0), 0, 0, isServer)
 
     /** TLS 1.2 constructor with MAC keys and protocol version. */
     constructor(
@@ -62,11 +70,19 @@ class TlsRecordConnection private constructor(
         cipherSuite: Int,
         protocolVersion: Int = 0x0303,
         initialClientSeqNum: Long = 0,
-        initialServerSeqNum: Long = 0
+        initialServerSeqNum: Long = 0,
+        isServer: Boolean = false
     ) : this(tls12ClientKey, clientIV, serverKey, serverIV, cipherSuite,
-        protocolVersion, clientMACKey, serverMACKey, initialClientSeqNum, initialServerSeqNum)
+        protocolVersion, clientMACKey, serverMACKey, initialClientSeqNum, initialServerSeqNum, isServer)
 
     var connection: Transport? = null
+
+    /**
+     * The ALPN protocol negotiated for this connection, set by the handshake
+     * driver ([TlsServer] sets it from EncryptedExtensions; a client may set it
+     * once it reads the server's choice). Null until negotiated.
+     */
+    var negotiatedAlpn: String? = null
 
     val isTls13: Boolean get() = tlsVersion >= 0x0304
 
@@ -77,17 +93,30 @@ class TlsRecordConnection private constructor(
     private val clientKeySpec = SecretKeySpec(clientKey, cipherAlgo)
     private val serverKeySpec = SecretKeySpec(serverKey, cipherAlgo)
 
+    // Direction selection. "tx" is the side this connection seals and sends;
+    // "rx" is the side it opens and receives. A client's tx is the client
+    // key/IV/MAC and its rx is the server's; a server is the mirror. Every
+    // send() and receive() path below reaches for tx*/rx* rather than naming a
+    // role, so [isServer] alone decides the direction of the whole connection.
+    private val txKeySpec = if (isServer) serverKeySpec else clientKeySpec
+    private val rxKeySpec = if (isServer) clientKeySpec else serverKeySpec
+    private val txIV = if (isServer) serverIV else clientIV
+    private val rxIV = if (isServer) clientIV else serverIV
+    private val txMACKey = if (isServer) serverMACKey else clientMACKey
+    private val rxMACKey = if (isServer) clientMACKey else serverMACKey
+
     // Cipher is not thread-safe, so separate instances for encrypt/decrypt.
     private val encryptCipher: Cipher = Cipher.getInstance(cipherTransform)
     private val decryptCipher: Cipher = Cipher.getInstance(cipherTransform)
 
     private val cbcEncryptCipher: Cipher by lazy { Cipher.getInstance("AES/CBC/NoPadding") }
     private val cbcDecryptCipher: Cipher by lazy { Cipher.getInstance("AES/CBC/NoPadding") }
-    private val cbcClientKeySpec: SecretKeySpec by lazy { SecretKeySpec(clientKey, "AES") }
-    private val cbcServerKeySpec: SecretKeySpec by lazy { SecretKeySpec(serverKey, "AES") }
+    private val cbcTxKeySpec: SecretKeySpec by lazy { SecretKeySpec(if (isServer) serverKey else clientKey, "AES") }
+    private val cbcRxKeySpec: SecretKeySpec by lazy { SecretKeySpec(if (isServer) clientKey else serverKey, "AES") }
 
-    private var clientSeqNum: Long = initialClientSeqNum
-    private var serverSeqNum: Long = initialServerSeqNum
+    // Per-direction sequence numbers: tx is what we send, rx what we receive.
+    private var txSeqNum: Long = if (isServer) initialServerSeqNum else initialClientSeqNum
+    private var rxSeqNum: Long = if (isServer) initialClientSeqNum else initialServerSeqNum
     private val seqLock = ReentrantLock()
 
     /** Serialises the encrypt-then-enqueue path so TLS records arrive at the
@@ -195,8 +224,8 @@ class TlsRecordConnection private constructor(
 
                 val seqNum: Long
                 seqLock.withLock {
-                    seqNum = clientSeqNum
-                    clientSeqNum++
+                    seqNum = txSeqNum
+                    txSeqNum++
                 }
 
                 try {
@@ -205,14 +234,14 @@ class TlsRecordConnection private constructor(
                     val record = if (isTls13) {
                         val innerPlaintext = byteArrayOf(0x01, 0x00, 0x15)
                         val encryptedLen = innerPlaintext.size + 16
-                        val nonce = com.mythaia.vpn.util.PacketUtil.xorNonce(clientIV, seqNum)
+                        val nonce = com.mythaia.vpn.util.PacketUtil.xorNonce(txIV, seqNum)
                         val aad = byteArrayOf(
                             0x17, 0x03, 0x03,
                             ((encryptedLen shr 8) and 0xFF).toByte(),
                             (encryptedLen and 0xFF).toByte()
                         )
                         val paramSpec = if (isChaCha) IvParameterSpec(nonce) else GCMParameterSpec(128, nonce)
-                        encryptCipher.init(Cipher.ENCRYPT_MODE, clientKeySpec, paramSpec)
+                        encryptCipher.init(Cipher.ENCRYPT_MODE, txKeySpec, paramSpec)
                         encryptCipher.updateAAD(aad)
                         val encrypted = encryptCipher.doFinal(innerPlaintext)
                         val r = ByteArray(5 + encrypted.size)
@@ -326,8 +355,8 @@ class TlsRecordConnection private constructor(
             if (contentType == 0x17) { // Application Data
                 val seqNum: Long
                 seqLock.withLock {
-                    seqNum = serverSeqNum
-                    serverSeqNum++
+                    seqNum = rxSeqNum
+                    rxSeqNum++
                 }
 
                 try {
@@ -403,8 +432,8 @@ class TlsRecordConnection private constructor(
         if (data.size <= MAX_RECORD_PLAINTEXT) {
             val seqNum: Long
             seqLock.withLock {
-                seqNum = clientSeqNum
-                clientSeqNum++
+                seqNum = txSeqNum
+                txSeqNum++
             }
             return encryptAndBuildTLSRecord(data, seqNum)
         }
@@ -412,8 +441,8 @@ class TlsRecordConnection private constructor(
         val chunkCount = (data.size + MAX_RECORD_PLAINTEXT - 1) / MAX_RECORD_PLAINTEXT
         val startSeqNum: Long
         seqLock.withLock {
-            startSeqNum = clientSeqNum
-            clientSeqNum += chunkCount
+            startSeqNum = txSeqNum
+            txSeqNum += chunkCount
         }
 
         // Per-record overhead varies by cipher mode:
@@ -462,9 +491,10 @@ class TlsRecordConnection private constructor(
             throw RealityError.HandshakeFailed("Ciphertext too short")
         }
 
-        val nonce = com.mythaia.vpn.util.PacketUtil.xorNonce(serverIV, seqNum)
+        // Receive path: rx is the server key/IV when [isServer], the client key/IV otherwise.
+        val nonce = com.mythaia.vpn.util.PacketUtil.xorNonce(rxIV, seqNum)
         val paramSpec = if (isChaCha) IvParameterSpec(nonce) else GCMParameterSpec(128, nonce)
-        decryptCipher.init(Cipher.DECRYPT_MODE, serverKeySpec, paramSpec)
+        decryptCipher.init(Cipher.DECRYPT_MODE, rxKeySpec, paramSpec)
         decryptCipher.updateAAD(header)
         val decrypted = decryptCipher.doFinal(ciphertext)
 
@@ -489,7 +519,8 @@ class TlsRecordConnection private constructor(
         val innerLen = plaintext.size + 1
         val encryptedLen = innerLen + 16
 
-        val nonce = com.mythaia.vpn.util.PacketUtil.xorNonce(clientIV, seqNum)
+        // Send path: tx is the server key/IV when [isServer], the client key/IV otherwise.
+        val nonce = com.mythaia.vpn.util.PacketUtil.xorNonce(txIV, seqNum)
 
         val innerPlaintext = ByteArray(innerLen)
         System.arraycopy(plaintext, 0, innerPlaintext, 0, plaintext.size)
@@ -502,7 +533,7 @@ class TlsRecordConnection private constructor(
         )
 
         val paramSpec = if (isChaCha) IvParameterSpec(nonce) else GCMParameterSpec(128, nonce)
-        encryptCipher.init(Cipher.ENCRYPT_MODE, clientKeySpec, paramSpec)
+        encryptCipher.init(Cipher.ENCRYPT_MODE, txKeySpec, paramSpec)
         encryptCipher.updateAAD(aad)
         val encrypted = encryptCipher.doFinal(innerPlaintext)
 
@@ -534,14 +565,14 @@ class TlsRecordConnection private constructor(
         val nonce: ByteArray
         val explicitNonce: ByteArray
         if (isChaCha) {
-            nonce = xorNonce(clientIV, seqNum)
+            nonce = xorNonce(txIV, seqNum)
             explicitNonce = ByteArray(0)
         } else {
             // AES-GCM nonce: implicit(4) || explicit(8) where explicit = seq number.
             val seqBytes = seqToBytes(seqNum)
-            nonce = ByteArray(clientIV.size + seqBytes.size)
-            System.arraycopy(clientIV, 0, nonce, 0, clientIV.size)
-            System.arraycopy(seqBytes, 0, nonce, clientIV.size, seqBytes.size)
+            nonce = ByteArray(txIV.size + seqBytes.size)
+            System.arraycopy(txIV, 0, nonce, 0, txIV.size)
+            System.arraycopy(seqBytes, 0, nonce, txIV.size, seqBytes.size)
             explicitNonce = seqBytes
         }
 
@@ -555,7 +586,7 @@ class TlsRecordConnection private constructor(
         aad[12] = (plaintext.size and 0xFF).toByte()
 
         val paramSpec = if (isChaCha) IvParameterSpec(nonce) else GCMParameterSpec(128, nonce)
-        encryptCipher.init(Cipher.ENCRYPT_MODE, clientKeySpec, paramSpec)
+        encryptCipher.init(Cipher.ENCRYPT_MODE, txKeySpec, paramSpec)
         encryptCipher.updateAAD(aad)
         val encrypted = encryptCipher.doFinal(plaintext)
 
@@ -580,7 +611,7 @@ class TlsRecordConnection private constructor(
         val useSHA256 = TlsCipherSuite.cbcUsesSHA256(cipherSuite)
 
         val mac = Tls12KeyDerivation.tls10MAC(
-            clientMACKey, seqNum, contentType, tlsVersion, plaintext,
+            txMACKey, seqNum, contentType, tlsVersion, plaintext,
             useSHA384, useSHA256
         )
 
@@ -599,7 +630,7 @@ class TlsRecordConnection private constructor(
         val iv = ByteArray(blockSize)
         java.security.SecureRandom().nextBytes(iv)
 
-        cbcEncryptCipher.init(Cipher.ENCRYPT_MODE, cbcClientKeySpec, IvParameterSpec(iv))
+        cbcEncryptCipher.init(Cipher.ENCRYPT_MODE, cbcTxKeySpec, IvParameterSpec(iv))
         val encrypted = cbcEncryptCipher.doFinal(padded)
 
         val recordPayloadLen = blockSize + encrypted.size
@@ -634,11 +665,11 @@ class TlsRecordConnection private constructor(
 
         val nonce: ByteArray
         if (isChaCha) {
-            nonce = xorNonce(serverIV, seqNum)
+            nonce = xorNonce(rxIV, seqNum)
         } else {
-            nonce = ByteArray(serverIV.size + explicitNonce.size)
-            System.arraycopy(serverIV, 0, nonce, 0, serverIV.size)
-            System.arraycopy(explicitNonce, 0, nonce, serverIV.size, explicitNonce.size)
+            nonce = ByteArray(rxIV.size + explicitNonce.size)
+            System.arraycopy(rxIV, 0, nonce, 0, rxIV.size)
+            System.arraycopy(explicitNonce, 0, nonce, rxIV.size, explicitNonce.size)
         }
 
         val plaintextLen = payload.size - 16
@@ -652,7 +683,7 @@ class TlsRecordConnection private constructor(
         aad[12] = (plaintextLen and 0xFF).toByte()
 
         val paramSpec = if (isChaCha) IvParameterSpec(nonce) else GCMParameterSpec(128, nonce)
-        decryptCipher.init(Cipher.DECRYPT_MODE, serverKeySpec, paramSpec)
+        decryptCipher.init(Cipher.DECRYPT_MODE, rxKeySpec, paramSpec)
         decryptCipher.updateAAD(aad)
         return decryptCipher.doFinal(payload)
     }
@@ -669,7 +700,7 @@ class TlsRecordConnection private constructor(
             throw RealityError.HandshakeFailed("CBC ciphertext not aligned")
         }
 
-        cbcDecryptCipher.init(Cipher.DECRYPT_MODE, cbcServerKeySpec, IvParameterSpec(iv))
+        cbcDecryptCipher.init(Cipher.DECRYPT_MODE, cbcRxKeySpec, IvParameterSpec(iv))
         var decrypted = cbcDecryptCipher.doFinal(encrypted)
 
         // Validate and strip padding (constant-time to mitigate Lucky13).
@@ -697,7 +728,7 @@ class TlsRecordConnection private constructor(
         val useSHA384 = TlsCipherSuite.usesSHA384(cipherSuite)
         val useSHA256 = TlsCipherSuite.cbcUsesSHA256(cipherSuite)
         val expectedMAC = Tls12KeyDerivation.tls10MAC(
-            serverMACKey, seqNum, contentType, tlsVersion, payload, useSHA384, useSHA256
+            rxMACKey, seqNum, contentType, tlsVersion, payload, useSHA384, useSHA256
         )
 
         // Constant-time comparison to prevent timing attacks.
