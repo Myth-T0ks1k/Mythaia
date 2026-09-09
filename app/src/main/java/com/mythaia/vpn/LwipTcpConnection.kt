@@ -342,6 +342,14 @@ class LwipTcpConnection(
     private inner class MitmInnerTransport : Transport {
         private val queue = Channel<ByteArray>(MITM_INNER_QUEUE_CAPACITY)
 
+        /**
+         * Set (on the lwIP thread) when a downlink [send] is parked because the
+         * client-facing backlog is full; completed when it drains or on teardown.
+         * A single waiter suffices because writes to this leg are serialized (the
+         * h1 bridge is sequential, the h2 server holds a write mutex).
+         */
+        private var drainWaiter: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
         /** Enqueues client bytes (lwIP thread). Does NOT ack — see class note. */
         fun feed(data: ByteArray) {
             if (data.isEmpty()) return
@@ -363,6 +371,11 @@ class LwipTcpConnection(
 
         override suspend fun send(data: ByteArray) {
             if (data.isEmpty()) return
+            // Backpressure: park until the client-facing backlog is below the
+            // water mark, so a fast origin cannot grow pendingWrite without bound
+            // while the client drains slowly (the normal relay path gets this from
+            // tryArmReceive, which the pull-model bridge does not go through).
+            awaitDrainRoom()
             // Refresh the activity timer on every downlink write, as the normal
             // relay path does when it reads from the proxy: origin bytes flowing
             // to the client are activity, and after a client FIN the downlink-only
@@ -371,6 +384,42 @@ class LwipTcpConnection(
                 if (closed) return@execute
                 activityTimer?.update()
                 writeToLwip(data)
+            }
+        }
+
+        /**
+         * Suspends the caller until the client-facing backlog ([pendingWrite]) is
+         * below [TunnelConstants.drainLowWaterMark] — the same threshold the normal
+         * path's [tryArmReceive] uses to stop fetching. The check runs on the lwIP
+         * thread that owns [pendingWrite]; a parked sender is woken by
+         * [onDrainProgress] as the backlog clears, or by [forceCancel] on teardown
+         * (and the idle timer closes a connection whose client stopped reading, so
+         * a park is always eventually released).
+         */
+        private suspend fun awaitDrainRoom() {
+            while (true) {
+                val gate = kotlinx.coroutines.CompletableDeferred<kotlinx.coroutines.CompletableDeferred<Unit>?>()
+                lwipExecutor.execute {
+                    if (closed || pendingWrite.size() < TunnelConstants.drainLowWaterMark) {
+                        gate.complete(null)
+                    } else {
+                        gate.complete(
+                            drainWaiter ?: kotlinx.coroutines.CompletableDeferred<Unit>().also { drainWaiter = it }
+                        )
+                    }
+                }
+                val waiter = gate.await() ?: return
+                waiter.await()
+                // Re-check on the lwIP thread: the backlog may have refilled.
+            }
+        }
+
+        /** Wakes a parked [send] once the backlog has drained; call on the lwIP thread. */
+        fun onDrainProgress() {
+            val waiter = drainWaiter ?: return
+            if (pendingWrite.size() < TunnelConstants.drainLowWaterMark) {
+                drainWaiter = null
+                waiter.complete(Unit)
             }
         }
 
@@ -395,6 +444,10 @@ class LwipTcpConnection(
 
         override fun forceCancel() {
             queue.close()
+            // Release a sender parked on backpressure so its coroutine can unwind
+            // rather than hang on a connection that is going away.
+            drainWaiter?.complete(Unit)
+            drainWaiter = null
             lwipExecutor.execute { if (!closed) abort() }
         }
     }
@@ -1015,6 +1068,9 @@ class LwipTcpConnection(
         // Made progress (or nothing was pending): prefetch the next chunk if
         // the backlog is below the low-water mark.
         tryArmReceive()
+        // Same signal for a MITM downlink sender parked on backpressure (null on
+        // every non-intercepted connection, so this is a no-op there).
+        mitmInner?.onDrainProgress()
     }
 
     /**
