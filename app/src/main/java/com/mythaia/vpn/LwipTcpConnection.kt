@@ -1,16 +1,28 @@
 package com.mythaia.vpn
 
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.data.model.TlsConfiguration
+import com.mythaia.data.model.TlsFingerprint
+import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.util.TlsClientHelloSniffer
 import com.mythaia.vpn.util.TransportErrorLogger
+import com.mythaia.vpn.mitm.MitmByteLeg
+import com.mythaia.vpn.mitm.MitmRuleStore
+import com.mythaia.vpn.mitm.MitmSession
+import com.mythaia.vpn.mitm.TlsRecordByteLeg
 import com.mythaia.vpn.protocol.ProxyClientFactory
 import com.mythaia.vpn.protocol.ProxyConnection
+import com.mythaia.vpn.protocol.Transport
+import com.mythaia.vpn.protocol.TunneledTransport
 import com.mythaia.vpn.protocol.direct.DirectTcpRelay
+import com.mythaia.vpn.protocol.tls.TlsClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -61,6 +73,16 @@ class LwipTcpConnection(
 
     private var vlessConnecting = false
     private var directConnecting = false
+
+    /**
+     * When set, this connection is being MITM-intercepted: the client TLS is
+     * terminated locally and the exchange runs through [MitmSession]. Non-null
+     * only after [beginMitmIfConfigured] commits, which happens solely when the
+     * shared [MitmRuleStore] holds both a matching enabled rule set AND a CA. On
+     * the default (empty) store it stays null, so every path below behaves
+     * byte-for-byte as it did before the MITM hook existed.
+     */
+    private var mitmInner: MitmInnerTransport? = null
 
     // Upload coalescing: accumulates multiple TCP segments into a single batch
     // before sending to the proxy protocol, reducing per-segment encryption overhead.
@@ -184,6 +206,200 @@ class LwipTcpConnection(
     }
 
     /**
+     * If the shared [MitmRuleStore] is configured to intercept [sni], commits
+     * this connection to a local MITM session and returns `true`; otherwise
+     * disturbs nothing and returns `false`, leaving the caller to run the normal
+     * [beginConnecting].
+     *
+     * The two `?: return false` guards below are the whole inertness contract:
+     * on the default (empty) store [MitmRuleStore.interceptionFor] returns `null`
+     * for every host and [MitmRuleStore.authority] is `null`, so this returns
+     * `false` before reading or mutating any connection state — the store-empty
+     * path is byte-for-byte the pre-hook behaviour.
+     *
+     * When it does commit, it plays the same post-route setup the normal dial
+     * paths do: it consumes the buffered ClientHello from [pendingData] and acks
+     * it (so a later `close()` sends a FIN, not an RST — see [rejectGracefully]),
+     * cancels the handshake timer, installs the activity timer, snapshots the
+     * post-[applySNI] route, and launches [MitmSession.intercept] OFF the lwIP
+     * thread (see below), returning `true`.
+     */
+    private fun beginMitmIfConfigured(sni: String): Boolean {
+        val ruleSet = MitmRuleStore.shared.interceptionFor(sni) ?: return false
+        val authority = MitmRuleStore.shared.authority() ?: return false
+
+        // Take the buffered ClientHello (and anything the sniffer read alongside
+        // it) and ack it: those bytes are consumed by the local TLS termination,
+        // never forwarded upstream, so lwIP must be told or close() emits an RST.
+        val clientHello = pendingData.toByteArray()
+        pendingData.reset()
+        ackBytesToLwip(clientHello.size)
+
+        // Replace the handshake-timeout safety net with the activity timer, just
+        // as the normal dial paths do once they connect.
+        handshakeTimer?.cancel(false)
+        handshakeTimer = null
+        activityTimer = ActivityTimer(lwipExecutor, TunnelConstants.connectionIdleTimeoutMs) {
+            if (!closed) close()
+        }
+
+        val inner = MitmInnerTransport()
+        mitmInner = inner
+
+        // Snapshot the route the sniff committed (post-applySNI) so the outer
+        // dial to the real origin uses the same configuration/bypass decision.
+        val routeConfig = configuration
+        val routeBypass = bypass
+        val port = dstPort
+
+        // CORRECTION #1: run the interception on Dispatchers.IO, NOT the lwIP
+        // executor. The bridge blocks its thread (MitmRegexGuard Future.get up to
+        // 1s/message, TLS crypto, decompression, per-leaf P-256 keygen); on the
+        // single lwIP thread that would freeze every flow. The launch is still a
+        // child of scopeJob (so releaseProtocol's scopeJob.cancel tears it down),
+        // it just runs on IO. MitmInnerTransport marshals send()/receive()-ack/
+        // forceCancel() back onto lwipExecutor, so only the blocking body moves off.
+        scope.launch(Dispatchers.IO) {
+            try {
+                MitmSession.intercept(
+                    clientTransport = inner,
+                    bufferedClientHello = clientHello,
+                    host = sni,
+                    port = port,
+                    ruleSet = ruleSet,
+                    authority = authority,
+                    dialUpstream = { dialHost, dialPort, alpn ->
+                        dialUpstreamLeg(dialHost, dialPort, alpn, routeConfig, routeBypass)
+                    }
+                )
+            } catch (_: CancellationException) {
+                return@launch  // torn down by releaseProtocol
+            } catch (e: Exception) {
+                // CORRECTION #4: intercept() owns teardown and does not throw for
+                // ordinary failures, but guard defensively so an unexpected throw
+                // cannot escape as an uncaught coroutine exception.
+                logger.warning("[TCP] MITM interception errored for $sni:$port: ${e.message}")
+            }
+            // intercept() has already torn its own legs down; close the PCB back
+            // on the lwIP thread (CORRECTION #1: marshal the teardown there).
+            lwipExecutor.execute { if (!closed) close() }
+        }
+        return true
+    }
+
+    /**
+     * The OUTER dial for an intercepted connection: opens a TLS client to the
+     * real origin [host]:[port] offering exactly [alpn] (`["http/1.1"]`), either
+     * directly when [routeBypass] is set or over the committed proxy route, and
+     * returns the leg the bridge exchanges the (possibly rewritten) HTTP/1.1 with.
+     *
+     * Runs on the interception coroutine (Dispatchers.IO), so its socket connect
+     * and TLS handshake never touch the lwIP thread.
+     */
+    private suspend fun dialUpstreamLeg(
+        host: String,
+        port: Int,
+        alpn: List<String>,
+        routeConfig: ProxyConfiguration,
+        routeBypass: Boolean
+    ): MitmByteLeg {
+        // Mirror how the codebase builds a plain TLS origin dial (see
+        // NaiveTlsTransport): serverName = the origin host, ALPN offered exactly
+        // as requested. Pin a sane TLS 1.2–1.3 window and a non-browser device
+        // fingerprint (this is an on-device Android re-origination, not a browser).
+        val tlsConfig = TlsConfiguration(
+            serverName = host,
+            alpn = alpn,
+            fingerprint = TlsFingerprint.ANDROID_11,
+            minVersion = TlsVersion.TLS12,
+            maxVersion = TlsVersion.TLS13
+        )
+        val client = TlsClient(tlsConfig)
+        val record = if (routeBypass) {
+            client.connect(host, port)
+        } else {
+            val proxy = ProxyClientFactory.connect(routeConfig, host, port, null)
+            client.connect(TunneledTransport(proxy))
+        }
+        return TlsRecordByteLeg(record)
+    }
+
+    /**
+     * Bridges lwIP's push model to the pull model [MitmSession] / `TlsServer`
+     * expect for the client side of an intercepted connection.
+     *
+     * Client uplink bytes are pushed in with [feed] on the lwIP thread and pulled
+     * out by the session through [receive] on the IO dispatcher; downlink bytes
+     * the session writes with [send]/[sendAsync] are marshalled back onto the lwIP
+     * executor via [writeToLwip], and [forceCancel] aborts the PCB there too.
+     *
+     * CORRECTION #3: the queue is bounded (not UNLIMITED) as a second layer of
+     * defence, and client bytes are NOT acked when enqueued. Real backpressure
+     * comes from acking each chunk to lwIP only as [receive] hands it to the
+     * session, so lwIP's receive window reopens in step with how fast the origin
+     * is read rather than the instant bytes are buffered.
+     */
+    private inner class MitmInnerTransport : Transport {
+        private val queue = Channel<ByteArray>(MITM_INNER_QUEUE_CAPACITY)
+
+        /** Enqueues client bytes (lwIP thread). Does NOT ack — see class note. */
+        fun feed(data: ByteArray) {
+            if (data.isEmpty()) return
+            val result = queue.trySend(data)
+            if (result.isSuccess || result.isClosed) return
+            // Full despite the ack-on-consume window: a backstop, not expected in
+            // practice. Fail closed rather than drop bytes from a TLS stream.
+            logger.warning("[TCP] MITM uplink queue overflow: $endpointDescription; aborting")
+            abort()
+        }
+
+        override suspend fun receive(): ByteArray? {
+            val chunk = queue.receiveCatching().getOrNull() ?: return null
+            // Ack only now that the session has consumed the chunk — this is the
+            // restored client-uplink backpressure. Marshalled onto the lwIP thread.
+            lwipExecutor.execute { if (!closed) ackBytesToLwip(chunk.size) }
+            return chunk
+        }
+
+        override suspend fun send(data: ByteArray) {
+            if (data.isEmpty()) return
+            // Refresh the activity timer on every downlink write, as the normal
+            // relay path does when it reads from the proxy: origin bytes flowing
+            // to the client are activity, and after a client FIN the downlink-only
+            // timeout would otherwise truncate a still-streaming response.
+            lwipExecutor.execute {
+                if (closed) return@execute
+                activityTimer?.update()
+                writeToLwip(data)
+            }
+        }
+
+        override fun sendAsync(data: ByteArray) {
+            if (data.isEmpty()) return
+            lwipExecutor.execute {
+                if (closed) return@execute
+                activityTimer?.update()
+                writeToLwip(data)
+            }
+        }
+
+        /**
+         * Signals a clean end of the client uplink (the client half-closed) so the
+         * session's [receive] returns null after draining, letting the bridge
+         * finish the in-flight request rather than block. Distinct from
+         * [forceCancel], which also aborts the PCB.
+         */
+        fun feedEof() {
+            queue.close()
+        }
+
+        override fun forceCancel() {
+            queue.close()
+            lwipExecutor.execute { if (!closed) abort() }
+        }
+    }
+
+    /**
      * Re-evaluates routing using the hostname extracted from the TLS
      * ClientHello. Updates [dstHost], [configuration], and [bypass] in
      * place so the subsequent [beginConnecting] sees the SNI-based decision.
@@ -253,7 +469,11 @@ class LwipTcpConnection(
                     cancelSniffDeadline()
                     applySNI(state.serverName)
                     if (closed) return  // rule may have rejected
-                    beginConnecting()
+                    // Route through MITM only when the shared store is configured
+                    // for this host; otherwise dial exactly as before. The gate is
+                    // inert (returns false without touching state) on the empty
+                    // default store — see [beginMitmIfConfigured].
+                    if (!beginMitmIfConfigured(state.serverName)) beginConnecting()
                     return
                 }
                 is TlsClientHelloSniffer.State.NotTls,
@@ -264,6 +484,16 @@ class LwipTcpConnection(
                     return
                 }
             }
+        }
+
+        // MITM interception in progress: hand later client bytes straight to the
+        // inner transport the session reads from. No ack here — client-uplink
+        // backpressure is restored by acking each chunk only once the session
+        // consumes it (MitmInnerTransport.receive). Inert while mitmInner is null.
+        val inner = mitmInner
+        if (inner != null) {
+            inner.feed(data)
+            return
         }
 
         // Buffer data while outbound connection is being established
@@ -324,6 +554,12 @@ class LwipTcpConnection(
             }
             beginConnecting()
         }
+
+        // A MITM session pulls the client uplink through the inner queue; a client
+        // FIN is a clean end-of-request, so close the queue (drains, then EOF)
+        // rather than leaving the session's receive() blocked. Null-safe, so inert
+        // when this is not an intercepted connection.
+        mitmInner?.feedEof()
 
         uplinkDone = true
         if (downlinkDone) {
@@ -906,8 +1142,10 @@ class LwipTcpConnection(
         activityTimer = null
         val relay = directRelay
         val connection = vlessConnection
+        val inner = mitmInner
         directRelay = null
         vlessConnection = null
+        mitmInner = null
         vlessConnecting = false
         directConnecting = false
         pendingData.reset()
@@ -918,10 +1156,21 @@ class LwipTcpConnection(
 
         relay?.cancel()
         connection?.cancel()
+        // Closes the inner queue so a session blocked in receive() unblocks; the
+        // scopeJob.cancel() above already cancels an in-flight intercept coroutine.
+        inner?.forceCancel()
     }
 
     companion object {
         private val logger = MythaiaLogger("LWIP-TCP")
+
+        /**
+         * Bound on the MITM uplink queue ([MitmInnerTransport]). The live queue
+         * depth is held far below this by the ack-on-consume backpressure in
+         * [MitmInnerTransport.receive] (lwIP's own receive window is the real
+         * limit); the bound is only a backstop, so it is set generously.
+         */
+        private const val MITM_INNER_QUEUE_CAPACITY = 1024
     }
 }
 
