@@ -15,9 +15,16 @@ class Http2StreamFlowControl(initialSendWindow: Int = Http2FlowControl.DEFAULT_I
     private var windowAwaiter: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     fun consumeSend(bytes: Int): Boolean {
-        if (sendWindow < bytes) return false
-        sendWindow -= bytes
-        return true
+        // Under windowLock: the send window is credited under it by
+        // applyWindowUpdate/adjustSendWindow, and the MITM h2 server drives one
+        // stream's body on its own coroutine concurrently with the read loop that
+        // applies those credits, so an unsynchronized decrement here could
+        // over-send past the peer's window or lose a credit.
+        synchronized(windowLock) {
+            if (sendWindow < bytes) return false
+            sendWindow -= bytes
+            return true
+        }
     }
 
     fun applyWindowUpdate(increment: Int) {

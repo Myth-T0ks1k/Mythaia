@@ -6,6 +6,13 @@ import java.io.ByteArrayOutputStream
  * Minimal HPACK encoder/decoder (RFC 7541) for the CONNECT tunnel: integer enc/dec (§5.1),
  * raw + Huffman string decoding, indexed header fields, literal without indexing,
  * literal with incremental indexing (decode only), and static table lookup.
+ *
+ * The encoders here (the CONNECT request and [encodeHeaderBlock]) emit **only**
+ * Literal Header Field without Indexing (§6.2.2). Nothing is ever inserted into an
+ * encoder-side dynamic table, so the encoder is stateless and its (empty) dynamic
+ * table can never drift out of step with the peer's decoder — the invariant the
+ * MITM h2 server leg relies on so that a header encoded on stream 7 can't corrupt
+ * the decode of every later header on the same connection.
  */
 object HpackEncoder {
 
@@ -22,6 +29,36 @@ object HpackEncoder {
                 encodeLiteralWithoutIndexing(nameIndex = nameIdx, value = value, into = block)
             } else {
                 encodeLiteralWithoutIndexing(name = name, value = value, into = block)
+            }
+        }
+        return block.toByteArray()
+    }
+
+    /**
+     * Encodes an ordered list of header fields (pseudo-headers included) into one
+     * HPACK header block — the outbound path the MITM h2 server leg uses to encode
+     * a response's `:status` plus its headers.
+     *
+     * Every field is a Literal Header Field without Indexing (§6.2.2): the name is
+     * referenced by static-table index when it is present there (a name reference,
+     * with the value carried literally) and written as a literal string otherwise.
+     * Because no field is added to a dynamic table, the block is self-contained and
+     * independent of any earlier block — see the object note.
+     *
+     * Field names are lowercased. RFC 7540 §8.1.2 requires HTTP/2 field names to be
+     * lowercase, and a peer MUST treat a message with an uppercase name as
+     * malformed; the caller's [com.mythaia.vpn.mitm.HttpMessage] keeps names in
+     * their original (possibly mixed) case, so the fold happens here at the wire.
+     */
+    fun encodeHeaderBlock(headers: List<Pair<String, String>>): ByteArray {
+        val block = ByteArrayOutputStream()
+        for ((name, value) in headers) {
+            val lower = name.lowercase()
+            val nameIdx = staticTableNameIndex(lower)
+            if (nameIdx != null) {
+                encodeLiteralWithoutIndexing(nameIndex = nameIdx, value = value, into = block)
+            } else {
+                encodeLiteralWithoutIndexing(name = lower, value = value, into = block)
             }
         }
         return block.toByteArray()

@@ -147,6 +147,47 @@ class MitmSessionTest {
         assertTrue("the upstream leg is closed after the exchange", upstream.closed)
     }
 
+    // MARK: - ALPN dispatch (asserted through the bridge seams, no live handshake)
+
+    @Test
+    fun `a negotiated ALPN of h2 routes to the h2 bridge and pre-dials no upstream`() = runBlocking {
+        val client = FakeByteLeg(ByteArray(0), negotiatedAlpn = "h2")
+        var ranH1 = false
+        var ranH2 = false
+        var dialCalled = false
+        MitmSession.bridgeTerminatedClient(
+            clientLeg = client,
+            host = "example.com",
+            port = 443,
+            ruleSet = ruleSet(),
+            dialUpstream = { _, _, _ -> dialCalled = true; FakeByteLeg(ByteArray(0)) },
+            runH2Bridge = { _ -> ranH2 = true },
+            runH1Bridge = { _, _ -> ranH1 = true }
+        )
+        assertTrue("h2 dispatches to the h2 bridge", ranH2)
+        assertFalse("the h1 bridge must not run for an h2 client", ranH1)
+        // The h2 bridge dials one leg per stream internally, so the session opens none.
+        assertFalse("h2 dispatch must not pre-dial a single upstream leg", dialCalled)
+    }
+
+    @Test
+    fun `a negotiated ALPN of http1_1 routes to the h1 bridge`() = runBlocking {
+        val client = FakeByteLeg(ByteArray(0), negotiatedAlpn = "http/1.1")
+        var ranH1 = false
+        var ranH2 = false
+        MitmSession.bridgeTerminatedClient(
+            clientLeg = client,
+            host = "example.com",
+            port = 443,
+            ruleSet = ruleSet(),
+            dialUpstream = { _, _, _ -> FakeByteLeg(ByteArray(0)) },
+            runH2Bridge = { _ -> ranH2 = true },
+            runH1Bridge = { _, _ -> ranH1 = true }
+        )
+        assertTrue("http/1.1 dispatches to the h1 bridge", ranH1)
+        assertFalse("the h2 bridge must not run for an http/1.1 client", ranH2)
+    }
+
     // MARK: - Rule sets and wire helpers
 
     private fun ruleSet(): MitmRuleSet =

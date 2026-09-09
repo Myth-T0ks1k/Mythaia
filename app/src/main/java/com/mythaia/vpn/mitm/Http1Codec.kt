@@ -566,7 +566,17 @@ class Http1Codec(
             if (!appendHeaderIfSafe(out, header)) continue
         }
         if (cookies.isNotEmpty()) {
-            appendHeader(out, "Cookie", cookies.joinToString("; "))
+            // The coalesced value is written directly, bypassing appendHeaderIfSafe
+            // (whose no-space rule would reject a legitimate "a=1; b=2"). A Cookie
+            // value legitimately carries spaces but never a CR/LF/NUL — those are the
+            // request-splitting octets — so screen for exactly those. Defense in depth
+            // behind the h2 termination, which already rejects such values upstream.
+            val cookie = cookies.joinToString("; ")
+            if (cookie.none { it == '\r' || it == '\n' || it.code == 0 }) {
+                appendHeader(out, "Cookie", cookie)
+            } else {
+                logger.warning("dropping a Cookie header carrying a control character")
+            }
         }
         // A request with a body carries a fresh Content-Length; a body-less request
         // carries none (a GET with Content-Length: 0 is odd and some servers balk).

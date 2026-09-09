@@ -13,44 +13,35 @@ private val logger = MythaiaLogger("MitmSession")
  * When the tunnel has sniffed a hostname the user chose to intercept, it hands
  * the still-unanswered client connection here. [intercept] then plays the role
  * the real origin would: it **terminates** the client's TLS with a leaf minted
- * for the host ([TlsServer] over [MitmLeafCertificates]), **dials** the real
- * origin through the injected [intercept]'s `dialUpstream`, and runs the
- * plaintext HTTP/1.1 exchange between the two through [MitmHttp1Bridge] so the
- * configured [MitmRuleSet] can read and edit it.
+ * for the host ([TlsServer] over [MitmLeafCertificates]), then runs the decrypted
+ * exchange through the bridge for the negotiated protocol — [MitmHttp1Bridge] or
+ * [MitmHttp2Bridge] — **dialing** the real origin (always over HTTP/1.1) through
+ * the injected `dialUpstream` so the configured [MitmRuleSet] can read and edit it.
  *
  * # The HTTP/2 decision
  *
- * [MitmHttp1Bridge] speaks HTTP/1.1 only — HTTP/2 interception is a later
- * effort. [TlsServer] would, left to its defaults, offer `{h2, http/1.1}` in
- * ALPN, and a modern client would pick `h2`; the bridge would then see an `h2`
- * leg and splice the connection through raw, so no rule would ever fire. Worse,
- * once TLS is terminated there is nothing left to splice back to the origin with
- * — the client is already talking to us, not to them.
+ * Both protocols are now carried. [TlsServer] is offered `{h2, http/1.1}` in
+ * ALPN, and after termination the bridge is chosen by what the client settled on:
  *
- * So this takes option (a) from the design note: **do not offer h2**. The
- * server is constructed with `supportedAlpns = listOf("http/1.1")`, which means
+ *  - `h2` → [MitmHttp2Bridge], which terminates the client's h2 connection and,
+ *    per request stream, dials the origin over HTTP/1.1 and runs the same rules;
+ *  - `http/1.1` (or no ALPN at all) → the unchanged [MitmHttp1Bridge] over a single
+ *    upstream leg dialed for the one protocol the client chose ([upstreamAlpns]).
  *
- *  - a client that can speak HTTP/1.1 negotiates it, and the bridge handles the
- *    whole connection; the upstream leg is then dialed asking for the same
- *    single protocol ([upstreamAlpns]);
- *  - a client that offers ALPN but *only* `h2` overlaps nothing, so [TlsServer]
- *    sends a `no_application_protocol` fatal alert and the handshake fails —
- *    interception is cleanly abandoned (the connection is torn down, not
- *    silently broken), which is the honest outcome for a host we cannot yet
- *    intercept over h2. This is rare: virtually every `h2` client also offers
- *    `http/1.1`.
- *
- * A raw splice is deliberately *not* attempted as a fallback, because it is
- * impossible after the TLS has been terminated — the correct move is to never
- * offer a protocol we cannot carry, which is exactly what restricting the ALPN
- * does.
+ * The origin is spoken to in HTTP/1.1 in **both** cases — `dialUpstream` returns an
+ * h1 leg — so the h2 path is an h2⇄h1 translation, not an h2 splice (which is
+ * impossible once TLS is terminated: the client is talking to us, not to them).
+ * Offering both protocols means a modern `h2`-preferring client is intercepted
+ * rather than having its handshake abandoned, which is why the earlier
+ * http/1.1-only restriction is gone.
  *
  * # Teardown
  *
  * Every exit closes the client side. A handshake failure ([TlsServer] has
- * already written the fatal alert) force-cancels the client transport; a dial
- * failure closes the terminated client leg; a completed exchange is closed by
- * the bridge itself ([MitmHttp1Bridge.run] closes both legs). [intercept] never
+ * already written the fatal alert) force-cancels the client transport; an h1 dial
+ * failure closes the terminated client leg; a completed exchange is closed by the
+ * bridge itself ([MitmHttp1Bridge.run] closes both legs; [MitmHttp2Bridge.run]
+ * closes the client leg and each stream's own upstream leg). [intercept] never
  * throws for an ordinary failure — it owns the connection once called and tears
  * it down — so the caller can launch it and forget it.
  *
@@ -63,8 +54,9 @@ private val logger = MythaiaLogger("MitmSession")
  */
 object MitmSession {
 
-    /** The only application protocol an intercepted connection speaks for now. */
+    /** The application protocols an intercepted connection can speak; both are carried. */
     const val HTTP_1_1 = "http/1.1"
+    const val H2 = "h2"
 
     /**
      * Terminates, dials, and bridges one intercepted connection, then tears it
@@ -93,12 +85,12 @@ object MitmSession {
         authority: MitmCertificateAuthority,
         dialUpstream: suspend (host: String, port: Int, alpn: List<String>) -> MitmByteLeg
     ) {
-        // Terminate the client TLS, offering http/1.1 only so the bridge always
-        // sees a protocol it can carry (see the class note on the h2 decision).
+        // Terminate the client TLS, offering both protocols; the negotiated ALPN
+        // then picks the bridge (see the class note on the h2 decision).
         val server = TlsServer(
             transport = clientTransport,
             leafCertificates = MitmLeafCertificates(authority),
-            supportedAlpns = listOf(HTTP_1_1)
+            supportedAlpns = listOf(H2, HTTP_1_1)
         )
 
         val terminated = try {
@@ -120,21 +112,42 @@ object MitmSession {
     }
 
     /**
-     * Dials the upstream for an already-terminated [clientLeg] and runs the
-     * HTTP/1.1 bridge between them, closing [clientLeg] if the dial fails.
+     * Dispatches an already-terminated [clientLeg] to the bridge for the protocol
+     * it negotiated, then runs it: `h2` → [MitmHttp2Bridge] (which dials one h1
+     * origin leg per stream itself), anything else → the single-leg
+     * [MitmHttp1Bridge] over an upstream dialed here first.
      *
-     * Split out from [intercept] so the dial-and-bridge half can be driven in a
+     * Split out from [intercept] so the dispatch-and-bridge half can be driven in a
      * unit test with an in-memory client leg — standing up a real [TlsServer]
-     * handshake needs the native crypto library, which the off-device suite
-     * cannot load (see `TlsServerHandshakeTest`).
+     * handshake needs the native crypto library, which the off-device suite cannot
+     * load (see `TlsServerHandshakeTest`). The two `run*Bridge` seams default to the
+     * real bridges and are overridden by the dispatch test with recording fakes, so
+     * the ALPN routing is asserted without a live handshake.
      */
     internal suspend fun bridgeTerminatedClient(
         clientLeg: MitmByteLeg,
         host: String,
         port: Int,
         ruleSet: MitmRuleSet,
-        dialUpstream: suspend (host: String, port: Int, alpn: List<String>) -> MitmByteLeg
+        dialUpstream: suspend (host: String, port: Int, alpn: List<String>) -> MitmByteLeg,
+        runH2Bridge: suspend (client: MitmByteLeg) -> Unit =
+            { c -> MitmHttp2Bridge.forTls(c, host, port, ruleSet, dialUpstream).run() },
+        runH1Bridge: suspend (client: MitmByteLeg, upstream: MitmByteLeg) -> Unit =
+            { c, u -> MitmHttp1Bridge.forTls(c, u, ruleSet).run() }
     ) {
+        // h2: the bridge owns the whole connection and dials per stream, so no
+        // single upstream leg is opened here. Its run() closes the client leg.
+        if (clientLeg.negotiatedAlpn == H2) {
+            logger.info("[MITM] $host:$port: intercepting over h2 with rule set '${ruleSet.name}'")
+            try {
+                runH2Bridge(clientLeg)
+            } catch (e: Exception) {
+                logger.warning("[MITM] $host:$port: intercepted h2 exchange ended on an error (${e.message})")
+            }
+            return
+        }
+
+        // http/1.1 (or no ALPN): dial one upstream leg for the whole connection.
         val alpn = upstreamAlpns(clientLeg.negotiatedAlpn)
         val upstreamLeg = try {
             dialUpstream(host, port, alpn)
@@ -153,21 +166,22 @@ object MitmSession {
         // to keep the throw from propagating.
         logger.info("[MITM] $host:$port: intercepting over ${alpn.joinToString(",")} with rule set '${ruleSet.name}'")
         try {
-            MitmHttp1Bridge.forTls(clientLeg, upstreamLeg, ruleSet).run()
+            runH1Bridge(clientLeg, upstreamLeg)
         } catch (e: Exception) {
             logger.warning("[MITM] $host:$port: intercepted exchange ended on an error (${e.message})")
         }
     }
 
     /**
-     * The ALPN protocols to offer the origin, given what the intercepted client
-     * settled on.
+     * The ALPN protocols to offer the origin on the **HTTP/1.1** path, given what
+     * the intercepted client settled on.
      *
-     * Because the client leg only ever negotiates `http/1.1` (we offer nothing
-     * else), this resolves to `["http/1.1"]`. It is written defensively all the
-     * same: a null or empty negotiated value (client sent no ALPN) and, should
-     * the server ever be widened, an `h2` value both fall back to `http/1.1`,
-     * because that is the only protocol the bridge can carry on the upstream leg.
+     * The h2 case is dispatched away before this is consulted ([MitmHttp2Bridge]
+     * dials its own per-stream h1 legs), so this is reached only for a client that
+     * negotiated `http/1.1` or offered no ALPN — both resolve to `["http/1.1"]`,
+     * the only protocol the h1 bridge can carry on its single upstream leg. The
+     * `h2` fallback is kept defensively (a mis-dispatch would still dial h1, never
+     * an h2 origin the h1 bridge cannot frame).
      */
     internal fun upstreamAlpns(negotiatedInnerAlpn: String?): List<String> {
         val usable = negotiatedInnerAlpn?.takeIf { it.isNotEmpty() && it != "h2" } ?: HTTP_1_1
