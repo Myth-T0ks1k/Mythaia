@@ -190,6 +190,27 @@
     <string name="geoip_footer">Правила по странам требуют базы MaxMind .mmdb. В приложение она не входит — скачайте GeoLite2-Country у MaxMind и импортируйте здесь. Без неё правила по странам просто не срабатывают.</string>
     <string name="geoip_import_failed">Это не база MaxMind.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">Перехват HTTPS</string>
+    <string name="mitm_ca_section">Центр сертификации</string>
+    <string name="mitm_root_certificate">Корневой сертификат</string>
+    <string name="mitm_ca_installed">Создан</string>
+    <string name="mitm_ca_none">Не создан</string>
+    <string name="mitm_generate_ca">Создать корневой сертификат</string>
+    <string name="mitm_export_certificate">Экспорт сертификата</string>
+    <string name="mitm_install_certificate">Установить сертификат</string>
+    <string name="mitm_ca_generated">Корневой сертификат создан.</string>
+    <string name="mitm_ca_generate_failed">Не удалось создать корневой сертификат.</string>
+    <string name="mitm_export_failed">Не удалось экспортировать сертификат.</string>
+    <string name="mitm_ca_footer">Начиная с Android 7, сертификат, установленный вами вручную, доверяют только приложения, которые сами это разрешают, поэтому перехват охватывает в основном приложения, доверяющие пользовательским центрам сертификации. Это ограничение устройства и операционной системы, а не ошибка приложения.</string>
+    <string name="mitm_rule_sets_section">Наборы правил</string>
+    <string name="mitm_import_rules">Импорт .amrs</string>
+    <string name="mitm_import_failed">Это не корректный набор правил.</string>
+    <string name="mitm_no_rule_sets">Наборы правил не импортированы</string>
+    <string name="mitm_rule_set_default_name">Импортированные правила</string>
+    <string name="mitm_delete_rule_set_title">Удалить набор правил?</string>
+    <string name="mitm_delete_rule_set_message">Удалить «%1$s»? Это действие необратимо.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">Выбирать самый быстрый</string>
     <string name="auto_select_now">Выбрать быстрый</string>

@@ -28,6 +28,7 @@ import com.mythaia.data.network.SubscriptionUpdater
 import com.mythaia.data.repository.CertificateRepository
 import com.mythaia.data.repository.ChainRepository
 import com.mythaia.data.repository.ConfigRepository
+import com.mythaia.data.repository.MitmRepository
 import com.mythaia.data.repository.RuleSetRepository
 import com.mythaia.data.repository.SubscriptionRepository
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
@@ -62,6 +63,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val ruleSetRepository = RuleSetRepository(application)
     val certificateRepository = CertificateRepository(application)
     val chainRepository = ChainRepository(application)
+    val mitmRepository = MitmRepository(application)
 
     private val prefs: SharedPreferences =
         application.getSharedPreferences("mythaia_settings", Context.MODE_PRIVATE)
@@ -259,6 +261,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         CertificatePolicy.reload(application)
         FragmentPolicy.reload(application)
         EncryptedDnsPolicy.reload(application)
+        // Reconcile the process-wide MITM store to what is on disk so the
+        // interception hook sees any persisted CA and rule sets from the moment
+        // the UI process starts. Idempotent and cheap when nothing is stored.
+        viewModelScope.launch { mitmRepository.loadInto() }
         // Periodic work survives process death on its own; this only covers
         // a first run, or a reinstall that kept the preferences.
         SubscriptionRefreshScheduler.ensureScheduled(application)

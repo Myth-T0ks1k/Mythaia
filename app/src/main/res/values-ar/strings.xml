@@ -190,6 +190,27 @@
     <string name="geoip_footer">تحتاج قواعد البلدان إلى قاعدة بيانات MaxMind بصيغة mmdb. لا تأتي مع التطبيق — نزّل GeoLite2-Country من MaxMind واستوردها هنا. وبدونها لا تتطابق قواعد البلدان أصلًا.</string>
     <string name="geoip_import_failed">هذا الملف ليس قاعدة بيانات MaxMind.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">اعتراض HTTPS</string>
+    <string name="mitm_ca_section">مرجع التصديق</string>
+    <string name="mitm_root_certificate">الشهادة الجذرية</string>
+    <string name="mitm_ca_installed">أُنشئت</string>
+    <string name="mitm_ca_none">لم تُنشأ</string>
+    <string name="mitm_generate_ca">إنشاء شهادة جذرية</string>
+    <string name="mitm_export_certificate">تصدير الشهادة</string>
+    <string name="mitm_install_certificate">تثبيت الشهادة</string>
+    <string name="mitm_ca_generated">تم إنشاء الشهادة الجذرية.</string>
+    <string name="mitm_ca_generate_failed">تعذّر إنشاء الشهادة الجذرية.</string>
+    <string name="mitm_export_failed">تعذّر تصدير الشهادة.</string>
+    <string name="mitm_ca_footer">منذ Android 7، لا تثق بالشهادة التي تثبّتها بنفسك إلا التطبيقات التي تختار الوثوق بشهادات المستخدم، لذا يشمل الاعتراض في الغالب التطبيقات التي تثق بمراجع تصديق المستخدم. هذا قيد من الجهاز ونظام التشغيل، وليس خللًا في التطبيق.</string>
+    <string name="mitm_rule_sets_section">مجموعات القواعد</string>
+    <string name="mitm_import_rules">استيراد amrs.</string>
+    <string name="mitm_import_failed">هذا الملف ليس مجموعة قواعد صالحة.</string>
+    <string name="mitm_no_rule_sets">لم تُستورد مجموعات قواعد</string>
+    <string name="mitm_rule_set_default_name">قواعد مستوردة</string>
+    <string name="mitm_delete_rule_set_title">حذف مجموعة القواعد؟</string>
+    <string name="mitm_delete_rule_set_message">إزالة «%1$s»؟ لا يمكن التراجع عن هذا.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">اختيار الأسرع تلقائيًا</string>
     <string name="auto_select_now">اختيار الأسرع</string>

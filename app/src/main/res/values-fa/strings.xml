@@ -190,6 +190,27 @@
     <string name="geoip_footer">قاعده‌های کشوری به پایگاه دادهٔ MaxMind با پسوند mmdb نیاز دارند. همراه برنامه نمی‌آید — GeoLite2-Country را از MaxMind بگیرید و اینجا وارد کنید. بدون آن، قاعده‌های کشوری اصلاً مطابقت نمی‌کنند.</string>
     <string name="geoip_import_failed">این پرونده پایگاه دادهٔ MaxMind نیست.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">رهگیری HTTPS</string>
+    <string name="mitm_ca_section">مرجع صدور گواهی</string>
+    <string name="mitm_root_certificate">گواهینامهٔ ریشه</string>
+    <string name="mitm_ca_installed">ساخته‌شده</string>
+    <string name="mitm_ca_none">ساخته نشده</string>
+    <string name="mitm_generate_ca">ساخت گواهینامهٔ ریشه</string>
+    <string name="mitm_export_certificate">برون‌بری گواهینامه</string>
+    <string name="mitm_install_certificate">نصب گواهینامه</string>
+    <string name="mitm_ca_generated">گواهینامهٔ ریشه ساخته شد.</string>
+    <string name="mitm_ca_generate_failed">ساخت گواهینامهٔ ریشه ناموفق بود.</string>
+    <string name="mitm_export_failed">برون‌بری گواهینامه ناموفق بود.</string>
+    <string name="mitm_ca_footer">از Android 7 به بعد، گواهینامه‌ای که خودتان نصب می‌کنید تنها برنامه‌هایی به آن اعتماد می‌کنند که پذیرفته باشند به گواهینامه‌های کاربر اعتماد کنند؛ از این رو رهگیری بیشتر شامل برنامه‌هایی می‌شود که به مراجع صدور گواهی کاربر اعتماد دارند. این محدودیت دستگاه و سیستم‌عامل است، نه ایراد برنامه.</string>
+    <string name="mitm_rule_sets_section">مجموعه‌قواعد</string>
+    <string name="mitm_import_rules">وارد کردن amrs.</string>
+    <string name="mitm_import_failed">این پرونده یک مجموعه‌قاعدهٔ معتبر نیست.</string>
+    <string name="mitm_no_rule_sets">هیچ مجموعه‌قاعده‌ای وارد نشده است</string>
+    <string name="mitm_rule_set_default_name">قواعد واردشده</string>
+    <string name="mitm_delete_rule_set_title">مجموعه‌قاعده حذف شود؟</string>
+    <string name="mitm_delete_rule_set_message">«%1$s» حذف شود؟ این کار برگشت‌ناپذیر است.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">گزینش خودکار سریع‌ترین</string>
     <string name="auto_select_now">گزینش سریع‌ترین</string>

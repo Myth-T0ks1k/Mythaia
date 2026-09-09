@@ -255,6 +255,28 @@
     <string name="geoip_footer">Country rules need a MaxMind .mmdb database. None is bundled — download GeoLite2-Country from MaxMind and import it here. Without one, country rules simply do not match.</string>
     <string name="geoip_import_failed">That file is not a MaxMind database.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">HTTPS Interception</string>
+    <string name="mitm_ca_section">Certificate authority</string>
+    <string name="mitm_root_certificate">Root certificate</string>
+    <string name="mitm_ca_installed">Generated</string>
+    <string name="mitm_ca_none">Not generated</string>
+    <string name="mitm_generate_ca">Generate root certificate</string>
+    <string name="mitm_export_certificate">Export certificate</string>
+    <string name="mitm_install_certificate">Install certificate</string>
+    <string name="mitm_ca_generated">Root certificate generated.</string>
+    <string name="mitm_ca_generate_failed">Could not generate the root certificate.</string>
+    <string name="mitm_export_failed">Could not export the certificate.</string>
+    <string name="mitm_export_filename" translatable="false">mythaia-root.pem</string>
+    <string name="mitm_ca_footer">Since Android 7, a certificate you install yourself is trusted only by apps that opt in to user certificates, so interception mostly covers apps that trust user CAs. This is a limit of the device and operating system, not a fault in the app.</string>
+    <string name="mitm_rule_sets_section">Rule sets</string>
+    <string name="mitm_import_rules">Import .amrs</string>
+    <string name="mitm_import_failed">That file is not a valid rule set.</string>
+    <string name="mitm_no_rule_sets">No rule sets imported</string>
+    <string name="mitm_rule_set_default_name">Imported rules</string>
+    <string name="mitm_delete_rule_set_title">Delete rule set?</string>
+    <string name="mitm_delete_rule_set_message">Remove “%1$s”? This cannot be undone.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">Auto-select fastest</string>
     <string name="auto_select_now">Auto-select</string>

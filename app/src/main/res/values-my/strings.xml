@@ -190,6 +190,27 @@
     <string name="geoip_footer">နိုင်ငံအလိုက် စည်းမျဉ်းများအတွက် MaxMind .mmdb ဒေတာဘေ့စ် လိုအပ်ပါသည်။ အက်ပ်တွင် ပါဝင်ခြင်းမရှိပါ — MaxMind မှ GeoLite2-Country ကို ဒေါင်းလုဒ်ဆွဲပြီး ဤနေရာတွင် တင်သွင်းပါ။ ၎င်းမပါဘဲ နိုင်ငံအလိုက် စည်းမျဉ်းများ လုံးဝ ကိုက်ညီမည်မဟုတ်ပါ။</string>
     <string name="geoip_import_failed">ထိုဖိုင်သည် MaxMind ဒေတာဘေ့စ် မဟုတ်ပါ။</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">HTTPS ကြားဖြတ်ခြင်း</string>
+    <string name="mitm_ca_section">လက်မှတ်ထုတ်ပေးရေးအဖွဲ့</string>
+    <string name="mitm_root_certificate">အရင်းခံ လက်မှတ်</string>
+    <string name="mitm_ca_installed">ထုတ်ပြီး</string>
+    <string name="mitm_ca_none">မထုတ်ရသေး</string>
+    <string name="mitm_generate_ca">အရင်းခံ လက်မှတ် ထုတ်ရန်</string>
+    <string name="mitm_export_certificate">လက်မှတ် ထုတ်ယူရန်</string>
+    <string name="mitm_install_certificate">လက်မှတ် တပ်ဆင်ရန်</string>
+    <string name="mitm_ca_generated">အရင်းခံ လက်မှတ် ထုတ်ပြီးပါပြီ။</string>
+    <string name="mitm_ca_generate_failed">အရင်းခံ လက်မှတ် မထုတ်နိုင်ပါ။</string>
+    <string name="mitm_export_failed">လက်မှတ် ထုတ်ယူ၍ မရပါ။</string>
+    <string name="mitm_ca_footer">Android 7 ကတည်းက သင်ကိုယ်တိုင် တပ်ဆင်သော လက်မှတ်ကို အသုံးပြုသူ လက်မှတ်များကို ယုံကြည်ရန် ရွေးချယ်သည့် အက်ပ်များကသာ ယုံကြည်ကြသဖြင့် ကြားဖြတ်ခြင်းသည် အသုံးပြုသူ CA များကို ယုံကြည်သည့် အက်ပ်များကို အများအားဖြင့် လွှမ်းခြုံပါသည်။ ၎င်းသည် စက်နှင့် လည်ပတ်မှုစနစ်၏ ကန့်သတ်ချက်ဖြစ်ပြီး အက်ပ်၏ ချွတ်ယွင်းချက် မဟုတ်ပါ။</string>
+    <string name="mitm_rule_sets_section">စည်းမျဉ်းအစုများ</string>
+    <string name="mitm_import_rules">.amrs တင်သွင်းရန်</string>
+    <string name="mitm_import_failed">ထိုဖိုင်သည် မှန်ကန်သော စည်းမျဉ်းအစု မဟုတ်ပါ။</string>
+    <string name="mitm_no_rule_sets">စည်းမျဉ်းအစု မတင်သွင်းရသေး</string>
+    <string name="mitm_rule_set_default_name">တင်သွင်းထားသော စည်းမျဉ်းများ</string>
+    <string name="mitm_delete_rule_set_title">စည်းမျဉ်းအစု ဖျက်မလား။</string>
+    <string name="mitm_delete_rule_set_message">“%1$s” ကို ဖယ်ရှားမလား။ ၎င်းကို ပြန်ပြင်၍ မရပါ။</string>
+
     <!-- Auto-select -->
     <string name="auto_select">အမြန်ဆုံးကို အလိုအလျောက်ရွေး</string>
     <string name="auto_select_now">အမြန်ဆုံးရွေးရန်</string>

@@ -190,6 +190,27 @@
     <string name="geoip_footer">Las reglas por país necesitan una base MaxMind .mmdb. No se incluye ninguna: descarga GeoLite2-Country de MaxMind e impórtala aquí. Sin ella, las reglas por país simplemente no coinciden.</string>
     <string name="geoip_import_failed">Ese archivo no es una base de datos MaxMind.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">Interceptación HTTPS</string>
+    <string name="mitm_ca_section">Autoridad de certificación</string>
+    <string name="mitm_root_certificate">Certificado raíz</string>
+    <string name="mitm_ca_installed">Generado</string>
+    <string name="mitm_ca_none">No generado</string>
+    <string name="mitm_generate_ca">Generar certificado raíz</string>
+    <string name="mitm_export_certificate">Exportar certificado</string>
+    <string name="mitm_install_certificate">Instalar certificado</string>
+    <string name="mitm_ca_generated">Certificado raíz generado.</string>
+    <string name="mitm_ca_generate_failed">No se pudo generar el certificado raíz.</string>
+    <string name="mitm_export_failed">No se pudo exportar el certificado.</string>
+    <string name="mitm_ca_footer">Desde Android 7, un certificado que instalas tú mismo solo es de confianza para las apps que optan por confiar en certificados de usuario, así que la interceptación cubre sobre todo las apps que confían en las CA de usuario. Es una limitación del dispositivo y del sistema operativo, no un fallo de la app.</string>
+    <string name="mitm_rule_sets_section">Conjuntos de reglas</string>
+    <string name="mitm_import_rules">Importar .amrs</string>
+    <string name="mitm_import_failed">Ese archivo no es un conjunto de reglas válido.</string>
+    <string name="mitm_no_rule_sets">No hay conjuntos de reglas importados</string>
+    <string name="mitm_rule_set_default_name">Reglas importadas</string>
+    <string name="mitm_delete_rule_set_title">¿Eliminar conjunto de reglas?</string>
+    <string name="mitm_delete_rule_set_message">¿Quitar «%1$s»? Esto no se puede deshacer.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">Elegir el más rápido</string>
     <string name="auto_select_now">Elegir el más rápido</string>

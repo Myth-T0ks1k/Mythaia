@@ -190,6 +190,27 @@
     <string name="geoip_footer">按国家/地区的规则需要 MaxMind .mmdb 数据库。应用不附带——请从 MaxMind 下载 GeoLite2-Country 并在此导入。没有它，这类规则不会匹配。</string>
     <string name="geoip_import_failed">该文件不是 MaxMind 数据库。</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">HTTPS 拦截</string>
+    <string name="mitm_ca_section">证书颁发机构</string>
+    <string name="mitm_root_certificate">根证书</string>
+    <string name="mitm_ca_installed">已生成</string>
+    <string name="mitm_ca_none">未生成</string>
+    <string name="mitm_generate_ca">生成根证书</string>
+    <string name="mitm_export_certificate">导出证书</string>
+    <string name="mitm_install_certificate">安装证书</string>
+    <string name="mitm_ca_generated">已生成根证书。</string>
+    <string name="mitm_ca_generate_failed">无法生成根证书。</string>
+    <string name="mitm_export_failed">无法导出证书。</string>
+    <string name="mitm_ca_footer">自 Android 7 起，你自行安装的证书只有选择信任用户证书的应用才会信任，因此拦截主要覆盖信任用户 CA 的应用。这是设备和操作系统的限制，并非应用的缺陷。</string>
+    <string name="mitm_rule_sets_section">规则集</string>
+    <string name="mitm_import_rules">导入 .amrs</string>
+    <string name="mitm_import_failed">该文件不是有效的规则集。</string>
+    <string name="mitm_no_rule_sets">未导入规则集</string>
+    <string name="mitm_rule_set_default_name">导入的规则</string>
+    <string name="mitm_delete_rule_set_title">删除规则集？</string>
+    <string name="mitm_delete_rule_set_message">移除“%1$s”？此操作无法撤销。</string>
+
     <!-- Auto-select -->
     <string name="auto_select">自动选择最快</string>
     <string name="auto_select_now">选择最快</string>

@@ -98,6 +98,21 @@ class MitmRuleStore {
     fun authority(): MitmCertificateAuthority? = synchronized(lock) { authority }
 
     /**
+     * Drops the CA (and its leaf cache), leaving the rule sets in place.
+     *
+     * Removing the CA disarms interception on its own — the tunnel hook requires
+     * a CA as well as a matching rule set — so this is what "clear the root
+     * certificate" does at runtime: a live tunnel stops intercepting at the next
+     * connection without also forgetting the imported rule sets.
+     */
+    fun clearAuthority() {
+        synchronized(lock) {
+            authority = null
+            leafCache = null
+        }
+    }
+
+    /**
      * The shared leaf cache over the installed CA, built on first use and reused
      * afterwards so a repeat host reuses its leaf.
      *

@@ -190,6 +190,27 @@
     <string name="geoip_footer">Ýurt düzgünleri üçin MaxMind mmdb binýady gerek. Programma bilen gelmeýär — GeoLite2-Country-ni MaxMind-dan ýükläp, şu ýerde import ediň. Onsuz ýurt düzgünleri asla gabat gelmeýär.</string>
     <string name="geoip_import_failed">Bu faýl MaxMind binýady däl.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">HTTPS aralyk tutmak</string>
+    <string name="mitm_ca_section">Şahadatnama merkezi</string>
+    <string name="mitm_root_certificate">Kök şahadatnama</string>
+    <string name="mitm_ca_installed">Döredildi</string>
+    <string name="mitm_ca_none">Döredilmedik</string>
+    <string name="mitm_generate_ca">Kök şahadatnama döret</string>
+    <string name="mitm_export_certificate">Şahadatnamany eksport et</string>
+    <string name="mitm_install_certificate">Şahadatnamany gurna</string>
+    <string name="mitm_ca_generated">Kök şahadatnama döredildi.</string>
+    <string name="mitm_ca_generate_failed">Kök şahadatnamany döredip bolmady.</string>
+    <string name="mitm_export_failed">Şahadatnamany eksport edip bolmady.</string>
+    <string name="mitm_ca_footer">Android 7-den bäri özüňiziň gurnan şahadatnamaňyza diňe ulanyjy şahadatnamalaryna ynanmagy saýlan programmalar ynanýar, şonuň üçin aralyk tutmak esasan ulanyjy CA-laryna ynanýan programmalary öz içine alýar. Bu enjamyň we operasion ulgamyň çäklendirmesidir, programmanyň näsazlygy däldir.</string>
+    <string name="mitm_rule_sets_section">Düzgün toplumlary</string>
+    <string name="mitm_import_rules">.amrs import et</string>
+    <string name="mitm_import_failed">Bu faýl dogry düzgün toplumy däl.</string>
+    <string name="mitm_no_rule_sets">Düzgün toplumy import edilmedik</string>
+    <string name="mitm_rule_set_default_name">Import edilen düzgünler</string>
+    <string name="mitm_delete_rule_set_title">Düzgün toplumy pozulsynmy?</string>
+    <string name="mitm_delete_rule_set_message">«%1$s» aýrylsynmy? Muny yzyna alyp bolmaýar.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">Iň çalt serweri saýla</string>
     <string name="auto_select_now">Iň çalty saýla</string>

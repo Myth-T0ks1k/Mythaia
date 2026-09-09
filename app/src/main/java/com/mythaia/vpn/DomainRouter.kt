@@ -3,13 +3,16 @@ package com.mythaia.vpn
 import android.content.Context
 import com.mythaia.data.model.DomainRuleType
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.data.repository.MitmRepository
 import com.mythaia.vpn.util.GeoIpDatabase
 import com.mythaia.vpn.util.MythaiaLogger
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
 import java.io.File
 import java.net.InetAddress
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class RouteAction {
     data object Direct : RouteAction()
@@ -76,6 +79,22 @@ class DomainRouter(private val context: Context) {
     }
 
     /**
+     * Primes the process-wide MITM store from disk, once per process, so a
+     * UI-less tunnel start (tile / widget / boot / always-on) still populates
+     * MitmRuleStore. Interception is independent of proxy mode, so this is
+     * called from both the rule-mode routing load and the global-mode path;
+     * the UI keeps the store in sync directly after that. Cheap when nothing is
+     * stored — with no CA and no imported sets, loadInto leaves the store empty
+     * and the tunnel hook inert.
+     */
+    fun primeMitmStore() {
+        if (mitmPrimed.compareAndSet(false, true)) {
+            runCatching { runBlocking { MitmRepository(context).loadInto() } }
+                .onFailure { logger.warning("[DomainRouter] MITM store priming failed: ${it.message ?: it}") }
+        }
+    }
+
+    /**
      * Reads routing descriptor from `filesDir/routing.json`, inserts country-bypass
      * rules first as [RouteAction.Direct], then user rules that overwrite on conflict.
      */
@@ -85,6 +104,8 @@ class DomainRouter(private val context: Context) {
         // Opened here so a database imported since the last load is picked up
         // by the same signal that reloads the rules referring to it.
         GeoIpDatabase.load(context)
+
+        primeMitmStore()
 
         val routingFile = File(context.filesDir, "routing.json")
         if (!routingFile.exists()) {
@@ -389,6 +410,9 @@ class DomainRouter(private val context: Context) {
 
     companion object {
         private val logger = MythaiaLogger("DomainRouter")
+
+        /** Ensures the tunnel-side MITM store priming runs at most once per process. */
+        private val mitmPrimed = AtomicBoolean(false)
     }
 }
 

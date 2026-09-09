@@ -190,6 +190,27 @@
     <string name="geoip_footer">Quy tắc theo quốc gia cần cơ sở dữ liệu MaxMind .mmdb. Ứng dụng không kèm sẵn — tải GeoLite2-Country từ MaxMind rồi nhập tại đây. Không có nó, quy tắc theo quốc gia đơn giản là không khớp.</string>
     <string name="geoip_import_failed">Tệp đó không phải cơ sở dữ liệu MaxMind.</string>
 
+    <!-- HTTPS interception (MITM) -->
+    <string name="mitm_title">Chặn thu HTTPS</string>
+    <string name="mitm_ca_section">Tổ chức phát hành chứng chỉ</string>
+    <string name="mitm_root_certificate">Chứng chỉ gốc</string>
+    <string name="mitm_ca_installed">Đã tạo</string>
+    <string name="mitm_ca_none">Chưa tạo</string>
+    <string name="mitm_generate_ca">Tạo chứng chỉ gốc</string>
+    <string name="mitm_export_certificate">Xuất chứng chỉ</string>
+    <string name="mitm_install_certificate">Cài chứng chỉ</string>
+    <string name="mitm_ca_generated">Đã tạo chứng chỉ gốc.</string>
+    <string name="mitm_ca_generate_failed">Không thể tạo chứng chỉ gốc.</string>
+    <string name="mitm_export_failed">Không thể xuất chứng chỉ.</string>
+    <string name="mitm_ca_footer">Từ Android 7, chứng chỉ do bạn tự cài chỉ được các ứng dụng chọn tin cậy chứng chỉ người dùng tin tưởng, nên việc chặn thu chủ yếu bao trùm các ứng dụng tin cậy CA người dùng. Đây là giới hạn của thiết bị và hệ điều hành, không phải lỗi của ứng dụng.</string>
+    <string name="mitm_rule_sets_section">Bộ quy tắc</string>
+    <string name="mitm_import_rules">Nhập .amrs</string>
+    <string name="mitm_import_failed">Tệp đó không phải bộ quy tắc hợp lệ.</string>
+    <string name="mitm_no_rule_sets">Chưa nhập bộ quy tắc nào</string>
+    <string name="mitm_rule_set_default_name">Quy tắc đã nhập</string>
+    <string name="mitm_delete_rule_set_title">Xóa bộ quy tắc?</string>
+    <string name="mitm_delete_rule_set_message">Gỡ “%1$s”? Không thể hoàn tác.</string>
+
     <!-- Auto-select -->
     <string name="auto_select">Tự chọn nhanh nhất</string>
     <string name="auto_select_now">Chọn nhanh nhất</string>

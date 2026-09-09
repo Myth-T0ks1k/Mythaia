@@ -322,6 +322,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
     private fun loadRoutingConfigurationForMode() {
         if (proxyMode == "global") {
             domainRouter.reset()
+            // Global mode skips the routing load, but MITM interception is gated
+            // independently of proxy mode, so prime the store here too or a
+            // UI-less global-mode start would never pick up a configured CA/rules.
+            domainRouter.primeMitmStore()
         } else {
             domainRouter.loadRoutingConfiguration()
         }

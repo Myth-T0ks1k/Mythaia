@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -76,8 +77,9 @@ fun AdvancedSettingsScreen(
     var showFragment by remember { mutableStateOf(false) }
     var showSplitTunnel by remember { mutableStateOf(false) }
     var showGeoIp by remember { mutableStateOf(false) }
+    var showMitm by remember { mutableStateOf(false) }
 
-    val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment || showSplitTunnel || showGeoIp
+    val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment || showSplitTunnel || showGeoIp || showMitm
     BackHandler(enabled = activeSubScreen) {
         showIpv6Settings = false
         showEncryptedDns = false
@@ -85,6 +87,7 @@ fun AdvancedSettingsScreen(
         showFragment = false
         showSplitTunnel = false
         showGeoIp = false
+        showMitm = false
     }
 
     val currentRoute = when {
@@ -94,6 +97,7 @@ fun AdvancedSettingsScreen(
         showFragment -> "fragment"
         showSplitTunnel -> "split"
         showGeoIp -> "geoip"
+        showMitm -> "mitm"
         else -> "root"
     }
 
@@ -105,6 +109,7 @@ fun AdvancedSettingsScreen(
             "fragment" -> FragmentSettingsScreen(viewModel = viewModel, onBack = { showFragment = false })
             "split" -> SplitTunnelScreen(viewModel = viewModel, onBack = { showSplitTunnel = false })
             "geoip" -> GeoIpSettingsScreen(viewModel = viewModel, onBack = { showGeoIp = false })
+            "mitm" -> MitmSettingsScreen(viewModel = viewModel, onBack = { showMitm = false })
             else -> AdvancedSettingsRoot(
                 viewModel = viewModel,
                 onBack = onBack,
@@ -113,7 +118,8 @@ fun AdvancedSettingsScreen(
                 onOpenLogs = { showLogs = true },
                 onOpenFragment = { showFragment = true },
                 onOpenSplitTunnel = { showSplitTunnel = true },
-                onOpenGeoIp = { showGeoIp = true }
+                onOpenGeoIp = { showGeoIp = true },
+                onOpenMitm = { showMitm = true }
             )
         }
     }
@@ -129,7 +135,8 @@ private fun AdvancedSettingsRoot(
     onOpenLogs: () -> Unit,
     onOpenFragment: () -> Unit,
     onOpenSplitTunnel: () -> Unit,
-    onOpenGeoIp: () -> Unit
+    onOpenGeoIp: () -> Unit,
+    onOpenMitm: () -> Unit
 ) {
     var experimentalEnabled by remember { mutableStateOf(viewModel.experimentalEnabled) }
     var remnawaveHWIDEnabled by remember { mutableStateOf(viewModel.remnawaveHWIDEnabled) }
@@ -226,6 +233,17 @@ private fun AdvancedSettingsRoot(
                     icon = Icons.Filled.Flag,
                     label = stringResource(R.string.geoip_database),
                     onClick = onOpenGeoIp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            WingSectionLabel(stringResource(R.string.security))
+            WingGroupCard {
+                WingNavRow(
+                    icon = Icons.Filled.VerifiedUser,
+                    label = stringResource(R.string.mitm_title),
+                    onClick = onOpenMitm
                 )
             }
 
