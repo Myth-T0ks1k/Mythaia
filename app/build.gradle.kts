@@ -33,20 +33,40 @@ android {
         }
     }
 
+    // Read from local.properties or the environment (CI). A release build with
+    // nothing configured fails here, before the NDK and R8 spend minutes on it.
+    fun releaseProperty(name: String): String? =
+        localProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+            ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+    val keystorePath = releaseProperty("KEYSTORE_FILE")
+    val hasReleaseSigning = keystorePath != null &&
+        releaseProperty("KEYSTORE_PASSWORD") != null &&
+        releaseProperty("KEY_PASSWORD") != null
+
     signingConfigs {
-        create("release") {
-            storeFile = file(localProperties.getProperty("KEYSTORE_FILE", "../keystore.jks"))
-            storePassword = localProperties.getProperty("KEYSTORE_PASSWORD", "")
-            keyAlias = localProperties.getProperty("KEY_ALIAS", "release")
-            keyPassword = localProperties.getProperty("KEY_PASSWORD", "")
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(keystorePath!!)
+                storePassword = releaseProperty("KEYSTORE_PASSWORD")
+                keyAlias = releaseProperty("KEY_ALIAS") ?: "release"
+                keyPassword = releaseProperty("KEY_PASSWORD")
+            }
         }
+    }
+
+    val wantsRelease = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+    if (wantsRelease && !hasReleaseSigning) {
+        error(
+            "Release signing is not configured. Set KEYSTORE_FILE, KEYSTORE_PASSWORD, " +
+                "KEY_ALIAS and KEY_PASSWORD in local.properties or the environment."
+        )
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -3,7 +3,7 @@ package com.mythaia.ui.components
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.mythaia.ui.theme.LocalMythaiaDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -56,7 +56,7 @@ fun SubscriptionUsageCard(
     val now = System.currentTimeMillis()
     val expired = expire != null && expire <= now
 
-    val warningColor = if (isSystemInDarkTheme()) WarningDark else WarningLight
+    val warningColor = if (LocalMythaiaDarkTheme.current) WarningDark else WarningLight
     val accent: Color = when {
         expired -> MaterialTheme.colorScheme.error
         total != null && fraction >= 0.95f -> MaterialTheme.colorScheme.error
@@ -99,7 +99,8 @@ fun SubscriptionUsageCard(
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = accent,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

@@ -1,10 +1,16 @@
 package com.mythaia
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
@@ -34,6 +40,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* The connect proceeds either way; a refusal only hides the notification. */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -41,19 +51,37 @@ class MainActivity : ComponentActivity() {
         viewModel.onRequestVpnPermission = { intent ->
             vpnPermissionLauncher.launch(intent)
         }
+        viewModel.onRequestNotificationPermission = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
 
         handleDeepLinkIntent(intent)
         handleConnectIntent(intent)
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsState()
-            MythaiaTheme(
-                darkTheme = when (themeMode) {
-                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
-                    ThemeMode.LIGHT -> false
-                    ThemeMode.DARK -> true
-                }
-            ) {
+            val darkTheme = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            // The status and navigation bar icons have to match the palette
+            // the app draws, not the device's: pinned to dark on a light
+            // device, the default detection would paint dark icons on the
+            // dark ground and lose them.
+            LaunchedEffect(darkTheme) {
+                val transparent = android.graphics.Color.TRANSPARENT
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(transparent, transparent) { darkTheme },
+                    navigationBarStyle = SystemBarStyle.auto(transparent, transparent) { darkTheme }
+                )
+            }
+            MythaiaTheme(darkTheme = darkTheme) {
                 var onboardingCompleted by remember { mutableStateOf(viewModel.hasCompletedOnboarding) }
 
                 if (!onboardingCompleted) {
@@ -80,6 +108,10 @@ class MainActivity : ComponentActivity() {
     private fun handleDeepLinkIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
+        // Consumed: the view model outlives a recreation, and replaying the
+        // link on every rotation would reopen the Add sheet each time.
+        intent.action = null
+        intent.data = null
         viewModel.onDeepLink(uri)
     }
 
@@ -102,6 +134,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         viewModel.onRequestVpnPermission = null
+        viewModel.onRequestNotificationPermission = null
     }
 
     companion object {

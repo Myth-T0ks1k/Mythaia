@@ -185,7 +185,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">Copy Link</string>
-    <string name="supports_proxy_link">Supports VLESS, Shadowsocks, NaiveProxy, subscription, and Clash links</string>
+    <string name="supports_proxy_link">Supports VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, TUIC, AnyTLS, NaiveProxy and WireGuard links, plus subscription URLs and Clash files</string>
 
     <!-- Formatted strings -->
     <string name="latency_ms">%d ms</string>
@@ -327,4 +327,49 @@
         <item quantity="one">Every hour</item>
         <item quantity="other">Every %1$d hours</item>
     </plurals>
+
+    <!-- Tunnel start failures, shown in the VPN Error dialog -->
+    <string name="tunnel_error_invalid_config">The server configuration could not be read.</string>
+    <string name="tunnel_error_establish">Android refused to create the VPN interface. Check that no other VPN is active and that Mythaia is allowed to run a VPN.</string>
+    <string name="tunnel_error_start">The tunnel could not be started: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">This WireGuard profile has no configuration. Edit it and paste the .conf contents.</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard cannot be the exit of a proxy chain.</string>
+    <string name="tunnel_error_wireguard_invalid">The WireGuard configuration is not usable: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">The WireGuard peer did not answer: %1$s</string>
+
+    <!-- Editor labels, confirmations and permission prompts -->
+    <string name="uuid" translatable="false">UUID</string>
+    <string name="sni" translatable="false">SNI</string>
+    <string name="alpn" translatable="false">ALPN</string>
+    <string name="tls" translatable="false">TLS</string>
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">Extra (JSON)</string>
+    <string name="min_tls_version">Minimum TLS version</string>
+    <string name="max_tls_version">Maximum TLS version</string>
+    <string name="any_version">Any</string>
+    <string name="invalid_public_key">Not a valid public key</string>
+    <string name="invalid_short_id">Hex digits only, up to 16</string>
+    <string name="invalid_json">Not valid JSON</string>
+    <string name="invalid_port">Port must be between 1 and 65535</string>
+    <string name="edit_limited_protocol">Only the name and address of a %1$s server can be changed here. Import the link again to change anything else.</string>
+    <string name="delete_proxy_title">Delete server?</string>
+    <string name="delete_proxy_message">%1$s will be removed. Rule sets assigned to it fall back to the default server.</string>
+    <string name="delete_subscription_title">Delete subscription?</string>
+    <string name="delete_subscription_message">%1$s and all of its servers (%2$d) will be removed.</string>
+    <string name="more_options">More options</string>
+    <string name="camera_permission_blocked">Camera access is blocked. Allow it in the app settings to scan QR codes.</string>
+    <string name="camera_permission_rationale">The camera is used only to read QR codes.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="try_again">Try again</string>
+    <string name="reset_assignments_title">Reset routing rules?</string>
+    <string name="reset_assignments_message">Every rule set goes back to the default server.</string>
+    <string name="invalid_rule_value">This value does not match the rule type.</string>
+    <string name="mitm_install_manual">Android no longer lets apps install root certificates. Export the certificate, then add it under Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate.</string>
+    <string name="mitm_regenerate_ca">Regenerate root certificate</string>
+    <string name="mitm_regenerate_ca_message">The current certificate stops working on every device that trusts it. Continue?</string>
+    <string name="mitm_remove_certificate">Remove certificate</string>
+    <string name="mitm_remove_ca_message">Interception stops until a new certificate is generated and installed.</string>
+    <string name="dns_server_invalid">Not a valid server for the selected protocol.</string>
+    <string name="fingerprint_already_trusted">This fingerprint is already trusted.</string>
+    <string name="no_server_selected">No server is selected.</string>
 </resources>

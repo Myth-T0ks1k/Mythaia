@@ -5,6 +5,7 @@ import com.mythaia.data.model.Subscription
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -26,20 +27,21 @@ class SubscriptionRepository(context: Context) {
     fun get(id: UUID): Subscription? = _subscriptions.value.find { it.id == id }
 
     fun add(subscription: Subscription) {
-        _subscriptions.value = _subscriptions.value + subscription
+        _subscriptions.update { it + subscription }
         saveToDisk()
     }
 
+    /** Replaces the stored record; a no-op if it was deleted meanwhile. */
     fun update(subscription: Subscription) {
-        _subscriptions.value = _subscriptions.value.map {
-            if (it.id == subscription.id) subscription else it
+        _subscriptions.update { list ->
+            list.map { if (it.id == subscription.id) subscription else it }
         }
         saveToDisk()
     }
 
     fun delete(subscriptionId: UUID, configRepository: ConfigRepository) {
         configRepository.deleteBySubscription(subscriptionId)
-        _subscriptions.value = _subscriptions.value.filter { it.id != subscriptionId }
+        _subscriptions.update { list -> list.filter { it.id != subscriptionId } }
         saveToDisk()
     }
 
@@ -48,7 +50,9 @@ class SubscriptionRepository(context: Context) {
         return runCatching {
             json.decodeFromString<List<Subscription>>(file.readText())
         }.getOrElse {
-            println("Failed to load subscriptions: $it")
+            com.mythaia.vpn.util.MythaiaLogger("SubscriptionStore")
+                .error("Failed to load subscriptions: $it")
+            file.quarantineCorrupt()
             emptyList()
         }
     }
@@ -56,7 +60,8 @@ class SubscriptionRepository(context: Context) {
     private fun saveToDisk() {
         val payload = json.encodeToString(_subscriptions.value)
         file.writeTextAsync(payload) {
-            println("Failed to save subscriptions: $it")
+            com.mythaia.vpn.util.MythaiaLogger("SubscriptionStore")
+                .error("Failed to save subscriptions: $it")
         }
     }
 

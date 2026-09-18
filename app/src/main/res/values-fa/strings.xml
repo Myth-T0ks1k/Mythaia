@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">کپی لینک</string>
-    <string name="supports_proxy_link">از لینک‌های VLESS، Shadowsocks، NaiveProxy، اشتراک و Clash پشتیبانی می‌کند</string>
+    <string name="supports_proxy_link">از لینک‌های VLESS، VMess، Trojan، Shadowsocks، SOCKS5، Hysteria2، TUIC، AnyTLS، NaiveProxy و WireGuard و همچنین نشانی اشتراک و فایل‌های Clash پشتیبانی می‌کند</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -311,4 +311,43 @@
         <item quantity="one">هر %1$d ساعت</item>
         <item quantity="other">هر %1$d ساعت</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">پیکربندی سرور خوانده نشد.</string>
+    <string name="tunnel_error_establish">اندروید اجازه ایجاد رابط VPN را نداد. مطمئن شوید VPN دیگری فعال نیست و Mythaia اجازه اجرای VPN دارد.</string>
+    <string name="tunnel_error_start">تونل راه‌اندازی نشد: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">این پروفایل WireGuard پیکربندی ندارد. آن را ویرایش کنید و محتوای .conf را بچسبانید.</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard نمی‌تواند خروجی یک زنجیره پراکسی باشد.</string>
+    <string name="tunnel_error_wireguard_invalid">پیکربندی WireGuard قابل استفاده نیست: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">همتای WireGuard پاسخ نداد: %1$s</string>
+
+    <string name="short_id">شناسه کوتاه</string>
+    <string name="extra_json">اضافی (JSON)</string>
+    <string name="min_tls_version">کمینه نسخه TLS</string>
+    <string name="max_tls_version">بیشینه نسخه TLS</string>
+    <string name="any_version">هر کدام</string>
+    <string name="invalid_public_key">کلید عمومی نامعتبر</string>
+    <string name="invalid_short_id">فقط ارقام هگز، حداکثر ۱۶</string>
+    <string name="invalid_json">JSON نامعتبر</string>
+    <string name="invalid_port">پورت باید بین ۱ و ۶۵۵۳۵ باشد</string>
+    <string name="edit_limited_protocol">در اینجا فقط نام و نشانی سرور %1$s را می‌توان تغییر داد. برای تغییر موارد دیگر، لینک را دوباره وارد کنید.</string>
+    <string name="delete_proxy_title">سرور حذف شود؟</string>
+    <string name="delete_proxy_message">%1$s حذف می‌شود. مجموعه قوانین اختصاص‌یافته به آن به سرور پیش‌فرض برمی‌گردند.</string>
+    <string name="delete_subscription_title">اشتراک حذف شود؟</string>
+    <string name="delete_subscription_message">%1$s و همه سرورهای آن (%2$d) حذف می‌شوند.</string>
+    <string name="more_options">گزینه‌های بیشتر</string>
+    <string name="camera_permission_blocked">دسترسی به دوربین مسدود است. برای اسکن کد QR آن را در تنظیمات برنامه مجاز کنید.</string>
+    <string name="camera_permission_rationale">دوربین فقط برای خواندن کد QR استفاده می‌شود.</string>
+    <string name="open_settings">باز کردن تنظیمات</string>
+    <string name="try_again">تلاش دوباره</string>
+    <string name="reset_assignments_title">قوانین مسیریابی بازنشانی شود؟</string>
+    <string name="reset_assignments_message">همه مجموعه قوانین به سرور پیش‌فرض برمی‌گردند.</string>
+    <string name="invalid_rule_value">این مقدار با نوع قانون مطابقت ندارد.</string>
+    <string name="mitm_install_manual">اندروید دیگر به برنامه‌ها اجازه نصب گواهی ریشه نمی‌دهد. گواهی را صادر کنید و آن را از تنظیمات › امنیت › رمزگذاری و اعتبارنامه‌ها › نصب گواهی › گواهی CA اضافه کنید.</string>
+    <string name="mitm_regenerate_ca">ساخت دوباره گواهی ریشه</string>
+    <string name="mitm_regenerate_ca_message">گواهی فعلی روی هر دستگاهی که به آن اعتماد دارد از کار می‌افتد. ادامه می‌دهید؟</string>
+    <string name="mitm_remove_certificate">حذف گواهی</string>
+    <string name="mitm_remove_ca_message">رهگیری تا زمان ساخت و نصب گواهی جدید متوقف می‌شود.</string>
+    <string name="dns_server_invalid">برای پروتکل انتخاب‌شده سرور معتبری نیست.</string>
+    <string name="fingerprint_already_trusted">این اثر انگشت از قبل مورد اعتماد است.</string>
+    <string name="no_server_selected">هیچ سروری انتخاب نشده است.</string>
 </resources>

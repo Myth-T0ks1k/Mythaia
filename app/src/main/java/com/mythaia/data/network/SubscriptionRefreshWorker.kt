@@ -74,6 +74,17 @@ class SubscriptionRefreshWorker(
 
         logger.info("[Sub] Background refresh: ${subscriptions.size - failed}/${subscriptions.size} updated")
 
+        // routing.json embeds the full server records, so a panel that moved a
+        // server to a new address has to reach the running tunnel too.
+        if (failed < subscriptions.size) {
+            runCatching {
+                com.mythaia.data.repository.RuleSetRepository(context)
+                    .syncRoutingFile(configRepository.getAll()) { host ->
+                        com.mythaia.vpn.util.DnsCache.resolveHost(host)
+                    }
+            }.onFailure { logger.warning("[Sub] Routing sync after refresh failed: ${it.message ?: it}") }
+        }
+
         // Retry only when every one failed, which reads as "the network is not
         // really there" rather than "this panel is down".
         return if (failed == subscriptions.size) Result.retry() else Result.success()

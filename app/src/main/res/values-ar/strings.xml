@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">نسخ الرابط</string>
-    <string name="supports_proxy_link">يدعم روابط VLESS وShadowsocks وNaiveProxy والاشتراك وClash</string>
+    <string name="supports_proxy_link">يدعم روابط VLESS وVMess وTrojan وShadowsocks وSOCKS5 وHysteria2 وTUIC وAnyTLS وNaiveProxy وWireGuard، إضافة إلى روابط الاشتراك وملفات Clash</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -327,4 +327,43 @@
         <item quantity="many">كل %1$d ساعة</item>
         <item quantity="other">كل %1$d ساعة</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">تعذّر قراءة إعدادات الخادم.</string>
+    <string name="tunnel_error_establish">رفض Android إنشاء واجهة VPN. تأكد من عدم وجود VPN آخر نشط ومن أن Mythaia مسموح له بتشغيل VPN.</string>
+    <string name="tunnel_error_start">تعذّر بدء النفق: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">ملف WireGuard هذا لا يحتوي على إعدادات. حرّره والصق محتوى ملف .conf.</string>
+    <string name="tunnel_error_wireguard_chain">لا يمكن أن يكون WireGuard مخرج سلسلة وكلاء.</string>
+    <string name="tunnel_error_wireguard_invalid">إعدادات WireGuard غير قابلة للاستخدام: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">لم يستجب نظير WireGuard: %1$s</string>
+
+    <string name="short_id">المعرّف القصير</string>
+    <string name="extra_json">إضافي (JSON)</string>
+    <string name="min_tls_version">أدنى إصدار TLS</string>
+    <string name="max_tls_version">أقصى إصدار TLS</string>
+    <string name="any_version">أي</string>
+    <string name="invalid_public_key">مفتاح عام غير صالح</string>
+    <string name="invalid_short_id">أرقام سداسية عشرية فقط، حتى 16</string>
+    <string name="invalid_json">JSON غير صالح</string>
+    <string name="invalid_port">يجب أن يكون المنفذ بين 1 و65535</string>
+    <string name="edit_limited_protocol">يمكن هنا تغيير اسم وعنوان خادم %1$s فقط. أعد استيراد الرابط لتغيير أي شيء آخر.</string>
+    <string name="delete_proxy_title">حذف الخادم؟</string>
+    <string name="delete_proxy_message">سيتم حذف %1$s. تعود مجموعات القواعد المعيّنة له إلى الخادم الافتراضي.</string>
+    <string name="delete_subscription_title">حذف الاشتراك؟</string>
+    <string name="delete_subscription_message">سيتم حذف %1$s وخوادمه (%2$d).</string>
+    <string name="more_options">خيارات إضافية</string>
+    <string name="camera_permission_blocked">الوصول إلى الكاميرا محظور. اسمح به في إعدادات التطبيق لمسح رموز QR.</string>
+    <string name="camera_permission_rationale">تُستخدم الكاميرا لقراءة رموز QR فقط.</string>
+    <string name="open_settings">فتح الإعدادات</string>
+    <string name="try_again">إعادة المحاولة</string>
+    <string name="reset_assignments_title">إعادة تعيين قواعد التوجيه؟</string>
+    <string name="reset_assignments_message">تعود كل مجموعات القواعد إلى الخادم الافتراضي.</string>
+    <string name="invalid_rule_value">هذه القيمة لا تطابق نوع القاعدة.</string>
+    <string name="mitm_install_manual">لم يعد Android يسمح للتطبيقات بتثبيت شهادات الجذر. صدّر الشهادة ثم أضفها من الإعدادات › الأمان › التشفير وبيانات الاعتماد › تثبيت شهادة › شهادة CA.</string>
+    <string name="mitm_regenerate_ca">إعادة إنشاء شهادة الجذر</string>
+    <string name="mitm_regenerate_ca_message">ستتوقف الشهادة الحالية عن العمل على كل جهاز يثق بها. متابعة؟</string>
+    <string name="mitm_remove_certificate">إزالة الشهادة</string>
+    <string name="mitm_remove_ca_message">يتوقف الاعتراض حتى يتم إنشاء شهادة جديدة وتثبيتها.</string>
+    <string name="dns_server_invalid">خادم غير صالح للبروتوكول المحدد.</string>
+    <string name="fingerprint_already_trusted">هذه البصمة موثوقة بالفعل.</string>
+    <string name="no_server_selected">لم يتم تحديد أي خادم.</string>
 </resources>

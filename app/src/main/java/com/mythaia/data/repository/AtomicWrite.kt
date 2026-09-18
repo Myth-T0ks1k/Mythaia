@@ -24,7 +24,14 @@ internal fun File.writeTextAtomic(text: String) {
     // coroutine asked for it, and two of those sharing one temp file would
     // interleave their contents and rename the mixture into place.
     val tmp = File(parentFile, "$name.${java.util.UUID.randomUUID()}.tmp")
-    tmp.writeText(text)
+    // The rename is only atomic against a crash if the bytes are on disk
+    // first; without the sync a power loss can commit the name and leave a
+    // zero-length file behind it.
+    java.io.FileOutputStream(tmp).use { out ->
+        out.write(text.toByteArray(Charsets.UTF_8))
+        out.flush()
+        try { out.fd.sync() } catch (_: java.io.SyncFailedException) {}
+    }
     try {
         Files.move(
             tmp.toPath(),
@@ -60,7 +67,19 @@ internal fun File.writeTextAsync(text: String, onError: ((Throwable) -> Unit)? =
         try {
             writeTextAtomic(text)
         } catch (e: Throwable) {
-            onError?.invoke(e) ?: println("Atomic write failed for ${this@writeTextAsync.name}: $e")
+            onError?.invoke(e)
+                ?: com.mythaia.vpn.util.MythaiaLogger("Store")
+                    .error("Atomic write failed for ${this@writeTextAsync.name}: $e")
         }
     }
+}
+
+/**
+ * Sets [this] aside as `name.corrupt-<time>` so a store that failed to decode
+ * is not overwritten by the next save. Returns false if nothing was moved.
+ */
+internal fun File.quarantineCorrupt(): Boolean {
+    if (!exists()) return false
+    val target = File(parentFile, "$name.corrupt-${System.currentTimeMillis()}")
+    return runCatching { renameTo(target) }.getOrDefault(false)
 }

@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">Копировать ссылку</string>
-    <string name="supports_proxy_link">Поддержка ссылок VLESS, Shadowsocks, NaiveProxy, подписки и Clash</string>
+    <string name="supports_proxy_link">Поддерживаются ссылки VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, TUIC, AnyTLS, NaiveProxy и WireGuard, а также URL подписок и файлы Clash</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -260,7 +260,7 @@
     <string name="experimental_features">Экспериментальные функции</string>
     <string name="experimental_footer">Включает функции в разработке — например, создание своих наборов правил маршрутизации.</string>
     <string name="global_mode">Глобальный режим</string>
-    <string name="grpc_authority">Authority</string>
+    <string name="grpc_authority">Authority (:authority)</string>
     <string name="grpc_service_name">Имя сервиса</string>
     <string name="http2_proxy">Прокси HTTP/2</string>
     <string name="https_proxy">Прокси HTTPS</string>
@@ -319,4 +319,43 @@
         <item quantity="many">Каждые %1$d часов</item>
         <item quantity="other">Каждые %1$d часа</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">Не удалось прочитать конфигурацию сервера.</string>
+    <string name="tunnel_error_establish">Android не позволил создать VPN-интерфейс. Убедитесь, что другой VPN не активен и Mythaia разрешено использовать VPN.</string>
+    <string name="tunnel_error_start">Не удалось запустить туннель: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">У этого профиля WireGuard нет конфигурации. Откройте его и вставьте содержимое .conf.</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard не может быть выходным узлом цепочки прокси.</string>
+    <string name="tunnel_error_wireguard_invalid">Конфигурация WireGuard непригодна: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">Узел WireGuard не ответил: %1$s</string>
+
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">Дополнительно (JSON)</string>
+    <string name="min_tls_version">Минимальная версия TLS</string>
+    <string name="max_tls_version">Максимальная версия TLS</string>
+    <string name="any_version">Любая</string>
+    <string name="invalid_public_key">Недопустимый открытый ключ</string>
+    <string name="invalid_short_id">Только hex-символы, не более 16</string>
+    <string name="invalid_json">Некорректный JSON</string>
+    <string name="invalid_port">Порт должен быть от 1 до 65535</string>
+    <string name="edit_limited_protocol">Для сервера %1$s здесь можно изменить только имя и адрес. Чтобы изменить остальное, импортируйте ссылку заново.</string>
+    <string name="delete_proxy_title">Удалить сервер?</string>
+    <string name="delete_proxy_message">%1$s будет удалён. Наборы правил, назначенные на него, вернутся к серверу по умолчанию.</string>
+    <string name="delete_subscription_title">Удалить подписку?</string>
+    <string name="delete_subscription_message">%1$s и все его серверы (%2$d) будут удалены.</string>
+    <string name="more_options">Ещё</string>
+    <string name="camera_permission_blocked">Доступ к камере запрещён. Разрешите его в настройках приложения, чтобы сканировать QR-коды.</string>
+    <string name="camera_permission_rationale">Камера используется только для чтения QR-кодов.</string>
+    <string name="open_settings">Открыть настройки</string>
+    <string name="try_again">Повторить</string>
+    <string name="reset_assignments_title">Сбросить правила маршрутизации?</string>
+    <string name="reset_assignments_message">Все наборы правил вернутся к серверу по умолчанию.</string>
+    <string name="invalid_rule_value">Значение не соответствует типу правила.</string>
+    <string name="mitm_install_manual">Android больше не позволяет приложениям устанавливать корневые сертификаты. Экспортируйте сертификат и добавьте его в Настройки › Безопасность › Шифрование и учётные данные › Установить сертификат › Сертификат ЦС.</string>
+    <string name="mitm_regenerate_ca">Пересоздать корневой сертификат</string>
+    <string name="mitm_regenerate_ca_message">Текущий сертификат перестанет работать на всех устройствах, которые ему доверяют. Продолжить?</string>
+    <string name="mitm_remove_certificate">Удалить сертификат</string>
+    <string name="mitm_remove_ca_message">Перехват прекратится, пока не будет создан и установлен новый сертификат.</string>
+    <string name="dns_server_invalid">Недопустимый сервер для выбранного протокола.</string>
+    <string name="fingerprint_already_trusted">Этот отпечаток уже в списке доверенных.</string>
+    <string name="no_server_selected">Сервер не выбран.</string>
 </resources>

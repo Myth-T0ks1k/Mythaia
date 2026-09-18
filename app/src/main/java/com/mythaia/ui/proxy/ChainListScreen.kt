@@ -46,6 +46,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +73,7 @@ fun ChainListScreen(viewModel: VpnViewModel) {
     val selectedChainId by viewModel.selectedChainId.collectAsState()
     val chainLatencyResults by viewModel.chainLatencyResults.collectAsState()
 
-    var showingAddSheet by remember { mutableStateOf(false) }
+    var showingAddSheet by rememberSaveable { mutableStateOf(false) }
     var showingNotEnoughProxiesAlert by remember { mutableStateOf(false) }
     var chainToEdit by remember { mutableStateOf<ProxyChain?>(null) }
     var chainToDelete by remember { mutableStateOf<ProxyChain?>(null) }
@@ -98,7 +99,9 @@ fun ChainListScreen(viewModel: VpnViewModel) {
                         }
                     }
                     IconButton(onClick = {
-                        if (configurations.size < 2) {
+                        // A WireGuard profile cannot be a hop, so it does not
+                        // count toward the two a chain needs.
+                        if (configurations.count { !it.outboundProtocol.isLayer3 } < 2) {
                             showingNotEnoughProxiesAlert = true
                         } else {
                             showingAddSheet = true

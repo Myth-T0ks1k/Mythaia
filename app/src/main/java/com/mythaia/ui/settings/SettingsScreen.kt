@@ -54,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,21 +87,23 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(viewModel: VpnViewModel) {
     val context = LocalContext.current
-    var showRoutingRules by remember { mutableStateOf(false) }
-    var showAcknowledgements by remember { mutableStateOf(false) }
-    var showTrustedCertificates by remember { mutableStateOf(false) }
-    var showAdvancedSettings by remember { mutableStateOf(false) }
+    var showRoutingRules by rememberSaveable { mutableStateOf(false) }
+    var showAcknowledgements by rememberSaveable { mutableStateOf(false) }
+    var showTrustedCertificates by rememberSaveable { mutableStateOf(false) }
+    var showAdvancedSettings by rememberSaveable { mutableStateOf(false) }
     var showInsecureAlert by remember { mutableStateOf(false) }
 
-    var globalMode by remember { mutableStateOf(viewModel.proxyMode == "global") }
+    // Shared with the Home screen's segmented control through the view model.
+    val globalMode by viewModel.isGlobalMode.collectAsState()
     var bypassCountryCode by remember { mutableStateOf(viewModel.bypassCountryCode) }
     var allowInsecure by remember { mutableStateOf(viewModel.allowInsecure) }
     val themeMode by viewModel.themeMode.collectAsState()
 
-    val adBlockRuleSet = remember { viewModel.ruleSetRepository.ruleSets.value.find { it.name == "ADBlock" } }
-    var adBlockEnabled by remember {
-        mutableStateOf(adBlockRuleSet?.assignedConfigurationId == "REJECT")
-    }
+    // Derived from the live rule-set list rather than read once: the Routing
+    // Rules sub-screen can reassign ADBlock, and the switch here has to follow.
+    val ruleSets by viewModel.ruleSetRepository.ruleSets.collectAsState()
+    val adBlockRuleSet = ruleSets.find { it.id == "ADBlock" && !it.isCustom }
+    val adBlockEnabled = adBlockRuleSet?.assignedConfigurationId == "REJECT"
 
     // Intercept the device back button when a sub-screen is showing. Without
     // this, the NavHost handles back press by popping the SettingsRoute,
@@ -139,7 +142,7 @@ fun SettingsScreen(viewModel: VpnViewModel) {
             )
             else -> SettingsRoot(
                 globalMode = globalMode,
-                onGlobalModeChange = { globalMode = it; viewModel.proxyMode = if (it) "global" else "rule" },
+                onGlobalModeChange = { viewModel.proxyMode = if (it) "global" else "rule" },
                 bypassCountryCode = bypassCountryCode,
                 onBypassCountryChange = {
                     bypassCountryCode = it
@@ -149,7 +152,6 @@ fun SettingsScreen(viewModel: VpnViewModel) {
                 adBlockVisible = adBlockRuleSet != null,
                 adBlockEnabled = adBlockEnabled,
                 onAdBlockChange = { enabled ->
-                    adBlockEnabled = enabled
                     if (adBlockRuleSet != null) {
                         viewModel.ruleSetRepository.updateAssignment(
                             adBlockRuleSet,
@@ -171,7 +173,8 @@ fun SettingsScreen(viewModel: VpnViewModel) {
                 onThemeModeChange = { viewModel.setThemeMode(it) },
                 onOpenTelegram = {
                     com.mythaia.BrandLinks.TELEGRAM_COMMUNITY?.let { link ->
-                        context.startActivity(Intent(Intent.ACTION_VIEW, link.toUri()))
+                        // A TV box may have nothing that opens a URL.
+                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, link.toUri())) }
                     }
                 },
                 onOpenRoutingRules = { showRoutingRules = true },

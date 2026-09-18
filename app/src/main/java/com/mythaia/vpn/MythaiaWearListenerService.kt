@@ -23,6 +23,9 @@ private val logger = MythaiaLogger("Wear")
 class MythaiaWearListenerService : WearableListenerService() {
 
     override fun onMessageReceived(event: MessageEvent) {
+        // Remember who asked, so a later change (the tunnel coming up after a
+        // connect, or going down from the phone) reaches the watch unasked.
+        rememberNode(applicationContext, event.sourceNodeId)
         when (event.path) {
             PATH_COMMAND -> {
                 val command = String(event.data ?: ByteArray(0), StandardCharsets.UTF_8)
@@ -50,7 +53,9 @@ class MythaiaWearListenerService : WearableListenerService() {
                 // A DNS lookup and a file write, so not on the callback thread.
                 Thread({
                     val refusal = TunnelLauncher.startSelected(this)
-                    reply(node, status(refusal = refusal))
+                    // A clean start is still in progress at this point; the
+                    // state listener pushes "on" once the tunnel is really up.
+                    if (refusal != null) reply(node, status(refusal = refusal))
                 }, "wear-connect").apply { isDaemon = true }.start()
             }
 
@@ -97,6 +102,31 @@ class MythaiaWearListenerService : WearableListenerService() {
     }
 
     companion object {
+        @Volatile
+        private var lastNode: String? = null
+        private var listening = false
+
+        /** Registers, once, for tunnel state changes to forward to [lastNode]. */
+        private fun rememberNode(context: android.content.Context, node: String) {
+            lastNode = node
+            synchronized(this) {
+                if (listening) return
+                listening = true
+                MythaiaVpnService.addStateListener {
+                    val target = lastNode ?: return@addStateListener
+                    val state = if (MythaiaVpnService.isActive) STATE_ON else STATE_OFF
+                    val name = (MythaiaVpnService.activeServerName ?: TunnelLauncher.selectedName(context))
+                        .orEmpty().replace('|', ' ')
+                    try {
+                        Wearable.getMessageClient(context)
+                            .sendMessage(target, PATH_STATUS, "$state|$name".toByteArray(StandardCharsets.UTF_8))
+                    } catch (e: Exception) {
+                        logger.warning("[Wear] Could not push status: ${e.message ?: e}")
+                    }
+                }
+            }
+        }
+
         const val PATH_COMMAND = "/mythaia/command"
         const val PATH_STATUS_REQUEST = "/mythaia/status/request"
         const val PATH_STATUS = "/mythaia/status"

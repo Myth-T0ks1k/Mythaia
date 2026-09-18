@@ -33,7 +33,21 @@ import org.json.JSONObject
  * otherwise the HTTP upgrade request path differs for the same share link.
  */
 internal fun percentDecode(s: String): String =
-    URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+    try {
+        URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+    } catch (_: IllegalArgumentException) {
+        // A stray `%` (a name like "50%off") is not an escape; keep the text
+        // rather than failing the whole link on it.
+        s
+    }
+
+/** `alpn=h2,%20http/1.1` — entries trimmed, empties dropped. */
+internal fun parseAlpn(raw: String?): List<String>? =
+    raw?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }
+
+/** The spellings of "yes" that share links use for boolean flags. */
+internal fun isTruthy(raw: String?): Boolean =
+    raw == "1" || raw.equals("true", ignoreCase = true) || raw.equals("yes", ignoreCase = true)
 
 @Serializable
 enum class TlsFingerprint(val raw: String) {
@@ -157,9 +171,9 @@ data class TlsConfiguration(
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): TlsConfiguration? {
             if (params["security"] != "tls") return null
-            val sni = params["sni"] ?: serverAddress
-            val alpn = params["alpn"]?.takeIf { it.isNotEmpty() }?.split(",")
-            val allowInsecure = params["allowInsecure"] == "1" || params["allowInsecure"] == "true"
+            val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: serverAddress
+            val alpn = parseAlpn(params["alpn"])
+            val allowInsecure = isTruthy(params["allowInsecure"]) || isTruthy(params["insecure"])
             val fp = params["fp"] ?: "chrome_133"
             val minVersion = parseTlsVersion(params["minVersion"])
             val maxVersion = parseTlsVersion(params["maxVersion"])
@@ -220,7 +234,10 @@ data class RealityConfiguration(
             val publicKey = pbk.base64UrlToByteArrayOrNull()
                 ?: throw ProxyError.InvalidUrl("Invalid Reality public key")
             if (publicKey.size != 32) throw ProxyError.InvalidUrl("Invalid Reality public key")
-            val shortId = (params["sid"] ?: "").hexToByteArrayOrNull() ?: byteArrayOf()
+            val sidText = params["sid"] ?: ""
+            val shortId = sidText.hexToByteArrayOrNull()
+                ?: throw ProxyError.InvalidUrl("Invalid Reality short ID: $sidText")
+            if (shortId.size > 8) throw ProxyError.InvalidUrl("Reality short ID is longer than 8 bytes")
             val fp = params["fp"] ?: "chrome_133"
             return RealityConfiguration(
                 serverName = sni,
@@ -243,10 +260,18 @@ data class WebSocketConfiguration(
 ) {
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): WebSocketConfiguration {
-            val host = params["host"] ?: serverAddress
-            val path = params["path"]?.let { percentDecode(it) } ?: "/"
+            // parseQueryParams has already percent-decoded every value; a
+            // second pass would turn a literal "%20" in the path into a space.
+            val host = params["host"]?.takeIf { it.isNotEmpty() } ?: serverAddress
+            val path = params["path"]?.takeIf { it.isNotEmpty() } ?: "/"
             val maxEarlyData = params["ed"]?.toIntOrNull() ?: 0
-            return WebSocketConfiguration(host = host, path = path, maxEarlyData = maxEarlyData)
+            val earlyDataHeader = params["eh"]?.takeIf { it.isNotEmpty() } ?: "Sec-WebSocket-Protocol"
+            return WebSocketConfiguration(
+                host = host,
+                path = path,
+                maxEarlyData = maxEarlyData,
+                earlyDataHeaderName = earlyDataHeader
+            )
         }
     }
 }
@@ -259,8 +284,8 @@ data class HttpUpgradeConfiguration(
 ) {
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): HttpUpgradeConfiguration {
-            val host = params["host"] ?: serverAddress
-            var path = params["path"]?.let { percentDecode(it) } ?: "/"
+            val host = params["host"]?.takeIf { it.isNotEmpty() } ?: serverAddress
+            var path = params["path"]?.takeIf { it.isNotEmpty() } ?: "/"
             if (!path.startsWith("/")) path = "/$path"
             return HttpUpgradeConfiguration(host = host, path = path)
         }
@@ -394,29 +419,32 @@ data class XHttpConfiguration(
         if (xPaddingBytesFrom != 100) parts.add("\"xPaddingBytesFrom\":$xPaddingBytesFrom")
         if (xPaddingBytesTo != 1000) parts.add("\"xPaddingBytesTo\":$xPaddingBytesTo")
         if (xPaddingObfsMode) parts.add("\"xPaddingObfsMode\":true")
-        if (xPaddingKey != "x_padding") parts.add("\"xPaddingKey\":\"$xPaddingKey\"")
-        if (xPaddingHeader != "X-Padding") parts.add("\"xPaddingHeader\":\"$xPaddingHeader\"")
+        if (xPaddingKey != "x_padding") parts.add("\"xPaddingKey\":${jsonString(xPaddingKey)}")
+        if (xPaddingHeader != "X-Padding") parts.add("\"xPaddingHeader\":${jsonString(xPaddingHeader)}")
         if (xPaddingPlacement != XHttpPlacement.QUERY_IN_HEADER) parts.add("\"xPaddingPlacement\":\"${xPaddingPlacement.raw}\"")
         if (xPaddingMethod != XHttpPaddingMethod.REPEAT_X) parts.add("\"xPaddingMethod\":\"${xPaddingMethod.raw}\"")
-        if (uplinkHTTPMethod != "POST") parts.add("\"uplinkHTTPMethod\":\"$uplinkHTTPMethod\"")
+        if (uplinkHTTPMethod != "POST") parts.add("\"uplinkHTTPMethod\":${jsonString(uplinkHTTPMethod)}")
         if (sessionPlacement != XHttpPlacement.PATH) parts.add("\"sessionPlacement\":\"${sessionPlacement.raw}\"")
-        if (sessionKey.isNotEmpty()) parts.add("\"sessionKey\":\"$sessionKey\"")
+        if (sessionKey.isNotEmpty()) parts.add("\"sessionKey\":${jsonString(sessionKey)}")
         if (seqPlacement != XHttpPlacement.PATH) parts.add("\"seqPlacement\":\"${seqPlacement.raw}\"")
-        if (seqKey.isNotEmpty()) parts.add("\"seqKey\":\"$seqKey\"")
+        if (seqKey.isNotEmpty()) parts.add("\"seqKey\":${jsonString(seqKey)}")
         if (uplinkDataPlacement != XHttpPlacement.BODY) parts.add("\"uplinkDataPlacement\":\"${uplinkDataPlacement.raw}\"")
-        if (uplinkDataKey.isNotEmpty()) parts.add("\"uplinkDataKey\":\"$uplinkDataKey\"")
+        if (uplinkDataKey.isNotEmpty()) parts.add("\"uplinkDataKey\":${jsonString(uplinkDataKey)}")
         if (uplinkChunkSize != 0) parts.add("\"uplinkChunkSize\":$uplinkChunkSize")
         if (headers.isNotEmpty()) {
-            val headersJson = headers.entries.joinToString(",") { "\"${it.key}\":\"${it.value}\"" }
+            val headersJson = headers.entries.joinToString(",") { "${jsonString(it.key)}:${jsonString(it.value)}" }
             parts.add("\"headers\":{$headersJson}")
         }
         return if (parts.isEmpty()) "" else "{${parts.joinToString(",")}}"
     }
 
+    /** A JSON string literal, quotes and all. */
+    private fun jsonString(value: String): String = org.json.JSONObject.quote(value)
+
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): XHttpConfiguration {
-            val host = params["host"] ?: serverAddress
-            val path = params["path"]?.let { percentDecode(it) } ?: "/"
+            val host = params["host"]?.takeIf { it.isNotEmpty() } ?: serverAddress
+            val path = params["path"]?.takeIf { it.isNotEmpty() } ?: "/"
             val mode = XHttpMode.fromRaw(params["mode"] ?: "auto")
             val extra = params["extra"] ?: ""
             return if (extra.isNotBlank()) {
@@ -756,8 +784,12 @@ data class ProxyConfiguration(
     val connectAddress: String get() = resolvedIP ?: serverAddress
 
     /** RFC 3986 §3.2.2: IPv6 literals must be bracketed in URL authority components. */
-    private val bracketedServerAddress: String
+    val bracketedServerAddress: String
         get() = if (serverAddress.contains(":")) "[$serverAddress]" else serverAddress
+
+    /** `host:port` as a user reads it, with an IPv6 literal bracketed. */
+    val displayEndpoint: String
+        get() = "$bracketedServerAddress:$serverPort"
 
     fun contentEquals(other: ProxyConfiguration): Boolean =
         name == other.name &&
@@ -1095,6 +1127,8 @@ data class ProxyConfiguration(
             if (tls.fingerprint != TlsFingerprint.CHROME_133) {
                 params.add("fp=${tls.fingerprint.raw}")
             }
+            if (tls.allowInsecure) params.add("allowInsecure=1")
+            tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
         }
         val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
         val fragment = urlEncode(name)
@@ -1116,7 +1150,9 @@ data class ProxyConfiguration(
             params.add("sni=${reality.serverName}")
             params.add("pbk=${reality.publicKey.toBase64Url()}")
             if (reality.shortId.isNotEmpty()) params.add("sid=${reality.shortId.toHex()}")
-            if (reality.fingerprint != TlsFingerprint.CHROME_120) params.add("fp=${reality.fingerprint.raw}")
+            // The importers default a missing fp to chrome_133, so that is the
+            // one value safe to leave out.
+            if (reality.fingerprint != TlsFingerprint.CHROME_133) params.add("fp=${reality.fingerprint.raw}")
         }
 
         appendTransportParams(params)
@@ -1136,8 +1172,10 @@ data class ProxyConfiguration(
         val method = ssMethod ?: return "ss://invalid"
         val password = ssPassword ?: return "ss://invalid"
         val userInfo = "$method:$password"
-        val encoded = java.util.Base64.getEncoder().encodeToString(userInfo.toByteArray())
-            .trimEnd('=')
+        // SIP002 wants the URL-safe alphabet: a "/" from the standard one
+        // ends the authority for any client that parses the link as a URL.
+        val encoded = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(userInfo.toByteArray())
         val fragment = urlEncode(name)
         return "ss://$encoded@$bracketedServerAddress:$serverPort/#$fragment"
     }
@@ -1151,7 +1189,7 @@ data class ProxyConfiguration(
         tls.alpn?.takeIf { it.isNotEmpty() }?.let {
             params.add("alpn=${urlEncode(it.joinToString(","))}")
         }
-        if (tls.fingerprint != TlsFingerprint.CHROME_120) params.add("fp=${tls.fingerprint.raw}")
+        if (tls.fingerprint != TlsFingerprint.CHROME_133) params.add("fp=${tls.fingerprint.raw}")
         if (tls.allowInsecure) params.add("allowInsecure=1")
         // The config's exact bytes are what the server matches on, so it goes
         // out as it came in rather than re-encoded.
@@ -1189,7 +1227,12 @@ data class ProxyConfiguration(
         if (transport == "ws" && websocket != null) {
             if (websocket.host != serverAddress) params.add("host=${websocket.host}")
             if (websocket.path != "/") params.add("path=${urlEncode(websocket.path)}")
-            if (websocket.maxEarlyData > 0) params.add("ed=${websocket.maxEarlyData}")
+            if (websocket.maxEarlyData > 0) {
+                params.add("ed=${websocket.maxEarlyData}")
+                if (websocket.earlyDataHeaderName != "Sec-WebSocket-Protocol") {
+                    params.add("eh=${urlEncode(websocket.earlyDataHeaderName)}")
+                }
+            }
         }
         if (transport == "httpupgrade" && httpUpgrade != null) {
             if (httpUpgrade.host != serverAddress) params.add("host=${httpUpgrade.host}")
@@ -1199,6 +1242,7 @@ data class ProxyConfiguration(
             if (xhttp.host != serverAddress) params.add("host=${xhttp.host}")
             if (xhttp.path != "/") params.add("path=${urlEncode(xhttp.path)}")
             if (xhttp.mode != XHttpMode.AUTO) params.add("mode=${xhttp.mode.raw}")
+            xhttp.toExtraJson().takeIf { it.isNotEmpty() }?.let { params.add("extra=${urlEncode(it)}") }
         }
         if (transport == "grpc" && grpc != null) {
             if (grpc.serviceName.isNotEmpty()) params.add("serviceName=${urlEncode(grpc.serviceName)}")
@@ -1257,7 +1301,10 @@ data class ProxyConfiguration(
                 .getOrNull() ?: throw ProxyError.InvalidUrl("tuic:// user is not a UUID")
             val password = percentDecode(link.password.substring(colon + 1))
 
-            val sni = link.params["sni"] ?: link.host
+            val sni = link.params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
+            val insecure = isTruthy(link.params["allow_insecure"]) ||
+                isTruthy(link.params["allowInsecure"]) ||
+                isTruthy(link.params["insecure"])
             return ProxyConfiguration(
                 name = link.name ?: link.host,
                 serverAddress = link.host,
@@ -1268,7 +1315,10 @@ data class ProxyConfiguration(
                 security = "tls",
                 tls = TlsConfiguration(
                     serverName = sni,
-                    echConfig = link.params["ech"]?.takeIf { it.isNotEmpty() }
+                    echConfig = link.params["ech"]?.takeIf { it.isNotEmpty() },
+                    alpn = parseAlpn(link.params["alpn"]),
+                    allowInsecure = insecure,
+                    fingerprint = TlsFingerprint.fromRaw(link.params["fp"] ?: "chrome_133")
                 ),
                 outboundProtocol = OutboundProtocol.TUIC,
                 password = password
@@ -1522,12 +1572,20 @@ data class ProxyConfiguration(
                 ?: params["peer"]?.takeIf { it.isNotEmpty() }
                 ?: host
 
-            val alpn = params["alpn"]?.takeIf { it.isNotEmpty() }?.split(",")
+            // Only plain TCP is dialled; importing a ws/grpc Trojan as TCP
+            // would produce a server that can never connect.
+            val type = params["type"]?.takeIf { it.isNotEmpty() } ?: "tcp"
+            if (type != "tcp") {
+                throw ProxyError.InvalidUrl("trojan: $type transport is not supported")
+            }
+
+            val alpn = parseAlpn(params["alpn"])
             val fp = params["fp"] ?: "chrome_133"
             val tls = TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
+                allowInsecure = isTruthy(params["allowInsecure"]) || isTruthy(params["insecure"]),
                 fingerprint = TlsFingerprint.fromRaw(fp)
             )
 
@@ -1652,6 +1710,13 @@ data class ProxyConfiguration(
                 "tcp" -> "tcp"
                 else -> throw ProxyError.InvalidUrl("vmess: $network transport is not supported yet")
             }
+            // "type" is the header obfuscation (http camouflage etc.). Nothing
+            // here speaks it, and a server expecting it never answers a plain
+            // request, so refuse rather than import a dead entry.
+            val headerType = json.optString("type").trim()
+            if (headerType.isNotEmpty() && headerType != "none") {
+                throw ProxyError.InvalidUrl("vmess: $headerType header obfuscation is not supported")
+            }
 
             val tlsField = json.optString("tls")
             val useTls = tlsField == "tls" || tlsField == "1" || tlsField == "true"
@@ -1666,7 +1731,7 @@ data class ProxyConfiguration(
             val tls = if (useTls) {
                 TlsConfiguration(
                     serverName = sni,
-                    alpn = alpn,
+                    alpn = alpn?.map { it.trim() }?.filter { it.isNotEmpty() },
                     allowInsecure = allowInsecure,
                     fingerprint = TlsFingerprint.fromRaw(
                         json.optString("fp").ifEmpty { "chrome_133" }
@@ -1730,8 +1795,8 @@ data class ProxyConfiguration(
             val params = link.params
 
             val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
-            val alpn = params["alpn"]?.takeIf { it.isNotEmpty() }?.split(",")
-            val insecure = params["insecure"] == "1" || params["allowInsecure"] == "1"
+            val alpn = parseAlpn(params["alpn"])
+            val insecure = isTruthy(params["insecure"]) || isTruthy(params["allowInsecure"])
             val tls = TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
@@ -1766,8 +1831,8 @@ data class ProxyConfiguration(
             val params = link.params
 
             val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
-            val alpn = params["alpn"]?.takeIf { it.isNotEmpty() }?.split(",")
-            val insecure = params["insecure"] == "1" || params["allowInsecure"] == "1"
+            val alpn = parseAlpn(params["alpn"])
+            val insecure = isTruthy(params["insecure"]) || isTruthy(params["allowInsecure"])
             val tls = TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
@@ -1800,26 +1865,28 @@ data class ProxyConfiguration(
                 remaining = remaining.substring(0, hashIndex)
             }
 
+            // The query goes first: a path or host value may itself contain
+            // "@" (Telegram-branded panels do this), and finding the separator
+            // before splitting it off would swallow the whole authority.
+            var queryString: String? = null
+            val questionIndex = remaining.indexOf('?')
+            if (questionIndex >= 0) {
+                queryString = remaining.substring(questionIndex + 1)
+                remaining = remaining.substring(0, questionIndex)
+            }
+
             val atIndex = remaining.lastIndexOf('@')
             if (atIndex < 0) throw ProxyError.InvalidUrl("Missing @ separator")
 
             val uuidString = remaining.substring(0, atIndex)
-            val serverPart = remaining.substring(atIndex + 1)
+            var serverPart = remaining.substring(atIndex + 1)
 
-            val uuid = runCatching { UUID.fromString(uuidString) }.getOrNull()
+            val uuid = runCatching { UUID.fromString(percentDecode(uuidString)) }.getOrNull()
                 ?: throw ProxyError.InvalidUrl("Invalid UUID: $uuidString")
 
-            val hostPort: String
-            var queryString: String? = null
-            val questionIndex = serverPart.indexOf('?')
-            if (questionIndex >= 0) {
-                val before = serverPart.substring(0, questionIndex)
-                hostPort = if (before.endsWith("/")) before.dropLast(1) else before
-                queryString = serverPart.substring(questionIndex + 1)
-            } else {
-                val slashIndex = serverPart.indexOf('/')
-                hostPort = if (slashIndex >= 0) serverPart.substring(0, slashIndex) else serverPart
-            }
+            if (serverPart.endsWith("/")) serverPart = serverPart.dropLast(1)
+            val slashIndex = serverPart.indexOf('/')
+            val hostPort = if (slashIndex >= 0) serverPart.substring(0, slashIndex) else serverPart
 
             val (host, port) = parseHostPort(hostPort)
             val params = parseQueryParams(queryString)
@@ -1897,6 +1964,12 @@ data class ProxyConfiguration(
 
                 val questionIndex = serverPart.indexOf('?')
                 if (questionIndex >= 0) {
+                    // A SIP003 plugin (obfs, v2ray-plugin) changes the wire
+                    // format; without the plugin the server never answers.
+                    val query = parseQueryParams(serverPart.substring(questionIndex + 1))
+                    query["plugin"]?.takeIf { it.isNotBlank() }?.let {
+                        throw ProxyError.InvalidUrl("Shadowsocks plugins are not supported: $it")
+                    }
                     serverPart = serverPart.substring(0, questionIndex)
                 }
                 val slashIndex = serverPart.indexOf('/')
@@ -2051,11 +2124,15 @@ data class ProxyConfiguration(
             queryString.split("&").forEach { param ->
                 val kv = param.split("=", limit = 2)
                 if (kv.size == 2) {
-                    params[kv[0]] = percentDecode(kv[1])
+                    params[percentDecode(kv[0])] = percentDecode(kv[1])
+                } else if (kv.size == 1 && kv[0].isNotEmpty()) {
+                    // A bare flag ("?insecure") reads as set.
+                    params[percentDecode(kv[0])] = "1"
                 }
             }
             return params
         }
+
 
         private fun parseHostPort(
             hostPort: String,
@@ -2106,12 +2183,14 @@ data class ProxyConfiguration(
             return str + "=".repeat(4 - remainder)
         }
 
-        private fun decodeShadowsocksUserInfo(userInfo: String): Pair<String, String> {
-            val colonIndex = userInfo.indexOf(':')
+        private fun decodeShadowsocksUserInfo(rawUserInfo: String): Pair<String, String> {
+            val colonIndex = rawUserInfo.indexOf(':')
             if (colonIndex >= 0) {
-                return Pair(userInfo.substring(0, colonIndex), percentDecode(userInfo.substring(colonIndex + 1)))
+                return Pair(rawUserInfo.substring(0, colonIndex), percentDecode(rawUserInfo.substring(colonIndex + 1)))
             }
 
+            // Some generators percent-encode the base64 padding ("%3D").
+            val userInfo = if (rawUserInfo.contains('%')) percentDecode(rawUserInfo) else rawUserInfo
             val decoded = decodeBase64Text(userInfo)
                 ?: throw ProxyError.InvalidUrl("Invalid SS user info encoding")
             val decodedColonIndex = decoded.indexOf(':')

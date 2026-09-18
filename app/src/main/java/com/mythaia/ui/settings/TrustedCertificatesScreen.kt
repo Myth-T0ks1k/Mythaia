@@ -87,7 +87,7 @@ fun TrustedCertificatesScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -235,7 +235,10 @@ fun TrustedCertificatesScreen(
             confirmButton = {
                 TextButton(onClick = {
                     val trimmed = newFingerprint.trim()
-                    if (viewModel.certificateRepository.add(trimmed)) {
+                    if (viewModel.certificateRepository.contains(trimmed)) {
+                        errorMessage = context.getString(R.string.fingerprint_already_trusted)
+                        showError = true
+                    } else if (viewModel.certificateRepository.add(trimmed)) {
                         showAddDialog = false
                     } else {
                         errorMessage = context.getString(R.string.invalid_fingerprint_message)

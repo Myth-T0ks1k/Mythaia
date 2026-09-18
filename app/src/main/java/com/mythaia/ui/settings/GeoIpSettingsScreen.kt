@@ -62,7 +62,10 @@ fun GeoIpSettingsScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var loaded by remember { mutableStateOf(GeoIpDatabase.isLoaded) }
+    // Whether a database is on disk, not whether the router has opened it:
+    // the router loads lazily at tunnel start, so before the first connect
+    // an imported file would otherwise read as "None" with no way to remove it.
+    var loaded by remember { mutableStateOf(GeoIpDatabase.isLoaded || GeoIpDatabase.file(context).exists()) }
     val failedMessage = stringResource(R.string.geoip_import_failed)
 
     val picker = rememberLauncherForActivityResult(
@@ -78,7 +81,7 @@ fun GeoIpSettingsScreen(
                     } ?: false
                 }.getOrDefault(false)
             }
-            loaded = GeoIpDatabase.isLoaded
+            loaded = GeoIpDatabase.isLoaded || GeoIpDatabase.file(context).exists()
             if (ok) {
                 // Rules referencing a country only start matching once the
                 // router reloads, so ask for that now rather than at next start.

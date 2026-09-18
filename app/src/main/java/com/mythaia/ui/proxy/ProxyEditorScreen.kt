@@ -32,7 +32,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +66,16 @@ import java.util.UUID
 private val FieldShape = RoundedCornerShape(14.dp)
 private val CardShape = RoundedCornerShape(20.dp)
 
+/** Protocols the field-by-field form renders completely. */
+private val EDITABLE_PROTOCOLS = setOf(
+    OutboundProtocol.VLESS,
+    OutboundProtocol.TROJAN,
+    OutboundProtocol.SHADOWSOCKS,
+    OutboundProtocol.SOCKS5,
+    OutboundProtocol.NAIVE_HTTP11,
+    OutboundProtocol.NAIVE_HTTP2
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProxyEditorScreen(
@@ -74,57 +83,62 @@ fun ProxyEditorScreen(
     onSave: (ProxyConfiguration) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedProtocol by remember { mutableStateOf(OutboundProtocol.VLESS) }
-    var name by remember { mutableStateOf("") }
-    var serverAddress by remember { mutableStateOf("") }
-    var serverPort by remember { mutableStateOf("") }
-    var uuid by remember { mutableStateOf("") }
-    var encryption by remember { mutableStateOf("none") }
-    var transport by remember { mutableStateOf("tcp") }
-    var flow by remember { mutableStateOf("") }
-    var security by remember { mutableStateOf("none") }
+    // Every field starts from the configuration being edited, so the sheet
+    // opens on the right values instead of flashing defaults for a frame.
+    val c = configuration
+    var selectedProtocol by remember { mutableStateOf(c?.outboundProtocol ?: OutboundProtocol.VLESS) }
+    var name by remember { mutableStateOf(c?.name ?: "") }
+    var serverAddress by remember { mutableStateOf(c?.serverAddress ?: "") }
+    var serverPort by remember { mutableStateOf(c?.serverPort?.toString() ?: "") }
+    var uuid by remember { mutableStateOf(c?.uuid?.toString() ?: "") }
+    var encryption by remember { mutableStateOf(c?.encryption ?: "none") }
+    var transport by remember { mutableStateOf(c?.transport ?: "tcp") }
+    var flow by remember { mutableStateOf(c?.flow ?: "") }
+    var security by remember { mutableStateOf(c?.security ?: "none") }
 
-    var wsHost by remember { mutableStateOf("") }
-    var wsPath by remember { mutableStateOf("/") }
+    var wsHost by remember { mutableStateOf(c?.websocket?.host ?: "") }
+    var wsPath by remember { mutableStateOf(c?.websocket?.path ?: "/") }
 
-    var httpUpgradeHost by remember { mutableStateOf("") }
-    var httpUpgradePath by remember { mutableStateOf("/") }
+    var httpUpgradeHost by remember { mutableStateOf(c?.httpUpgrade?.host ?: "") }
+    var httpUpgradePath by remember { mutableStateOf(c?.httpUpgrade?.path ?: "/") }
 
-    var xhttpHost by remember { mutableStateOf("") }
-    var xhttpPath by remember { mutableStateOf("/") }
-    var xhttpMode by remember { mutableStateOf("auto") }
-    var xhttpExtra by remember { mutableStateOf("") }
-    var grpcServiceName by remember { mutableStateOf("") }
-    var grpcAuthority by remember { mutableStateOf("") }
-    var grpcMultiMode by remember { mutableStateOf(false) }
-    var grpcUserAgent by remember { mutableStateOf("") }
+    var xhttpHost by remember { mutableStateOf(c?.xhttp?.host ?: "") }
+    var xhttpPath by remember { mutableStateOf(c?.xhttp?.path ?: "/") }
+    var xhttpMode by remember { mutableStateOf(c?.xhttp?.mode?.raw ?: "auto") }
+    var xhttpExtra by remember { mutableStateOf(c?.xhttp?.toExtraJson() ?: "") }
+    var grpcServiceName by remember { mutableStateOf(c?.grpc?.serviceName ?: "") }
+    var grpcAuthority by remember { mutableStateOf(c?.grpc?.authority ?: "") }
+    var grpcMultiMode by remember { mutableStateOf(c?.grpc?.multiMode ?: false) }
+    var grpcUserAgent by remember { mutableStateOf(c?.grpc?.userAgent ?: "") }
 
-    var tlsSNI by remember { mutableStateOf("") }
-    var tlsALPN by remember { mutableStateOf("") }
-    var tlsAllowInsecure by remember { mutableStateOf(false) }
-    var tlsMinVersion by remember { mutableStateOf<TlsVersion?>(null) }
-    var tlsMaxVersion by remember { mutableStateOf<TlsVersion?>(null) }
+    // Trojan keeps its TLS under trojanTls; the shared fields read whichever is set.
+    val existingTls = c?.trojanTls ?: c?.tls
+    var tlsSNI by remember { mutableStateOf(existingTls?.serverName ?: "") }
+    var tlsALPN by remember { mutableStateOf(existingTls?.alpn?.joinToString(",") ?: "") }
+    var tlsAllowInsecure by remember { mutableStateOf(existingTls?.allowInsecure ?: false) }
+    var tlsMinVersion by remember { mutableStateOf<TlsVersion?>(existingTls?.minVersion) }
+    var tlsMaxVersion by remember { mutableStateOf<TlsVersion?>(existingTls?.maxVersion) }
 
-    var muxEnabled by remember { mutableStateOf(true) }
-    var xudpEnabled by remember { mutableStateOf(true) }
+    var muxEnabled by remember { mutableStateOf(c?.muxEnabled ?: true) }
+    var xudpEnabled by remember { mutableStateOf(c?.xudpEnabled ?: true) }
 
-    var sni by remember { mutableStateOf("") }
-    var publicKey by remember { mutableStateOf("") }
-    var shortId by remember { mutableStateOf("") }
-    var fingerprint by remember { mutableStateOf(TlsFingerprint.CHROME_133) }
+    var sni by remember { mutableStateOf(c?.reality?.serverName ?: "") }
+    var publicKey by remember { mutableStateOf(c?.reality?.publicKey?.toBase64Url() ?: "") }
+    var shortId by remember { mutableStateOf(c?.reality?.shortId?.toHex() ?: "") }
+    var fingerprint by remember {
+        mutableStateOf(c?.reality?.fingerprint ?: existingTls?.fingerprint ?: TlsFingerprint.CHROME_133)
+    }
 
-    var ssPassword by remember { mutableStateOf("") }
-    var ssMethod by remember { mutableStateOf("aes-128-gcm") }
+    var ssPassword by remember { mutableStateOf(c?.ssPassword ?: "") }
+    var ssMethod by remember { mutableStateOf(c?.ssMethod ?: "aes-128-gcm") }
 
-    var naiveUsername by remember { mutableStateOf("") }
-    var naivePassword by remember { mutableStateOf("") }
+    var naiveUsername by remember { mutableStateOf(c?.naiveUsername ?: "") }
+    var naivePassword by remember { mutableStateOf(c?.naivePassword ?: "") }
 
-    var socks5Username by remember { mutableStateOf("") }
-    var socks5Password by remember { mutableStateOf("") }
+    var socks5Username by remember { mutableStateOf(c?.socks5Username ?: "") }
+    var socks5Password by remember { mutableStateOf(c?.socks5Password ?: "") }
 
-    // Trojan: password lives here; TLS knobs reuse the shared
-    // tlsSNI/tlsALPN/fingerprint state.
-    var trojanPassword by remember { mutableStateOf("") }
+    var trojanPassword by remember { mutableStateOf(c?.trojanPassword ?: "") }
 
     val isShadowsocks = selectedProtocol == OutboundProtocol.SHADOWSOCKS
     val isSocks5 = selectedProtocol == OutboundProtocol.SOCKS5
@@ -134,79 +148,32 @@ fun ProxyEditorScreen(
     val isReality = security == "reality"
     val isTLS = security == "tls"
 
-    val isValid = name.isNotEmpty() &&
-            serverAddress.isNotEmpty() &&
-            serverPort.toUShortOrNull() != null &&
-            when {
+    // The field-by-field form covers these; anything else (Hysteria2, VMess,
+    // AnyTLS, TUIC, WireGuard...) came from a link and only its name and
+    // address can be edited here, so no field it does not render is lost.
+    val fullEditor = selectedProtocol in EDITABLE_PROTOCOLS
+
+    val portValue = serverPort.trim().toIntOrNull()
+    val portValid = portValue != null && portValue in 1..65535
+    val publicKeyBytes = publicKey.trim().base64UrlToByteArrayOrNull()
+    val publicKeyValid = publicKeyBytes != null && publicKeyBytes.size == 32
+    val shortIdBytes = shortId.trim().hexToByteArrayOrNull()
+    val shortIdValid = shortIdBytes != null && shortIdBytes.size <= 8
+    val xhttpExtraValid = xhttpExtra.isBlank() ||
+        runCatching { org.json.JSONObject(xhttpExtra) }.isSuccess
+
+    val isValid = name.isNotBlank() &&
+            serverAddress.isNotBlank() &&
+            portValid &&
+            (!fullEditor || when {
                 isNaive -> naiveUsername.isNotEmpty() && naivePassword.isNotEmpty()
                 isShadowsocks -> ssPassword.isNotEmpty()
                 isSocks5 -> true
                 isTrojan -> trojanPassword.isNotEmpty()
-                else -> runCatching { UUID.fromString(uuid) }.isSuccess &&
-                        (!isReality || (sni.isNotEmpty() && publicKey.isNotEmpty()))
-            }
-
-    LaunchedEffect(configuration) {
-        configuration?.let { config ->
-            selectedProtocol = config.outboundProtocol
-            name = config.name
-            serverAddress = config.serverAddress
-            serverPort = config.serverPort.toString()
-            uuid = config.uuid.toString()
-            encryption = config.encryption
-            transport = config.transport
-            flow = config.flow ?: ""
-            security = config.security
-            config.websocket?.let {
-                wsHost = it.host
-                wsPath = it.path
-            }
-            config.httpUpgrade?.let {
-                httpUpgradeHost = it.host
-                httpUpgradePath = it.path
-            }
-            config.xhttp?.let {
-                xhttpHost = it.host
-                xhttpPath = it.path
-                xhttpMode = it.mode.raw
-                xhttpExtra = it.toExtraJson()
-            }
-            config.grpc?.let {
-                grpcServiceName = it.serviceName
-                grpcAuthority = it.authority
-                grpcMultiMode = it.multiMode
-                grpcUserAgent = it.userAgent
-            }
-            muxEnabled = config.muxEnabled
-            xudpEnabled = config.xudpEnabled
-            config.tls?.let {
-                tlsSNI = it.serverName
-                tlsALPN = it.alpn?.joinToString(",") ?: ""
-                tlsAllowInsecure = it.allowInsecure
-                fingerprint = it.fingerprint
-                tlsMinVersion = it.minVersion
-                tlsMaxVersion = it.maxVersion
-            }
-            config.reality?.let {
-                sni = it.serverName
-                publicKey = it.publicKey.toBase64Url()
-                shortId = it.shortId.toHex()
-                fingerprint = it.fingerprint
-            }
-            ssPassword = config.ssPassword ?: ""
-            ssMethod = config.ssMethod ?: "aes-128-gcm"
-            naiveUsername = config.naiveUsername ?: ""
-            naivePassword = config.naivePassword ?: ""
-            socks5Username = config.socks5Username ?: ""
-            socks5Password = config.socks5Password ?: ""
-            trojanPassword = config.trojanPassword ?: ""
-            config.trojanTls?.let {
-                tlsSNI = it.serverName
-                tlsALPN = it.alpn?.joinToString(",") ?: ""
-                fingerprint = it.fingerprint
-            }
-        }
-    }
+                else -> runCatching { UUID.fromString(uuid.trim()) }.isSuccess &&
+                        (!isReality || (sni.isNotBlank() && publicKeyValid && shortIdValid)) &&
+                        (transport != "xhttp" || xhttpExtraValid)
+            })
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -232,22 +199,39 @@ fun ProxyEditorScreen(
                 },
                 actions = {
                     IconButton(onClick = {
-                        val port = serverPort.toUShortOrNull() ?: return@IconButton
+                        val trimmedName = name.trim()
+                        val typedAddress = serverAddress.trim()
+                        val bareAddress = if (typedAddress.startsWith("[") && typedAddress.endsWith("]"))
+                            typedAddress.drop(1).dropLast(1) else typedAddress
+                        val port = (portValue ?: return@IconButton).toUShort()
+
+                        // A protocol this form does not render: keep everything
+                        // the link carried and change only what is shown.
+                        if (!fullEditor) {
+                            val base = configuration ?: return@IconButton
+                            onSave(base.copy(name = trimmedName, serverAddress = bareAddress, serverPort = port))
+                            return@IconButton
+                        }
+
                         val needsUuid =
                             !(isShadowsocks || isNaive || isSocks5 || isTrojan)
                         val parsedUUID = if (!needsUuid) {
                             configuration?.uuid ?: UUID.randomUUID()
                         } else {
-                            runCatching { UUID.fromString(uuid) }.getOrNull() ?: return@IconButton
+                            runCatching { UUID.fromString(uuid.trim()) }.getOrNull() ?: return@IconButton
                         }
 
+                        val alpnList = tlsALPN.split(",").map { it.trim() }
+                            .filter { it.isNotEmpty() }.takeIf { it.isNotEmpty() }
+
+                        // Sub-configurations start from what is stored, so a
+                        // setting the form does not show (ECH, fragment, early
+                        // data, headers) survives a save.
                         var tlsConfiguration: TlsConfiguration? = null
                         if (isTLS && isVless) {
-                            val resolvedSNI = tlsSNI.ifEmpty { serverAddress }
-                            val alpn = tlsALPN.takeIf { it.isNotEmpty() }?.split(",")
-                            tlsConfiguration = TlsConfiguration(
-                                serverName = resolvedSNI,
-                                alpn = alpn,
+                            tlsConfiguration = (configuration?.tls ?: TlsConfiguration(serverName = bareAddress)).copy(
+                                serverName = tlsSNI.trim().ifEmpty { bareAddress },
+                                alpn = alpnList,
                                 allowInsecure = tlsAllowInsecure,
                                 fingerprint = fingerprint,
                                 minVersion = tlsMinVersion,
@@ -259,11 +243,9 @@ fun ProxyEditorScreen(
                         // tlsSNI/tlsALPN/fingerprint state.
                         var trojanTlsConfiguration: TlsConfiguration? = null
                         if (isTrojan) {
-                            val resolvedSni = tlsSNI.ifEmpty { serverAddress }
-                            val alpn = tlsALPN.takeIf { it.isNotEmpty() }?.split(",")
-                            trojanTlsConfiguration = TlsConfiguration(
-                                serverName = resolvedSni,
-                                alpn = alpn,
+                            trojanTlsConfiguration = (configuration?.trojanTls ?: TlsConfiguration(serverName = bareAddress)).copy(
+                                serverName = tlsSNI.trim().ifEmpty { bareAddress },
+                                alpn = alpnList,
                                 fingerprint = fingerprint
                             )
                             tlsConfiguration = trojanTlsConfiguration
@@ -271,10 +253,10 @@ fun ProxyEditorScreen(
 
                         var realityConfiguration: RealityConfiguration? = null
                         if (isReality && isVless) {
-                            val pk = publicKey.base64UrlToByteArrayOrNull() ?: return@IconButton
-                            val sid = shortId.hexToByteArrayOrNull() ?: byteArrayOf()
+                            val pk = publicKeyBytes ?: return@IconButton
+                            val sid = shortIdBytes ?: return@IconButton
                             realityConfiguration = RealityConfiguration(
-                                serverName = sni,
+                                serverName = sni.trim(),
                                 publicKey = pk,
                                 shortId = sid,
                                 fingerprint = fingerprint
@@ -283,22 +265,24 @@ fun ProxyEditorScreen(
 
                         var wsConfiguration: WebSocketConfiguration? = null
                         if (transport == "ws" && isVless) {
-                            val host = wsHost.ifEmpty { serverAddress }
-                            wsConfiguration = WebSocketConfiguration(host = host, path = wsPath)
+                            val host = wsHost.trim().ifEmpty { bareAddress }
+                            wsConfiguration = (configuration?.websocket ?: WebSocketConfiguration(host = host))
+                                .copy(host = host, path = wsPath.trim().ifEmpty { "/" })
                         }
 
                         var httpUpgradeConfiguration: HttpUpgradeConfiguration? = null
                         if (transport == "httpupgrade" && isVless) {
-                            val host = httpUpgradeHost.ifEmpty { serverAddress }
-                            httpUpgradeConfiguration = HttpUpgradeConfiguration(host = host, path = httpUpgradePath)
+                            val host = httpUpgradeHost.trim().ifEmpty { bareAddress }
+                            httpUpgradeConfiguration = (configuration?.httpUpgrade ?: HttpUpgradeConfiguration(host = host))
+                                .copy(host = host, path = httpUpgradePath.trim().ifEmpty { "/" })
                         }
 
                         var xhttpConfiguration: XHttpConfiguration? = null
                         if (transport == "xhttp" && isVless) {
-                            val host = xhttpHost.ifEmpty { serverAddress }
+                            val host = xhttpHost.trim().ifEmpty { bareAddress }
                             val mode = XHttpMode.fromRaw(xhttpMode)
                             xhttpConfiguration = XHttpConfiguration.fromExtraJson(
-                                host = host, path = xhttpPath, mode = mode, extraJson = xhttpExtra
+                                host = host, path = xhttpPath.trim().ifEmpty { "/" }, mode = mode, extraJson = xhttpExtra
                             )
                         }
 
@@ -311,9 +295,6 @@ fun ProxyEditorScreen(
                                 userAgent = grpcUserAgent
                             )
                         }
-
-                        val bareAddress = if (serverAddress.startsWith("[") && serverAddress.endsWith("]"))
-                            serverAddress.drop(1).dropLast(1) else serverAddress
 
                         val naiveProto = when (selectedProtocol) {
                             OutboundProtocol.NAIVE_HTTP11 -> NaiveProtocol.HTTP11
@@ -335,13 +316,14 @@ fun ProxyEditorScreen(
                             encryption = encryption
                         )).copy(
                             id = configuration?.id ?: UUID.randomUUID(),
-                            name = name,
+                            name = trimmedName,
                             serverAddress = bareAddress,
                             serverPort = port,
                             uuid = parsedUUID,
                             encryption = if (nonVless) "none" else encryption,
                             transport = if (nonVless) "tcp" else transport,
-                            flow = if (nonVless) null else flow.ifEmpty { null },
+                            // Vision needs a TLS or Reality layer to ride on.
+                            flow = if (nonVless || security == "none") null else flow.ifEmpty { null },
                             security = when {
                                 isNaive || isShadowsocks || isSocks5 -> "none"
                                 isTrojan -> "tls"
@@ -396,7 +378,16 @@ fun ProxyEditorScreen(
                 )
             }
 
-            SectionCard(title = stringResource(R.string.protocol_label)) {
+            if (!fullEditor) {
+                Text(
+                    text = stringResource(R.string.edit_limited_protocol, selectedProtocol.displayName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
+
+            if (fullEditor) SectionCard(title = stringResource(R.string.protocol_label)) {
                 DropdownField(
                     label = stringResource(R.string.protocol_label),
                     selectedValue = selectedProtocol.name,
@@ -437,12 +428,18 @@ fun ProxyEditorScreen(
                     label = { Text(stringResource(R.string.port)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    isError = serverPort.isNotEmpty() && !portValid,
+                    supportingText = if (serverPort.isNotEmpty() && !portValid) {
+                        { Text(stringResource(R.string.invalid_port)) }
+                    } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = FieldShape,
                     colors = wingTextFieldColors()
                 )
 
-                if (isNaive) {
+                if (!fullEditor) {
+                    // Nothing else is editable for this protocol.
+                } else if (isNaive) {
                     OutlinedTextField(
                         value = naiveUsername,
                         onValueChange = { naiveUsername = it },
@@ -524,7 +521,8 @@ fun ProxyEditorScreen(
                     OutlinedTextField(
                         value = uuid,
                         onValueChange = { uuid = it },
-                        label = { Text("UUID") },
+                        label = { Text(stringResource(R.string.uuid)) },
+                        isError = uuid.isNotEmpty() && runCatching { UUID.fromString(uuid.trim()) }.isFailure,
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = FieldShape,
@@ -634,7 +632,11 @@ fun ProxyEditorScreen(
                         OutlinedTextField(
                             value = xhttpExtra,
                             onValueChange = { xhttpExtra = it },
-                            label = { Text("Extra (JSON)") },
+                            label = { Text(stringResource(R.string.extra_json)) },
+                            isError = !xhttpExtraValid,
+                            supportingText = if (!xhttpExtraValid) {
+                                { Text(stringResource(R.string.invalid_json)) }
+                            } else null,
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 2,
                             maxLines = 6,
@@ -682,7 +684,7 @@ fun ProxyEditorScreen(
                         )
                     }
 
-                    if (!isShadowsocks && transport == "tcp") {
+                    if (!isShadowsocks && transport == "tcp" && (isTLS || isReality)) {
                         DropdownField(
                             label = stringResource(R.string.flow),
                             selectedValue = flow,
@@ -713,7 +715,7 @@ fun ProxyEditorScreen(
             }
 
             if (isVless || isTrojan) {
-                SectionCard(title = "TLS") {
+                SectionCard(title = stringResource(R.string.tls)) {
                     // For Trojan the TLS layer is mandatory: don't show the
                     // none/TLS/Reality picker, just render the TLS fields directly.
                     if (!isTrojan) {
@@ -733,7 +735,7 @@ fun ProxyEditorScreen(
                         OutlinedTextField(
                             value = tlsSNI,
                             onValueChange = { tlsSNI = it },
-                            label = { Text("SNI") },
+                            label = { Text(stringResource(R.string.sni)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = FieldShape,
@@ -742,7 +744,7 @@ fun ProxyEditorScreen(
                         OutlinedTextField(
                             value = tlsALPN,
                             onValueChange = { tlsALPN = it },
-                            label = { Text("ALPN") },
+                            label = { Text(stringResource(R.string.alpn)) },
                             placeholder = { Text("h2,http/1.1") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
@@ -762,10 +764,10 @@ fun ProxyEditorScreen(
                         )
                         if (!isTrojan) {
                             DropdownField(
-                                label = "Min Version",
+                                label = stringResource(R.string.min_tls_version),
                                 selectedValue = tlsMinVersion?.name ?: "ANY",
                                 options = listOf(
-                                    "ANY" to "Any",
+                                    "ANY" to stringResource(R.string.any_version),
                                     TlsVersion.TLS12.name to "TLS 1.2",
                                     TlsVersion.TLS13.name to "TLS 1.3"
                                 ),
@@ -774,10 +776,10 @@ fun ProxyEditorScreen(
                                 }
                             )
                             DropdownField(
-                                label = "Max Version",
+                                label = stringResource(R.string.max_tls_version),
                                 selectedValue = tlsMaxVersion?.name ?: "ANY",
                                 options = listOf(
-                                    "ANY" to "Any",
+                                    "ANY" to stringResource(R.string.any_version),
                                     TlsVersion.TLS12.name to "TLS 1.2",
                                     TlsVersion.TLS13.name to "TLS 1.3"
                                 ),
@@ -792,7 +794,7 @@ fun ProxyEditorScreen(
                         OutlinedTextField(
                             value = sni,
                             onValueChange = { sni = it },
-                            label = { Text("SNI") },
+                            label = { Text(stringResource(R.string.sni)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = FieldShape,
@@ -802,6 +804,10 @@ fun ProxyEditorScreen(
                             value = publicKey,
                             onValueChange = { publicKey = it },
                             label = { Text(stringResource(R.string.public_key)) },
+                            isError = publicKey.isNotEmpty() && !publicKeyValid,
+                            supportingText = if (publicKey.isNotEmpty() && !publicKeyValid) {
+                                { Text(stringResource(R.string.invalid_public_key)) }
+                            } else null,
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = FieldShape,
@@ -810,7 +816,11 @@ fun ProxyEditorScreen(
                         OutlinedTextField(
                             value = shortId,
                             onValueChange = { shortId = it },
-                            label = { Text("Short ID") },
+                            label = { Text(stringResource(R.string.short_id)) },
+                            isError = !shortIdValid,
+                            supportingText = if (!shortIdValid) {
+                                { Text(stringResource(R.string.invalid_short_id)) }
+                            } else null,
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = FieldShape,

@@ -3,6 +3,10 @@
 # ============================================================================
 -keep class com.mythaia.vpn.NativeBridge { *; }
 -keep interface com.mythaia.vpn.NativeBridge$LwipCallback { *; }
+# quic_conn_bridge.c resolves onCryptoData/onStreamData/onStreamClose/
+# onHandshakeComplete/onDatagram by name on whatever object implements this.
+-keep interface com.mythaia.vpn.NativeBridge$QuicCallback { *; }
+-keep class * implements com.mythaia.vpn.NativeBridge$QuicCallback { <methods>; }
 
 # ============================================================================
 # VPN Service + Binder (accessed via reflection by Android framework)

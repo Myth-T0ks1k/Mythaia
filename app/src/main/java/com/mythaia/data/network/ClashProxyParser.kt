@@ -57,6 +57,16 @@ object ClashProxyParser {
         return ParseResult(configurations, skippedCount)
     }
 
+    /**
+     * The `server` field with any URL-style brackets removed: Clash accepts
+     * `[2001:db8::1]`, but the address is stored bare and bracketed again on
+     * export, which would otherwise double up.
+     */
+    private fun serverOf(node: JSONObject): String? {
+        val raw = node.optString("server").trim().takeIf { it.isNotEmpty() } ?: return null
+        return if (raw.startsWith("[") && raw.endsWith("]")) raw.substring(1, raw.length - 1) else raw
+    }
+
     private fun parseProxy(node: JSONObject): ProxyConfiguration? {
         val proxyType = node.optString("type")
         if (proxyType == "ss") return parseShadowsocksProxy(node)
@@ -68,7 +78,7 @@ object ClashProxyParser {
         if (proxyType != "vless") return null
 
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
         val uuidString = node.optString("uuid").takeIf { it.isNotEmpty() } ?: return null
         val uuid = parseXrayUuid(uuidString) ?: return null
 
@@ -76,10 +86,15 @@ object ClashProxyParser {
         if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
         val port = portInt.toUShort()
 
-        // Transport: tcp (default) or ws; skip h2/grpc
-        val network = node.optString("network", "tcp")
-        if (network == "h2" || network == "grpc") return null
-        val transport = if (network == "ws") "ws" else "tcp"
+        // Transport: tcp (default) or ws. Anything else (h2, grpc, httpupgrade,
+        // xhttp, kcp) is skipped rather than imported as TCP, which would give
+        // a server that can never connect.
+        val network = node.optString("network").ifEmpty { "tcp" }
+        val transport = when (network) {
+            "tcp" -> "tcp"
+            "ws" -> "ws"
+            else -> return null
+        }
 
         val encryption = node.optString("encryption", "none")
         val rawFlow = node.optString("flow", "")
@@ -198,7 +213,7 @@ object ClashProxyParser {
      */
     private fun parseShadowsocksProxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
         val password = node.optString("password").takeIf { it.isNotEmpty() } ?: return null
         val cipher = node.optString("cipher").takeIf { it.isNotEmpty() } ?: return null
 
@@ -236,7 +251,7 @@ object ClashProxyParser {
      */
     private fun parseTrojanProxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
         val password = node.optString("password").takeIf { it.isNotEmpty() } ?: return null
 
         val portInt = node.optInt("port", -1)
@@ -291,7 +306,7 @@ object ClashProxyParser {
      */
     private fun parseHysteria2Proxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
         val password = node.optString("password").takeIf { it.isNotEmpty() }
             ?: node.optString("auth").takeIf { it.isNotEmpty() }
             ?: return null
@@ -338,7 +353,7 @@ object ClashProxyParser {
      */
     private fun parseVmessProxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
         val uuidString = node.optString("uuid").takeIf { it.isNotEmpty() } ?: return null
         val uuid = parseXrayUuid(uuidString) ?: return null
 
@@ -416,7 +431,7 @@ object ClashProxyParser {
     /** Clash `type: anytls`. TLS is mandatory. */
     private fun parseAnyTlsProxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
         val password = node.optString("password").takeIf { it.isNotEmpty() } ?: return null
 
         val portInt = node.optInt("port", -1)
@@ -477,7 +492,7 @@ object ClashProxyParser {
 
     private fun parseSocks5Proxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
-        val server = node.optString("server").takeIf { it.isNotEmpty() } ?: return null
+        val server = serverOf(node) ?: return null
 
         val portInt = node.optInt("port", -1)
         if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null

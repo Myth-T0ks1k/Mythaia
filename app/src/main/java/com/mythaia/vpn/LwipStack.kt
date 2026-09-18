@@ -78,6 +78,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
      */
     var splitTunnel: SplitTunnelSettings = SplitTunnelSettings()
         private set
+    @Volatile
     private var running = false
     @Volatile
     private var tunFdSwapped = false
@@ -446,17 +447,27 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         // in-flight callbacks (e.g., onOutput() reading tunOutput).
         lwipExecutor.execute {
             running = false
-            shutdownInternal()
-            fakeIpPool.reset()
-            NativeBridge.callback = null
-            outputPackets.clear()
-            outputFlushScheduled = false
-            tunInput = null
-            tunOutput = null
-            tunFd = null
-            configuration = null
-            instance = null
-            onComplete?.invoke()
+            try {
+                shutdownInternal()
+            } catch (t: Throwable) {
+                // The rest of the cleanup, and the caller's completion, must
+                // still run: skipping them leaves the foreground notification
+                // and the service alive with no tunnel behind them.
+                logger.error("[LWIPStack] Shutdown failed: ${t.message ?: t}")
+            } finally {
+                fakeIpPool.reset()
+                // Only our own registration: a stack started after this stop
+                // was queued has already put itself here.
+                if (NativeBridge.callback === this) NativeBridge.callback = null
+                outputPackets.clear()
+                outputFlushScheduled = false
+                tunInput = null
+                tunOutput = null
+                tunFd = null
+                configuration = null
+                if (instance === this) instance = null
+                onComplete?.invoke()
+            }
         }
 
         // Orderly shutdown: the executor finishes the queued cleanup task,

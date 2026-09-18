@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">Copiar enlace</string>
-    <string name="supports_proxy_link">Admite enlaces VLESS, Shadowsocks, NaiveProxy, de suscripción y Clash</string>
+    <string name="supports_proxy_link">Admite enlaces VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, TUIC, AnyTLS, NaiveProxy y WireGuard, además de URL de suscripción y archivos Clash</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -315,4 +315,43 @@
         <item quantity="many">Cada %1$d horas</item>
         <item quantity="other">Cada %1$d horas</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">No se pudo leer la configuración del servidor.</string>
+    <string name="tunnel_error_establish">Android no permitió crear la interfaz VPN. Comprueba que no haya otra VPN activa y que Mythaia tenga permiso para usar VPN.</string>
+    <string name="tunnel_error_start">No se pudo iniciar el túnel: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">Este perfil de WireGuard no tiene configuración. Edítalo y pega el contenido del .conf.</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard no puede ser la salida de una cadena de proxies.</string>
+    <string name="tunnel_error_wireguard_invalid">La configuración de WireGuard no es válida: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">El par de WireGuard no respondió: %1$s</string>
+
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">Extra (JSON)</string>
+    <string name="min_tls_version">Versión mínima de TLS</string>
+    <string name="max_tls_version">Versión máxima de TLS</string>
+    <string name="any_version">Cualquiera</string>
+    <string name="invalid_public_key">Clave pública no válida</string>
+    <string name="invalid_short_id">Solo dígitos hexadecimales, máximo 16</string>
+    <string name="invalid_json">JSON no válido</string>
+    <string name="invalid_port">El puerto debe estar entre 1 y 65535</string>
+    <string name="edit_limited_protocol">Aquí solo se pueden cambiar el nombre y la dirección de un servidor %1$s. Vuelve a importar el enlace para cambiar lo demás.</string>
+    <string name="delete_proxy_title">¿Eliminar servidor?</string>
+    <string name="delete_proxy_message">Se eliminará %1$s. Los conjuntos de reglas asignados volverán al servidor predeterminado.</string>
+    <string name="delete_subscription_title">¿Eliminar suscripción?</string>
+    <string name="delete_subscription_message">Se eliminará %1$s y todos sus servidores (%2$d).</string>
+    <string name="more_options">Más opciones</string>
+    <string name="camera_permission_blocked">El acceso a la cámara está bloqueado. Permítelo en los ajustes de la app para escanear códigos QR.</string>
+    <string name="camera_permission_rationale">La cámara solo se usa para leer códigos QR.</string>
+    <string name="open_settings">Abrir ajustes</string>
+    <string name="try_again">Reintentar</string>
+    <string name="reset_assignments_title">¿Restablecer las reglas de enrutamiento?</string>
+    <string name="reset_assignments_message">Todos los conjuntos de reglas volverán al servidor predeterminado.</string>
+    <string name="invalid_rule_value">Este valor no coincide con el tipo de regla.</string>
+    <string name="mitm_install_manual">Android ya no permite que las apps instalen certificados raíz. Exporta el certificado y añádelo en Ajustes › Seguridad › Cifrado y credenciales › Instalar un certificado › Certificado de CA.</string>
+    <string name="mitm_regenerate_ca">Regenerar el certificado raíz</string>
+    <string name="mitm_regenerate_ca_message">El certificado actual dejará de funcionar en todos los dispositivos que confían en él. ¿Continuar?</string>
+    <string name="mitm_remove_certificate">Quitar certificado</string>
+    <string name="mitm_remove_ca_message">La interceptación se detiene hasta que se genere e instale un nuevo certificado.</string>
+    <string name="dns_server_invalid">No es un servidor válido para el protocolo seleccionado.</string>
+    <string name="fingerprint_already_trusted">Esta huella ya es de confianza.</string>
+    <string name="no_server_selected">No hay ningún servidor seleccionado.</string>
 </resources>

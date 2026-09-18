@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">复制链接</string>
-    <string name="supports_proxy_link">支持 VLESS、Shadowsocks、NaiveProxy、订阅和 Clash 链接</string>
+    <string name="supports_proxy_link">支持 VLESS、VMess、Trojan、Shadowsocks、SOCKS5、Hysteria2、TUIC、AnyTLS、NaiveProxy 和 WireGuard 链接，以及订阅地址和 Clash 文件</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -260,7 +260,7 @@
     <string name="experimental_features">实验性功能</string>
     <string name="experimental_footer">启用开发中的功能，例如创建自定义路由规则集。</string>
     <string name="global_mode">全局模式</string>
-    <string name="grpc_authority">Authority</string>
+    <string name="grpc_authority">Authority（:authority）</string>
     <string name="grpc_service_name">服务名称</string>
     <string name="http2_proxy">HTTP/2 代理</string>
     <string name="https_proxy">HTTPS 代理</string>
@@ -307,4 +307,43 @@
     <plurals name="every_n_hours">
         <item quantity="other">每 %1$d 小时</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">无法读取服务器配置。</string>
+    <string name="tunnel_error_establish">Android 拒绝创建 VPN 接口。请确认没有其他 VPN 正在运行，并且已允许 Mythaia 使用 VPN。</string>
+    <string name="tunnel_error_start">无法启动隧道：%1$s</string>
+    <string name="tunnel_error_wireguard_empty">此 WireGuard 配置为空。请编辑并粘贴 .conf 内容。</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard 不能作为代理链的出口。</string>
+    <string name="tunnel_error_wireguard_invalid">WireGuard 配置无法使用：%1$s</string>
+    <string name="tunnel_error_wireguard_peer">WireGuard 对端无响应：%1$s</string>
+
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">额外设置 (JSON)</string>
+    <string name="min_tls_version">最低 TLS 版本</string>
+    <string name="max_tls_version">最高 TLS 版本</string>
+    <string name="any_version">任意</string>
+    <string name="invalid_public_key">公钥无效</string>
+    <string name="invalid_short_id">仅限十六进制，最多 16 位</string>
+    <string name="invalid_json">JSON 无效</string>
+    <string name="invalid_port">端口必须在 1 到 65535 之间</string>
+    <string name="edit_limited_protocol">此处只能修改 %1$s 服务器的名称和地址。如需修改其他设置，请重新导入链接。</string>
+    <string name="delete_proxy_title">删除服务器？</string>
+    <string name="delete_proxy_message">将移除 %1$s。分配给它的规则集将回退到默认服务器。</string>
+    <string name="delete_subscription_title">删除订阅？</string>
+    <string name="delete_subscription_message">将移除 %1$s 及其全部服务器（%2$d）。</string>
+    <string name="more_options">更多选项</string>
+    <string name="camera_permission_blocked">相机权限已被禁止。请在应用设置中允许，以便扫描二维码。</string>
+    <string name="camera_permission_rationale">相机仅用于读取二维码。</string>
+    <string name="open_settings">打开设置</string>
+    <string name="try_again">重试</string>
+    <string name="reset_assignments_title">重置路由规则？</string>
+    <string name="reset_assignments_message">所有规则集都将恢复为默认服务器。</string>
+    <string name="invalid_rule_value">该值与规则类型不匹配。</string>
+    <string name="mitm_install_manual">Android 不再允许应用安装根证书。请导出证书，然后在“设置 › 安全 › 加密与凭据 › 安装证书 › CA 证书”中添加。</string>
+    <string name="mitm_regenerate_ca">重新生成根证书</string>
+    <string name="mitm_regenerate_ca_message">当前证书将在所有信任它的设备上失效。是否继续？</string>
+    <string name="mitm_remove_certificate">移除证书</string>
+    <string name="mitm_remove_ca_message">在生成并安装新证书之前，拦截将停止。</string>
+    <string name="dns_server_invalid">不是所选协议的有效服务器。</string>
+    <string name="fingerprint_already_trusted">此指纹已被信任。</string>
+    <string name="no_server_selected">未选择服务器。</string>
 </resources>

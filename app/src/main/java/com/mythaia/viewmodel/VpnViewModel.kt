@@ -155,6 +155,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     var onRequestVpnPermission: ((Intent) -> Unit)? = null
 
+    /** Asks the activity to request POST_NOTIFICATIONS; a no-op below API 33. */
+    var onRequestNotificationPermission: (() -> Unit)? = null
+
+    /** The connect in flight, so a cancel can actually cancel it. */
+    private var connectJob: Job? = null
+
     /**
      * Pending deep-link URL (vless://…, ss://…, socks5://…, or raw link from
      * mythaia://add-proxy?link=…). Consumed by ProxyListScreen to open the
@@ -214,10 +220,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _vpnStatus.value = VpnStatus.CONNECTED
                 startStatsPolling()
                 selectedConfiguration?.let { syncProxyServerAddresses(it) }
-            } else if (_vpnStatus.value == VpnStatus.CONNECTING) {
-                // Service bound but tunnel setup failed (e.g. TUN establish
-                // failed) — don't leave the UI stuck on the spinner.
-                _vpnStatus.value = VpnStatus.DISCONNECTED
+            } else if (!MythaiaVpnService.isActive) {
+                // Bound to a service with no tunnel: whatever we expected, the
+                // binding is useless now. Release it so the next connect gets
+                // a fresh one — a stale binding never delivers a second
+                // onServiceConnected, which left the button spinning forever.
+                unbindFromService()
+                if (_vpnStatus.value != VpnStatus.DISCONNECTED) {
+                    _vpnStatus.value = VpnStatus.DISCONNECTED
+                }
             }
         }
 
@@ -232,7 +243,64 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         get() = (selectedConfiguration == null) ||
             (_vpnStatus.value != VpnStatus.CONNECTED && _vpnStatus.value != VpnStatus.DISCONNECTED)
 
+    /**
+     * Mirrors the service's own idea of whether a tunnel is up.
+     *
+     * The service publishes this for the tile and the widget; the view model
+     * listens too, so a stop that did not originate here — the notification's
+     * Disconnect action, the system revoking the VPN, another VPN app taking
+     * over, the peer never answering — reaches the power button at once
+     * instead of at the next stats poll, or never.
+     */
+    private val serviceStateListener: () -> Unit = {
+        val active = MythaiaVpnService.isActive
+        viewModelScope.launch { onServiceActiveChanged(active) }
+    }
+
+    /**
+     * A start that failed before the tunnel came up.
+     *
+     * Without this the service just stops itself and the UI flips back to
+     * Disconnected with no word on why.
+     */
+    private val serviceFailureListener: (String) -> Unit = { message ->
+        viewModelScope.launch { onServiceStartFailed(message) }
+    }
+
+    private fun onServiceActiveChanged(active: Boolean) {
+        if (active) {
+            if (_vpnStatus.value != VpnStatus.CONNECTED) {
+                _vpnStatus.value = VpnStatus.CONNECTED
+            }
+            bindToService()
+            startStatsPolling()
+            return
+        }
+
+        // Down. Whatever we thought we were doing, the tunnel is gone.
+        stopStatsPolling()
+        unbindFromService()
+        if (_vpnStatus.value != VpnStatus.DISCONNECTED) {
+            _vpnStatus.value = VpnStatus.DISCONNECTED
+        }
+        if (pendingReconnect) {
+            pendingReconnect = false
+            connect()
+        }
+    }
+
+    private fun onServiceStartFailed(message: String) {
+        stopStatsPolling()
+        unbindFromService()
+        pendingReconnect = false
+        _vpnStatus.value = VpnStatus.DISCONNECTED
+        _startError.value = message
+    }
+
     init {
+        MythaiaVpnService.addStateListener(serviceStateListener)
+        MythaiaVpnService.addStartFailureListener(serviceFailureListener)
+
         val savedChainId = prefs.getString("selectedChainId", null)?.let {
             runCatching { UUID.fromString(it) }.getOrNull()
         }
@@ -378,6 +446,22 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun connect() {
         val context = getApplication<Application>()
 
+        // Started elsewhere (tile, watch, always-on) while this screen thought
+        // it was off: adopt it rather than tearing a live tunnel down to
+        // rebuild the same one.
+        if (MythaiaVpnService.isActive) {
+            onServiceActiveChanged(active = true)
+            return
+        }
+
+        // Android 13+ hides the tunnel notification (and its Disconnect
+        // action) until the user allows notifications. Asked once, here,
+        // where the reason is obvious; the connect goes ahead either way.
+        if (!prefs.getBoolean("notificationsAsked", false)) {
+            prefs.edit { putBoolean("notificationsAsked", true) }
+            onRequestNotificationPermission?.invoke()
+        }
+
         // The permission prompt comes first either way: asking for it after a
         // measurement round would leave the user staring at a spinner before
         // the dialog they actually have to answer.
@@ -450,8 +534,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private fun startVpnService(config: ProxyConfiguration) {
         val context = getApplication<Application>()
         _vpnStatus.value = VpnStatus.CONNECTING
+        // A binding left over from an earlier session would never deliver a
+        // second onServiceConnected; start each connect from none.
+        unbindFromService()
 
-        viewModelScope.launch {
+        connectJob?.cancel()
+        connectJob = viewModelScope.launch {
             // Resolve server domain on IO thread (avoids NetworkOnMainThreadException)
             val resolvedConfig = withContext(Dispatchers.IO) {
                 // Write routing.json (DNS + disk I/O) before the service starts
@@ -459,6 +547,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 syncRoutingConfigurationBlocking()
                 resolveServerAddress(applyGlobalAllowInsecure(config))
             }
+            // The user may have tapped the button again while DNS was slow;
+            // starting now would bring a tunnel up under a screen that says off.
+            if (_vpnStatus.value != VpnStatus.CONNECTING) return@launch
+
             DnsCache.setActiveProxyDomain(resolvedConfig.serverAddress)
             syncProxyServerAddresses(resolvedConfig)
 
@@ -472,7 +564,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 context.startForegroundService(intent)
                 // Status stays at CONNECTING until the service binder confirms
                 // the tunnel is up via [serviceConnection.onServiceConnected]
-                // + `isRunning`.
+                // + `isRunning`, or the service reports active / failed.
                 bindToService()
             } catch (e: Exception) {
                 logger.warning("Failed to send configuration to tunnel: ${e.message}")
@@ -483,9 +575,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnect() {
-        _vpnStatus.value = VpnStatus.DISCONNECTING
         val context = getApplication<Application>()
+        val wasActive = MythaiaVpnService.isActive
+        _vpnStatus.value = VpnStatus.DISCONNECTING
 
+        // A connect still resolving DNS must not go on to start the tunnel.
+        connectJob?.cancel()
+        connectJob = null
         stopStatsPolling()
 
         val intent = Intent(context, MythaiaVpnService::class.java).apply {
@@ -496,10 +592,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {}
 
         unbindFromService()
-        _bytesIn.value = 0
-        _bytesOut.value = 0
-        _vpnStatus.value = VpnStatus.DISCONNECTED
 
+        if (wasActive) {
+            // The service confirms through [serviceStateListener], which also
+            // runs any pending reconnect. A watchdog covers the case where the
+            // stop never lands, so the button cannot sit on the spinner.
+            viewModelScope.launch {
+                delay(DISCONNECT_WATCHDOG_MS)
+                if (_vpnStatus.value == VpnStatus.DISCONNECTING) {
+                    onServiceActiveChanged(active = false)
+                }
+            }
+            return
+        }
+
+        // Nothing was up (a connect still in flight, or a stale state): there
+        // is no confirmation to wait for.
+        _vpnStatus.value = VpnStatus.DISCONNECTED
         if (pendingReconnect) {
             pendingReconnect = false
             connect()
@@ -592,6 +701,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     // Service is bound but no longer running — it actually died
                     _vpnStatus.value = VpnStatus.DISCONNECTED
                     resetStats()
+                    unbindFromService()
+                    statsJob = null
                     break
                 }
                 // If service is null, binding is still in progress — keep polling
@@ -650,6 +761,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        MythaiaVpnService.removeStateListener(serviceStateListener)
+        MythaiaVpnService.removeStartFailureListener(serviceFailureListener)
         stopStatsPolling()
         unbindFromService()
     }
@@ -671,9 +784,21 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateConfiguration(config: ProxyConfiguration) {
         configRepository.update(config)
+        // The server on the wire is this one: hand the tunnel the new
+        // settings, or it keeps dialling the old address under the new name.
+        if (_vpnStatus.value == VpnStatus.CONNECTED) {
+            val live = selectedConfiguration
+            if (live != null && (live.id == config.id || live.chain?.any { it.id == config.id } == true)) {
+                switchConfig(live)
+            }
+        }
     }
 
     fun deleteConfiguration(config: ProxyConfiguration) {
+        val wasLive = _vpnStatus.value == VpnStatus.CONNECTED &&
+            (_selectedConfigId.value == config.id ||
+                selectedConfiguration?.chain?.any { it.id == config.id } == true)
+
         configRepository.delete(config.id)
         if (_selectedConfigId.value == config.id) {
             val remaining = configRepository.getAll()
@@ -689,7 +814,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 ensureValidSelection()
             }
         }
+
+        // The last server of a subscription takes the subscription with it:
+        // a group with no members has no row to be renamed or deleted from,
+        // yet the background refresh would keep repopulating it.
+        config.subscriptionId?.let { subId ->
+            if (configRepository.getAll().none { it.subscriptionId == subId }) {
+                subscriptionRepository.get(subId)?.let {
+                    subscriptionRepository.delete(subId, configRepository)
+                }
+            }
+        }
+
         checkOrphanedRuleSets()
+
+        // Traffic was going through the deleted server. Move it to whatever is
+        // selected now, or stop rather than keep running a ghost.
+        if (wasLive) {
+            val next = selectedConfiguration
+            if (next != null) switchConfig(next) else disconnect()
+        }
     }
 
     fun configurations(forSubscription: Subscription): List<ProxyConfiguration> {
@@ -698,9 +842,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addSubscription(configurations: List<ProxyConfiguration>, subscription: Subscription) {
         subscriptionRepository.add(subscription)
-        configurations.forEach { config ->
-            configRepository.add(config.copy(subscriptionId = subscription.id))
-        }
+        configRepository.addAll(configurations.map { it.copy(subscriptionId = subscription.id) })
         if (_selectedConfigId.value == null) {
             configurations.firstOrNull()?.let { setSelectedConfiguration(it) }
         }
@@ -880,7 +1022,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         ruleSetRepository.syncRoutingFile(
             configRepository.getAll()
         ) { address -> resolveServerAddress(address) }
-        if (_vpnStatus.value == VpnStatus.CONNECTED) {
+        // Keyed on the service's own state: a tunnel the tile or the watch
+        // started still has to reload its rules.
+        if (MythaiaVpnService.isActive) {
             prefs.edit { putLong("routingChanged", System.currentTimeMillis()) }
         }
     }
@@ -933,7 +1077,20 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** "rule" (default) applies routing rules per-destination; "global" routes everything through the proxy. */
     var proxyMode: String
         get() = prefs.getString("proxyMode", "rule") ?: "rule"
-        set(value) = prefs.edit { putString("proxyMode", value) }
+        set(value) {
+            prefs.edit { putString("proxyMode", value) }
+            _isGlobalMode.value = value == "global"
+        }
+
+    /**
+     * Whether everything is routed through the proxy.
+     *
+     * Home and Settings both offer this switch. A flow, so flipping it on one
+     * screen is reflected on the other instead of each keeping the copy it
+     * read when it first appeared.
+     */
+    private val _isGlobalMode = MutableStateFlow(prefs.getString("proxyMode", "rule") == "global")
+    val isGlobalMode: StateFlow<Boolean> = _isGlobalMode.asStateFlow()
 
     var bypassCountryCode: String
         get() = prefs.getString("bypassCountryCode", "") ?: ""
@@ -1057,7 +1214,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (adBlockEnabled) {
-            val adBlock = ruleSetRepository.ruleSets.value.find { it.name == "ADBlock" }
+            val adBlock = ruleSetRepository.ruleSets.value.find { it.id == "ADBlock" && !it.isCustom }
             if (adBlock != null) {
                 ruleSetRepository.updateAssignment(adBlock, "REJECT")
             }
@@ -1089,5 +1246,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         /** One second: fast enough to read as live, slow enough to cost nothing. */
         const val STATS_POLL_MS = 1000L
+
+        /** How long a stop may take to be confirmed before the UI gives up waiting. */
+        const val DISCONNECT_WATCHDOG_MS = 3000L
     }
 }

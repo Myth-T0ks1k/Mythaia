@@ -89,7 +89,7 @@ fun AcknowledgementsScreen(onBack: () -> Unit) {
                 title = { Text(stringResource(R.string.acknowledgements)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

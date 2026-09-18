@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,13 +72,13 @@ fun AdvancedSettingsScreen(
     viewModel: VpnViewModel,
     onBack: () -> Unit
 ) {
-    var showIpv6Settings by remember { mutableStateOf(false) }
-    var showEncryptedDns by remember { mutableStateOf(false) }
-    var showLogs by remember { mutableStateOf(false) }
-    var showFragment by remember { mutableStateOf(false) }
-    var showSplitTunnel by remember { mutableStateOf(false) }
-    var showGeoIp by remember { mutableStateOf(false) }
-    var showMitm by remember { mutableStateOf(false) }
+    var showIpv6Settings by rememberSaveable { mutableStateOf(false) }
+    var showEncryptedDns by rememberSaveable { mutableStateOf(false) }
+    var showLogs by rememberSaveable { mutableStateOf(false) }
+    var showFragment by rememberSaveable { mutableStateOf(false) }
+    var showSplitTunnel by rememberSaveable { mutableStateOf(false) }
+    var showGeoIp by rememberSaveable { mutableStateOf(false) }
+    var showMitm by rememberSaveable { mutableStateOf(false) }
 
     val activeSubScreen = showIpv6Settings || showEncryptedDns || showLogs || showFragment || showSplitTunnel || showGeoIp || showMitm
     BackHandler(enabled = activeSubScreen) {

@@ -332,9 +332,11 @@ private fun ProxyChainItem(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "${proxy.serverAddress}:${proxy.serverPort}",
+                    text = proxy.displayEndpoint,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
 
@@ -500,9 +502,11 @@ private fun PickerRow(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "${proxy.serverAddress}:${proxy.serverPort}",
+                text = proxy.displayEndpoint,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
     }

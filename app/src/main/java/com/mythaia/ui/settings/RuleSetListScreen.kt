@@ -49,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,7 +80,7 @@ fun RuleSetListScreen(
     viewModel: VpnViewModel,
     onBack: () -> Unit
 ) {
-    var openCustomId by remember { mutableStateOf<String?>(null) }
+    var openCustomId by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(enabled = openCustomId != null) { openCustomId = null }
 
     val route = openCustomId
@@ -130,6 +131,7 @@ private fun RuleSetListRoot(
     var menuOpen by remember { mutableStateOf(false) }
     var showNewDialog by remember { mutableStateOf(false) }
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var showResetConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -145,7 +147,7 @@ private fun RuleSetListRoot(
                 ),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -172,8 +174,7 @@ private fun RuleSetListRoot(
                                 leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
-                                    viewModel.ruleSetRepository.resetAssignments()
-                                    viewModel.syncRoutingConfigurationToNE()
+                                    showResetConfirm = true
                                 }
                             )
                         }
@@ -260,6 +261,28 @@ private fun RuleSetListRoot(
                 val created = viewModel.ruleSetRepository.addCustomRuleSet(name)
                 showNewDialog = false
                 onOpenCustom(created.id)
+            }
+        )
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            title = { Text(stringResource(R.string.reset_assignments_title)) },
+            text = { Text(stringResource(R.string.reset_assignments_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showResetConfirm = false
+                    viewModel.ruleSetRepository.resetAssignments()
+                    viewModel.syncRoutingConfigurationToNE()
+                }) { Text(stringResource(R.string.reset), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }

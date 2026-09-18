@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,12 +55,15 @@ import com.mythaia.ui.components.countryDisplayName
 fun OnboardingScreen(
     onComplete: (bypassCountryCode: String, adBlockEnabled: Boolean) -> Unit
 ) {
-    var currentPage by remember { mutableIntStateOf(0) }
+    var currentPage by rememberSaveable { mutableIntStateOf(0) }
+    // System back steps through the pages like the on-screen Back button
+    // does, instead of leaving the app.
+    androidx.activity.compose.BackHandler(enabled = currentPage > 0) { currentPage-- }
     val context = LocalContext.current
     val catalog = remember { CountryBypassCatalog.get(context) }
     val defaultCountry = remember { catalog.suggestedCountryCode() ?: "" }
-    var selectedCountry by remember { mutableStateOf(defaultCountry) }
-    var adBlockEnabled by remember { mutableStateOf(false) }
+    var selectedCountry by rememberSaveable { mutableStateOf(defaultCountry) }
+    var adBlockEnabled by rememberSaveable { mutableStateOf(false) }
 
     // Calm Wing hero: everything sits on the warm bone/deep-ink background from
     // the theme; azure is the only accent, surfaces are paper with 1dp hairlines.

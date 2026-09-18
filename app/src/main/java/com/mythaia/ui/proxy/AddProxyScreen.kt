@@ -90,6 +90,15 @@ fun AddProxyScreen(
     var selectedMethod by remember { mutableStateOf<ImportMethod?>(if (initialLink != null) ImportMethod.LINK else null) }
     var linkURL by remember { mutableStateOf(initialLink ?: "") }
     var linkType by remember { mutableStateOf(LinkType.SUBSCRIPTION) }
+
+    // A deep link that arrives while the sheet is already open replaces
+    // whatever was typed; without this it was silently dropped.
+    LaunchedEffect(initialLink) {
+        if (initialLink != null) {
+            linkURL = initialLink
+            selectedMethod = ImportMethod.LINK
+        }
+    }
     var isLoading by remember { mutableStateOf(false) }
     var showLinkError by remember { mutableStateOf(false) }
     var linkErrorMessage by remember { mutableStateOf("") }

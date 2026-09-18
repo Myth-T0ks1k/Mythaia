@@ -105,8 +105,7 @@ class MythaiaVpnService : VpnService() {
             ACTION_START -> {
                 val configJson = intent.getStringExtra(EXTRA_CONFIG)
                 if (configJson == null) {
-                    logger.error("[VPN] Invalid or missing configuration")
-                    stopSelf()
+                    failStart(getString(R.string.tunnel_error_invalid_config))
                     return START_NOT_STICKY
                 }
 
@@ -115,8 +114,7 @@ class MythaiaVpnService : VpnService() {
                 }.getOrNull()
 
                 if (config == null) {
-                    logger.error("[VPN] Invalid or missing configuration")
-                    stopSelf()
+                    failStart(getString(R.string.tunnel_error_invalid_config))
                     return START_NOT_STICKY
                 }
 
@@ -146,14 +144,29 @@ class MythaiaVpnService : VpnService() {
                     updateNotification(config.name)
                 }
             }
-            null -> {
-                // No-op: Always On VPN is not implemented on Android, so we
-                // don't expect the system to auto-start the service. Stop
-                // immediately if we get here unexpectedly (e.g. system tried
-                // to restart a killed STICKY service — shouldn't happen since
-                // we return START_NOT_STICKY).
-                logger.debug("[VPN] Service started without action; stopping")
-                stopSelf()
+            SERVICE_INTERFACE, null -> {
+                // Always-on VPN: the system starts us with no configuration
+                // (after a reboot, or when the user turns the toggle on).
+                // Bring up whatever the app has selected, the same way the
+                // tile and the watch do.
+                if (isRunning) return START_NOT_STICKY
+                logger.info("[VPN] Started by the system; connecting the selected server")
+                Thread({
+                    val refusal = TunnelLauncher.startSelected(this)
+                    if (refusal != null) {
+                        android.os.Handler(mainLooper).post {
+                            if (!isRunning) {
+                                failStart(
+                                    when (refusal) {
+                                        TunnelLauncher.Refusal.NO_SELECTION -> getString(R.string.no_server_selected)
+                                        TunnelLauncher.Refusal.NEEDS_CONSENT -> getString(R.string.permission_denied)
+                                        TunnelLauncher.Refusal.FAILED -> getString(R.string.tunnel_error_establish)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }, "always-on-connect").apply { isDaemon = true }.start()
             }
             else -> {
                 // Unknown action
@@ -189,6 +202,16 @@ class MythaiaVpnService : VpnService() {
         // Invalidate any deferred finishStopVpn() from a previous stop so it
         // can't tear down the session we are about to start.
         sessionGeneration++
+
+        // A stop from a moment ago may still be draining its lwIP executor;
+        // nativeInit() before that nativeShutdown() completes trips the
+        // single-netif assert and takes the process down.
+        pendingStop?.let { latch ->
+            try {
+                latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {}
+            pendingStop = null
+        }
 
         // Stop the existing stack before starting a new one. lwIP uses global
         // state (netif_default) and LWIP_SINGLE_NETIF asserts if netif_add() is
@@ -229,12 +252,15 @@ class MythaiaVpnService : VpnService() {
         currentConfig = effectiveConfig
         DnsCache.setActiveProxyDomain(effectiveConfig.serverAddress)
 
-        // Create foreground notification
+        // Create foreground notification. It reads "Connecting" until the
+        // stack is actually up; claiming Connected before the TUN exists
+        // would be a lie for the seconds a failure takes to show.
+        val connectingNotification = buildNotification(effectiveConfig.name, connected = false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, buildNotification(effectiveConfig.name),
+            startForeground(NOTIFICATION_ID, connectingNotification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
-            startForeground(NOTIFICATION_ID, buildNotification(effectiveConfig.name))
+            startForeground(NOTIFICATION_ID, connectingNotification)
         }
 
         if (effectiveConfig.outboundProtocol.isLayer3) {
@@ -244,8 +270,7 @@ class MythaiaVpnService : VpnService() {
 
         // Build and establish TUN interface
         val fd = buildTunInterface(effectiveConfig) ?: run {
-            logger.error("[VPN] Failed to set tunnel settings: Failed to establish TUN interface")
-            stopSelf()
+            failStart(getString(R.string.tunnel_error_establish))
             return
         }
         tunFd = fd
@@ -285,7 +310,22 @@ class MythaiaVpnService : VpnService() {
             reapplyTunnelSettings(effectiveConfig)
         }
 
-        stack.start(fd, effectiveConfig, ipv6Dns)
+        try {
+            stack.start(fd, effectiveConfig, ipv6Dns)
+        } catch (e: Exception) {
+            logger.error("[VPN] lwIP stack could not start: ${e.message ?: e}")
+            lwipStack = null
+            sessionStartedAt = 0L
+            activeServerName = null
+            setActive(false)
+            MythaiaWidgetProvider.refresh(this)
+            try { fd.close() } catch (_: Exception) {}
+            tunFd = null
+            failStart(getString(R.string.tunnel_error_start, e.message ?: e.toString()))
+            return
+        }
+
+        updateNotification(effectiveConfig.name)
 
         // Begin observing the underlying physical network so we can restart
         // the stack when the user roams between Wi-Fi and Cellular.
@@ -295,6 +335,29 @@ class MythaiaVpnService : VpnService() {
         // proactively restart connections after long periods of inactivity
         // (NAT rebinds, server-side idle sweeps).
         startScreenStateMonitoring()
+    }
+
+    /**
+     * A start that did not produce a tunnel.
+     *
+     * Logs, tells the UI why through [notifyStartFailure], drops the
+     * foreground notification the start put up, and stops. Without this the
+     * service simply vanished and the power button flipped back with no
+     * explanation.
+     */
+    private fun failStart(message: String) {
+        logger.error("[VPN] $message")
+        currentConfig = null
+        DnsCache.setActiveProxyDomain(null)
+        SocketProtector.clearProtector()
+        @Suppress("DEPRECATION")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            stopForeground(true)
+        }
+        notifyStartFailure(message)
+        stopSelf()
     }
 
     private fun stopVpn() {
@@ -328,12 +391,25 @@ class MythaiaVpnService : VpnService() {
         if (stack != null) {
             // Use the completion callback so the TUN file descriptor is closed
             // AFTER the lwIP executor finishes draining — avoids racing with the
-            // packet reader thread.
-            stack.stop { finishStopVpn(fdToClose, generation) }
+            // packet reader thread. startVpn() waits on the latch so a quick
+            // reconnect cannot overlap the teardown.
+            val done = java.util.concurrent.CountDownLatch(1)
+            pendingStop = done
+            stack.stop {
+                try {
+                    finishStopVpn(fdToClose, generation)
+                } finally {
+                    done.countDown()
+                }
+            }
         } else {
             finishStopVpn(fdToClose, generation)
         }
     }
+
+    /** Counts down when the last lwIP teardown has finished on its executor. */
+    @Volatile
+    private var pendingStop: java.util.concurrent.CountDownLatch? = null
 
     private fun finishStopVpn(fdToClose: ParcelFileDescriptor?, generation: Int) {
         // Closing the captured old fd is always safe — it belongs to the session
@@ -373,7 +449,7 @@ class MythaiaVpnService : VpnService() {
         val text = config.wireGuardConfig
         if (text.isNullOrBlank()) {
             logger.error("[VPN] ${config.name} has no WireGuard configuration")
-            stopSelf()
+            failStart(getString(R.string.tunnel_error_wireguard_empty))
             return
         }
 
@@ -382,7 +458,7 @@ class MythaiaVpnService : VpnService() {
         // quietly skip every hop the user asked for.
         if (!config.chain.isNullOrEmpty()) {
             logger.error("[VPN] WireGuard cannot be the exit of a proxy chain")
-            stopSelf()
+            failStart(getString(R.string.tunnel_error_wireguard_chain))
             return
         }
 
@@ -390,13 +466,12 @@ class MythaiaVpnService : VpnService() {
             com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parse(text)
         } catch (e: Exception) {
             logger.error("[VPN] WireGuard configuration is not usable: ${e.message ?: e}")
-            stopSelf()
+            failStart(getString(R.string.tunnel_error_wireguard_invalid, e.message ?: e.toString()))
             return
         }
 
         val fd = buildWireGuardTun(parsed) ?: run {
-            logger.error("[VPN] Failed to set tunnel settings: Failed to establish TUN interface")
-            stopSelf()
+            failStart(getString(R.string.tunnel_error_establish))
             return
         }
         tunFd = fd
@@ -416,13 +491,22 @@ class MythaiaVpnService : VpnService() {
         val tunnel = com.mythaia.vpn.protocol.wireguard.WireGuardTunnel(parsed)
         tunnel.onConnected = {
             logger.info("[VPN] WireGuard session established")
+            android.os.Handler(mainLooper).post {
+                if (wireGuardTunnel === tunnel) updateNotification(config.name)
+            }
         }
         // Left running, the tunnel would keep the TUN's default route while
         // carrying nothing: every app times out with the UI still on Connected.
         // Stopping hands the routes back and lets the user see what happened.
         tunnel.onFailure = { reason ->
             logger.error("[VPN] WireGuard could not reach the peer: $reason")
-            stopVpn()
+            // Off the tunnel's own thread: stopVpn touches the service state.
+            android.os.Handler(mainLooper).post {
+                if (wireGuardTunnel === tunnel) {
+                    stopVpn()
+                    notifyStartFailure(getString(R.string.tunnel_error_wireguard_peer, reason))
+                }
+            }
         }
 
         try {
@@ -431,7 +515,7 @@ class MythaiaVpnService : VpnService() {
             logger.error("[VPN] WireGuard could not start: ${e.message ?: e}")
             try { fd.close() } catch (_: Exception) {}
             tunFd = null
-            stopSelf()
+            failStart(getString(R.string.tunnel_error_start, e.message ?: e.toString()))
             return
         }
 
@@ -814,8 +898,18 @@ class MythaiaVpnService : VpnService() {
                 lastNetworkAvailable = false
                 lastUnderlyingNetwork = null
                 lastUnderlyingTransports = 0
+                // Resolving through the network that just went away would
+                // fail every new dial until another callback happened along.
+                DnsCache.setUnderlyingNetwork(null)
                 lwipStack?.handleNetworkPathChange("network path unavailable")
                 wireGuardTunnel?.handleNetworkPathChange("network path unavailable")
+
+                // Another network (cellular under a lost Wi-Fi) may already
+                // be up; its onAvailable was ignored earlier for not being
+                // active, so complete the handoff now instead of waiting.
+                findUnderlyingNetwork()?.let { next ->
+                    handlePathUpdate(next, available = true)
+                }
             }
             return
         }
@@ -876,7 +970,7 @@ class MythaiaVpnService : VpnService() {
         return if (parts.isEmpty()) "unknown" else parts.joinToString("+")
     }
 
-    private fun buildNotification(configName: String? = null): Notification {
+    private fun buildNotification(configName: String? = null, connected: Boolean = true): Notification {
         val channelId = "mythaia_vpn"
         val channel = NotificationChannel(
             channelId,
@@ -905,8 +999,8 @@ class MythaiaVpnService : VpnService() {
             null, getString(R.string.disconnect), disconnectIntent
         ).build()
 
-        val connected = getString(R.string.connected)
-        val contentText = if (configName != null) "$connected - $configName" else connected
+        val state = getString(if (connected) R.string.connected else R.string.connecting)
+        val contentText = if (configName != null) "$state \u00B7 $configName" else state
 
         return Notification.Builder(this, channelId)
             .setContentTitle(getString(R.string.app_name))
@@ -991,6 +1085,29 @@ class MythaiaVpnService : VpnService() {
 
         fun removeStateListener(listener: () -> Unit) {
             stateListeners.remove(listener)
+        }
+
+        /**
+         * Callbacks for a start that failed, carrying a user-readable reason.
+         *
+         * Separate from [stateListeners]: a failed start never made the
+         * tunnel active, so there is no state change to observe.
+         */
+        private val startFailureListeners =
+            java.util.concurrent.CopyOnWriteArrayList<(String) -> Unit>()
+
+        fun addStartFailureListener(listener: (String) -> Unit) {
+            startFailureListeners.add(listener)
+        }
+
+        fun removeStartFailureListener(listener: (String) -> Unit) {
+            startFailureListeners.remove(listener)
+        }
+
+        private fun notifyStartFailure(message: String) {
+            for (listener in startFailureListeners) {
+                runCatching { listener(message) }
+            }
         }
 
         private fun setActive(active: Boolean) {

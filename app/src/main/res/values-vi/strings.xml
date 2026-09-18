@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">Sao chép liên kết</string>
-    <string name="supports_proxy_link">Hỗ trợ liên kết VLESS, Shadowsocks, NaiveProxy, đăng ký và Clash</string>
+    <string name="supports_proxy_link">Hỗ trợ liên kết VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, TUIC, AnyTLS, NaiveProxy và WireGuard, cùng URL đăng ký và tệp Clash</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -260,7 +260,7 @@
     <string name="experimental_features">Tính năng thử nghiệm</string>
     <string name="experimental_footer">Bật các tính năng đang phát triển, như tạo bộ quy tắc định tuyến tùy chỉnh.</string>
     <string name="global_mode">Chế độ toàn cục</string>
-    <string name="grpc_authority">Authority</string>
+    <string name="grpc_authority">Authority (:authority)</string>
     <string name="grpc_service_name">Tên dịch vụ</string>
     <string name="http2_proxy">Proxy HTTP/2</string>
     <string name="https_proxy">Proxy HTTPS</string>
@@ -307,4 +307,43 @@
     <plurals name="every_n_hours">
         <item quantity="other">Mỗi %1$d giờ</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">Không thể đọc cấu hình máy chủ.</string>
+    <string name="tunnel_error_establish">Android từ chối tạo giao diện VPN. Hãy kiểm tra không có VPN nào khác đang chạy và Mythaia được phép dùng VPN.</string>
+    <string name="tunnel_error_start">Không thể khởi động đường hầm: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">Hồ sơ WireGuard này chưa có cấu hình. Hãy chỉnh sửa và dán nội dung tệp .conf.</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard không thể là điểm thoát của chuỗi proxy.</string>
+    <string name="tunnel_error_wireguard_invalid">Cấu hình WireGuard không hợp lệ: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">Máy đối tác WireGuard không phản hồi: %1$s</string>
+
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">Bổ sung (JSON)</string>
+    <string name="min_tls_version">Phiên bản TLS tối thiểu</string>
+    <string name="max_tls_version">Phiên bản TLS tối đa</string>
+    <string name="any_version">Bất kỳ</string>
+    <string name="invalid_public_key">Khóa công khai không hợp lệ</string>
+    <string name="invalid_short_id">Chỉ chữ số hex, tối đa 16</string>
+    <string name="invalid_json">JSON không hợp lệ</string>
+    <string name="invalid_port">Cổng phải nằm trong khoảng 1 đến 65535</string>
+    <string name="edit_limited_protocol">Ở đây chỉ có thể thay đổi tên và địa chỉ của máy chủ %1$s. Nhập lại liên kết để thay đổi các mục khác.</string>
+    <string name="delete_proxy_title">Xóa máy chủ?</string>
+    <string name="delete_proxy_message">%1$s sẽ bị xóa. Các bộ quy tắc gán cho nó sẽ quay về máy chủ mặc định.</string>
+    <string name="delete_subscription_title">Xóa gói đăng ký?</string>
+    <string name="delete_subscription_message">%1$s và tất cả máy chủ của nó (%2$d) sẽ bị xóa.</string>
+    <string name="more_options">Tùy chọn khác</string>
+    <string name="camera_permission_blocked">Quyền truy cập máy ảnh bị chặn. Hãy cho phép trong cài đặt ứng dụng để quét mã QR.</string>
+    <string name="camera_permission_rationale">Máy ảnh chỉ được dùng để đọc mã QR.</string>
+    <string name="open_settings">Mở cài đặt</string>
+    <string name="try_again">Thử lại</string>
+    <string name="reset_assignments_title">Đặt lại quy tắc định tuyến?</string>
+    <string name="reset_assignments_message">Mọi bộ quy tắc sẽ quay về máy chủ mặc định.</string>
+    <string name="invalid_rule_value">Giá trị này không khớp với loại quy tắc.</string>
+    <string name="mitm_install_manual">Android không còn cho phép ứng dụng cài chứng chỉ gốc. Hãy xuất chứng chỉ rồi thêm trong Cài đặt › Bảo mật › Mã hóa và thông tin xác thực › Cài chứng chỉ › Chứng chỉ CA.</string>
+    <string name="mitm_regenerate_ca">Tạo lại chứng chỉ gốc</string>
+    <string name="mitm_regenerate_ca_message">Chứng chỉ hiện tại sẽ ngừng hoạt động trên mọi thiết bị tin cậy nó. Tiếp tục?</string>
+    <string name="mitm_remove_certificate">Xóa chứng chỉ</string>
+    <string name="mitm_remove_ca_message">Việc chặn bắt sẽ dừng cho đến khi tạo và cài chứng chỉ mới.</string>
+    <string name="dns_server_invalid">Không phải máy chủ hợp lệ cho giao thức đã chọn.</string>
+    <string name="fingerprint_already_trusted">Dấu vân tay này đã được tin cậy.</string>
+    <string name="no_server_selected">Chưa chọn máy chủ.</string>
 </resources>

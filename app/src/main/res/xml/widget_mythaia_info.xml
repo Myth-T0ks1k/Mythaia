@@ -8,6 +8,7 @@
     android:targetCellHeight="1"
     android:initialLayout="@layout/widget_mythaia"
     android:previewLayout="@layout/widget_mythaia"
+    android:previewImage="@mipmap/ic_launcher"
     android:resizeMode="horizontal"
     android:widgetCategory="home_screen"
     android:description="@string/widget_description"

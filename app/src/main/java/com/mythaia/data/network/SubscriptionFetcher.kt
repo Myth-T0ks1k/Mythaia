@@ -80,27 +80,14 @@ object SubscriptionFetcher {
                 throw FetchError.NetworkError("HTTP $responseCode")
             }
 
-            val data = connection.inputStream.readBytes()
+            val data = readBounded(connection.inputStream, MAX_BODY_BYTES)
 
             val profileTitle = parseProfileTitle(connection)
             val userInfo = parseSubscriptionUserInfo(connection)
 
-            // Decode body: try base64 first, fall back to raw UTF-8
-            val bodyString: String
-            val decoded = runCatching {
-                Base64.decode(data, Base64.DEFAULT)
-            }.getOrNull()
-            val decodedString = decoded?.let { String(it, Charsets.UTF_8) }
+            val bodyString = decodeBody(data)
 
-            val parsablePrefixes = ProxyConfiguration.parsableUrlPrefixes
-
-            bodyString = if (decodedString != null && parsablePrefixes.any { decodedString.contains(it) }) {
-                decodedString
-            } else {
-                String(data, Charsets.UTF_8)
-            }
-
-            if (bodyString.contains("proxies:")) {
+            if (looksLikeClash(bodyString)) {
                 val result = ClashProxyParser.parse(bodyString)
                 if (result.configurations.isEmpty()) throw FetchError.NoConfigurations()
                 return@withContext Result(
@@ -113,6 +100,7 @@ object SubscriptionFetcher {
                 )
             }
 
+            val parsablePrefixes = ProxyConfiguration.parsableUrlPrefixes
             val configurations = bodyString
                 .lines()
                 .map { it.trim() }
@@ -133,6 +121,47 @@ object SubscriptionFetcher {
             connection.disconnect()
         }
     }
+
+    /** Panels do not serve lists this large; anything bigger is a misconfiguration, not a subscription. */
+    private const val MAX_BODY_BYTES = 16 * 1024 * 1024
+
+    private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            if (out.size() + n > limit) throw FetchError.NetworkError("Response larger than $limit bytes")
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
+    }
+
+    /**
+     * The body as text: base64 (either alphabet) when decoding yields
+     * something that reads as a share-link list or a Clash document, raw
+     * UTF-8 otherwise.
+     */
+    internal fun decodeBody(data: ByteArray): String {
+        val raw = String(data, Charsets.UTF_8)
+        val prefixes = ProxyConfiguration.parsableUrlPrefixes
+        fun recognisable(text: String) = prefixes.any { text.contains(it) } || looksLikeClash(text)
+        if (recognisable(raw)) return raw
+
+        for (flags in intArrayOf(Base64.DEFAULT, Base64.URL_SAFE)) {
+            val decoded = runCatching { Base64.decode(data, flags) }.getOrNull() ?: continue
+            val text = String(decoded, Charsets.UTF_8)
+            if (recognisable(text)) return text
+        }
+        return raw
+    }
+
+    /** A Clash document has a top-level `proxies:` key, not merely the word somewhere. */
+    internal fun looksLikeClash(text: String): Boolean =
+        text.lineSequence().any { line ->
+            val t = line.trimStart()
+            t.startsWith("proxies:") || t.startsWith("proxy-providers:")
+        }
 
     private fun parseProfileTitle(connection: HttpURLConnection): String? {
         val value = connection.getHeaderField("profile-title") ?: return null

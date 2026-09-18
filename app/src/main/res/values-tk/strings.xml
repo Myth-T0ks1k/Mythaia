@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">Baglanyşygy göçür</string>
-    <string name="supports_proxy_link">VLESS, Shadowsocks, NaiveProxy, abuna we Clash baglanyşyklaryny goldaýar</string>
+    <string name="supports_proxy_link">VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2, TUIC, AnyTLS, NaiveProxy we WireGuard baglanyşyklaryny, abuna URL-lerini we Clash faýllaryny goldaýar</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -260,7 +260,7 @@
     <string name="experimental_features">Synag mümkinçilikleri</string>
     <string name="experimental_footer">Işlenip düzülýän mümkinçilikleri açýar — meselem, öz marşrut düzgün toplumlaryňy döretmek.</string>
     <string name="global_mode">Global režim</string>
-    <string name="grpc_authority">Authority</string>
+    <string name="grpc_authority">Authority (:authority)</string>
     <string name="grpc_service_name">Hyzmat ady</string>
     <string name="http2_proxy">HTTP/2 proksi</string>
     <string name="https_proxy">HTTPS proksi</string>
@@ -311,4 +311,43 @@
         <item quantity="one">Her sagat</item>
         <item quantity="other">Her %1$d sagatdan</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">Serweriň sazlamalaryny okap bolmady.</string>
+    <string name="tunnel_error_establish">Android VPN interfeýsini döretmäge rugsat bermedi. Başga VPN işlemeýändigini we Mythaia-a VPN işletmäge rugsat berlendigini barlaň.</string>
+    <string name="tunnel_error_start">Tuneli işledip bolmady: %1$s</string>
+    <string name="tunnel_error_wireguard_empty">Bu WireGuard profilinde sazlama ýok. Ony düzediň we .conf mazmunyny goýuň.</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard proksi zynjyrynyň çykyşy bolup bilmez.</string>
+    <string name="tunnel_error_wireguard_invalid">WireGuard sazlamasy ulanyp bolmaýar: %1$s</string>
+    <string name="tunnel_error_wireguard_peer">WireGuard taraby jogap bermedi: %1$s</string>
+
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">Goşmaça (JSON)</string>
+    <string name="min_tls_version">Iň pes TLS wersiýasy</string>
+    <string name="max_tls_version">Iň ýokary TLS wersiýasy</string>
+    <string name="any_version">Islendik</string>
+    <string name="invalid_public_key">Nädogry açyk açar</string>
+    <string name="invalid_short_id">Diňe hex sanlar, iň köp 16</string>
+    <string name="invalid_json">Nädogry JSON</string>
+    <string name="invalid_port">Port 1 bilen 65535 aralygynda bolmaly</string>
+    <string name="edit_limited_protocol">Bu ýerde %1$s serweriniň diňe adyny we salgysyny üýtgedip bolýar. Başga zady üýtgetmek üçin baglanyşygy täzeden import ediň.</string>
+    <string name="delete_proxy_title">Serwer pozulsunmy?</string>
+    <string name="delete_proxy_message">%1$s aýrylar. Oňa bellenen düzgün toplumlary adaty serwere geçer.</string>
+    <string name="delete_subscription_title">Abuna pozulsunmy?</string>
+    <string name="delete_subscription_message">%1$s we onuň ähli serwerleri (%2$d) aýrylar.</string>
+    <string name="more_options">Goşmaça opsiýalar</string>
+    <string name="camera_permission_blocked">Kamera girişi ýapyk. QR kodlary skanirlemek üçin programma sazlamalarynda rugsat beriň.</string>
+    <string name="camera_permission_rationale">Kamera diňe QR kodlary okamak üçin ulanylýar.</string>
+    <string name="open_settings">Sazlamalary aç</string>
+    <string name="try_again">Täzeden synanyş</string>
+    <string name="reset_assignments_title">Ugrukdyrma düzgünleri täzeden bellensinmi?</string>
+    <string name="reset_assignments_message">Ähli düzgün toplumlary adaty serwere geçer.</string>
+    <string name="invalid_rule_value">Bu baha düzgün görnüşine gabat gelmeýär.</string>
+    <string name="mitm_install_manual">Android indi programmalara kök şahadatnamalaryny gurnamaga rugsat bermeýär. Şahadatnamany eksport ediň, soňra Sazlamalar › Howpsuzlyk › Şifrleme we maglumatlar › Şahadatnama gurna › CA şahadatnamasy bölüminde goşuň.</string>
+    <string name="mitm_regenerate_ca">Kök şahadatnamany täzeden döret</string>
+    <string name="mitm_regenerate_ca_message">Häzirki şahadatnama oňa ynanýan ähli enjamlarda işlemegini bes eder. Dowam etmelimi?</string>
+    <string name="mitm_remove_certificate">Şahadatnamany aýyr</string>
+    <string name="mitm_remove_ca_message">Täze şahadatnama döredilip gurnalýança tutup almak durar.</string>
+    <string name="dns_server_invalid">Saýlanan protokol üçin dogry serwer däl.</string>
+    <string name="fingerprint_already_trusted">Bu barmak yzy eýýäm ynamly.</string>
+    <string name="no_server_selected">Serwer saýlanmadyk.</string>
 </resources>

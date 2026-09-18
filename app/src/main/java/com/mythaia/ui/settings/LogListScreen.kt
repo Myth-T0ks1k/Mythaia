@@ -7,7 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.mythaia.ui.theme.LocalMythaiaDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -112,7 +112,7 @@ fun LogListScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = { if (selectMode) selectMode = false else onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -249,18 +249,12 @@ private fun LogRow(
         Column(modifier = Modifier.padding(start = 4.dp)) {
             Text(
                 text = entry.message,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp
-                )
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
             )
             Spacer(Modifier.size(2.dp))
             Text(
                 text = formatTime(entry.timestamp),
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp
-                ),
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
@@ -318,6 +312,6 @@ private fun LogsModel.LogLevel.icon() = when (this) {
 private fun LogsModel.LogLevel.color(): Color = when (this) {
     LogsModel.LogLevel.info -> MaterialTheme.colorScheme.onSurfaceVariant
     // Wing semantic accents: theme-aware warning orange and error red.
-    LogsModel.LogLevel.warning -> if (isSystemInDarkTheme()) WarningDark else WarningLight
+    LogsModel.LogLevel.warning -> if (LocalMythaiaDarkTheme.current) WarningDark else WarningLight
     LogsModel.LogLevel.error -> MaterialTheme.colorScheme.error
 }

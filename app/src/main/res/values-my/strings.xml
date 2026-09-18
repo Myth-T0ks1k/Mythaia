@@ -108,7 +108,7 @@
 
     <!-- Phase 9: Proxy List -->
     <string name="copy_link">လင့်ခ်ကူးယူ</string>
-    <string name="supports_proxy_link">VLESS၊ Shadowsocks၊ NaiveProxy၊ စာရင်းသွင်းမှုနှင့် Clash လင့်ခ်များကို ပံ့ပိုးပါသည်</string>
+    <string name="supports_proxy_link">VLESS၊ VMess၊ Trojan၊ Shadowsocks၊ SOCKS5၊ Hysteria2၊ TUIC၊ AnyTLS၊ NaiveProxy နှင့် WireGuard လင့်ခ်များ၊ စာရင်းသွင်း URL များနှင့် Clash ဖိုင်များကို ပံ့ပိုးပါသည်</string>
 
     <!-- Phase 9: QR Code -->
 
@@ -307,4 +307,43 @@
     <plurals name="every_n_hours">
         <item quantity="other">%1$d နာရီတိုင်း</item>
     </plurals>
+
+    <string name="tunnel_error_invalid_config">ဆာဗာ ဖွဲ့စည်းပုံကို ဖတ်၍မရပါ။</string>
+    <string name="tunnel_error_establish">Android သည် VPN အင်တာဖေ့စ်ကို ဖန်တီးခွင့်မပြုပါ။ အခြား VPN မဖွင့်ထားကြောင်းနှင့် Mythaia ကို VPN သုံးခွင့်ပြုထားကြောင်း စစ်ဆေးပါ။</string>
+    <string name="tunnel_error_start">တန်နယ်ကို စတင်၍မရပါ- %1$s</string>
+    <string name="tunnel_error_wireguard_empty">ဤ WireGuard ပရိုဖိုင်တွင် ဖွဲ့စည်းပုံမရှိပါ။ ပြင်ဆင်ပြီး .conf အကြောင်းအရာကို ကူးထည့်ပါ။</string>
+    <string name="tunnel_error_wireguard_chain">WireGuard သည် ပရောက်စီကွင်းဆက်၏ အထွက်မဖြစ်နိုင်ပါ။</string>
+    <string name="tunnel_error_wireguard_invalid">WireGuard ဖွဲ့စည်းပုံကို အသုံးမပြုနိုင်ပါ- %1$s</string>
+    <string name="tunnel_error_wireguard_peer">WireGuard peer မှ အကြောင်းမပြန်ပါ- %1$s</string>
+
+    <string name="short_id">Short ID</string>
+    <string name="extra_json">အပို (JSON)</string>
+    <string name="min_tls_version">အနိမ့်ဆုံး TLS ဗားရှင်း</string>
+    <string name="max_tls_version">အမြင့်ဆုံး TLS ဗားရှင်း</string>
+    <string name="any_version">မည်သည့်</string>
+    <string name="invalid_public_key">မမှန်ကန်သော public key</string>
+    <string name="invalid_short_id">hex ဂဏန်းများသာ၊ အများဆုံး ၁၆ လုံး</string>
+    <string name="invalid_json">မမှန်ကန်သော JSON</string>
+    <string name="invalid_port">Port သည် 1 မှ 65535 အတွင်း ရှိရမည်</string>
+    <string name="edit_limited_protocol">%1$s ဆာဗာ၏ အမည်နှင့် လိပ်စာကိုသာ ဤနေရာတွင် ပြောင်းနိုင်သည်။ အခြားအရာများ ပြောင်းရန် လင့်ခ်ကို ပြန်ထည့်သွင်းပါ။</string>
+    <string name="delete_proxy_title">ဆာဗာကို ဖျက်မလား?</string>
+    <string name="delete_proxy_message">%1$s ကို ဖယ်ရှားပါမည်။ ၎င်းကို သတ်မှတ်ထားသော စည်းမျဉ်းအစုများ မူလဆာဗာသို့ ပြန်သွားပါမည်။</string>
+    <string name="delete_subscription_title">စာရင်းသွင်းမှုကို ဖျက်မလား?</string>
+    <string name="delete_subscription_message">%1$s နှင့် ၎င်း၏ ဆာဗာအားလုံး (%2$d) ကို ဖယ်ရှားပါမည်။</string>
+    <string name="more_options">နောက်ထပ် ရွေးချယ်စရာများ</string>
+    <string name="camera_permission_blocked">ကင်မရာ အသုံးပြုခွင့် ပိတ်ထားသည်။ QR ကုဒ်ဖတ်ရန် အက်ပ်ဆက်တင်တွင် ခွင့်ပြုပါ။</string>
+    <string name="camera_permission_rationale">ကင်မရာကို QR ကုဒ်ဖတ်ရန်သာ အသုံးပြုသည်။</string>
+    <string name="open_settings">ဆက်တင်ဖွင့်ရန်</string>
+    <string name="try_again">ထပ်စမ်းရန်</string>
+    <string name="reset_assignments_title">လမ်းကြောင်း စည်းမျဉ်းများကို ပြန်လည်သတ်မှတ်မလား?</string>
+    <string name="reset_assignments_message">စည်းမျဉ်းအစုအားလုံး မူလဆာဗာသို့ ပြန်သွားပါမည်။</string>
+    <string name="invalid_rule_value">ဤတန်ဖိုးသည် စည်းမျဉ်းအမျိုးအစားနှင့် မကိုက်ညီပါ။</string>
+    <string name="mitm_install_manual">Android သည် အက်ပ်များကို root certificate တပ်ဆင်ခွင့် မပေးတော့ပါ။ Certificate ကို ထုတ်ယူပြီး ဆက်တင် › လုံခြုံရေး › ကုဒ်ဝှက်ခြင်းနှင့် အထောက်အထား › Certificate တပ်ဆင်ရန် › CA certificate တွင် ထည့်ပါ။</string>
+    <string name="mitm_regenerate_ca">Root certificate ကို ပြန်ဖန်တီးရန်</string>
+    <string name="mitm_regenerate_ca_message">လက်ရှိ certificate သည် ၎င်းကို ယုံကြည်သော စက်အားလုံးတွင် အလုပ်မလုပ်တော့ပါ။ ဆက်လုပ်မလား?</string>
+    <string name="mitm_remove_certificate">Certificate ဖယ်ရှားရန်</string>
+    <string name="mitm_remove_ca_message">Certificate အသစ် ဖန်တီးတပ်ဆင်ပြီးသည်အထိ ကြားဖြတ်ခြင်း ရပ်တန့်ပါမည်။</string>
+    <string name="dns_server_invalid">ရွေးချယ်ထားသော ပရိုတိုကောအတွက် မမှန်ကန်သော ဆာဗာ။</string>
+    <string name="fingerprint_already_trusted">ဤလက်ဗွေကို ယုံကြည်ထားပြီးသား ဖြစ်သည်။</string>
+    <string name="no_server_selected">ဆာဗာ ရွေးချယ်မထားပါ။</string>
 </resources>

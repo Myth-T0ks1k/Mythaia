@@ -192,10 +192,18 @@ fun EncryptedDnsSettingsScreen(
                     }
                 }
 
+                // What the resolver would make of it: a value it cannot parse
+                // silently falls back to the system resolver, so say so here.
+                val serverValid = serverText.isBlank() ||
+                    com.mythaia.vpn.util.DnsUpstream.from(dnsProtocol, serverText) != null
                 OutlinedTextField(
                     value = serverText,
                     onValueChange = { serverText = it },
                     label = { Text(stringResource(R.string.dns_server)) },
+                    isError = !serverValid,
+                    supportingText = if (!serverValid) {
+                        { Text(stringResource(R.string.dns_server_invalid)) }
+                    } else null,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),

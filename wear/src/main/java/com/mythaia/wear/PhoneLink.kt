@@ -68,6 +68,7 @@ class PhoneLink(private val context: Context) {
 
     private val listener = MessageClient.OnMessageReceivedListener { event: MessageEvent ->
         if (event.path == PATH_STATUS) {
+            awaitingReply = false
             val line = String(event.data ?: ByteArray(0), StandardCharsets.UTF_8)
             onStatus?.invoke(PhoneStatus.parse(line))
         }
@@ -116,8 +117,23 @@ class PhoneLink(private val context: Context) {
             }
             delivered = delivered || ok
         }
-        if (!delivered) onStatus?.invoke(PhoneStatus(PhoneStatus.State.UNREACHABLE, ""))
+        if (!delivered) {
+            onStatus?.invoke(PhoneStatus(PhoneStatus.State.UNREACHABLE, ""))
+            return
+        }
+        // Delivered is not answered: a phone without the app, or one whose
+        // connect is taking too long, would otherwise leave the spinner up
+        // for good. The phone's own push cancels this when it arrives.
+        awaitingReply = true
+        kotlinx.coroutines.delay(REPLY_TIMEOUT_MS)
+        if (awaitingReply) {
+            awaitingReply = false
+            onStatus?.invoke(PhoneStatus(PhoneStatus.State.UNREACHABLE, ""))
+        }
     }
+
+    @Volatile
+    private var awaitingReply = false
 
     private suspend fun connectedNodes(): List<Node> = suspendCancellableCoroutine { continuation ->
         Wearable.getNodeClient(context).connectedNodes
@@ -126,6 +142,9 @@ class PhoneLink(private val context: Context) {
     }
 
     private companion object {
+        /** Long enough for a DNS lookup and a tunnel start on the phone. */
+        const val REPLY_TIMEOUT_MS = 15_000L
+
         const val PATH_COMMAND = "/mythaia/command"
         const val PATH_STATUS_REQUEST = "/mythaia/status/request"
         const val PATH_STATUS = "/mythaia/status"

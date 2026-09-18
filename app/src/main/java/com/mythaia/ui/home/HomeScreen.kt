@@ -56,7 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.mythaia.ui.theme.LocalMythaiaDarkTheme
 import com.mythaia.R
 import com.mythaia.ui.components.SessionStatsRow
 import com.mythaia.ui.components.LatencyBadge
@@ -120,11 +120,12 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
     var showingAddSheet by remember { mutableStateOf(false) }
     var showingManualAddSheet by remember { mutableStateOf(false) }
     var showingConfigPicker by remember { mutableStateOf(false) }
-    // Shadows the SettingsScreen "Global Mode" toggle — both write to the same
-    // `proxyMode` pref, and LwipStack observes the key to reload routing live.
-    var isGlobalMode by remember { mutableStateOf(viewModel.proxyMode == "global") }
+    // Shared with the SettingsScreen "Global Mode" toggle through the view
+    // model, so a flip on either screen shows on both; LwipStack observes the
+    // underlying pref to reload routing live.
+    val isGlobalMode by viewModel.isGlobalMode.collectAsState()
 
-    val isDark = isSystemInDarkTheme()
+    val isDark = LocalMythaiaDarkTheme.current
     val gradientStart by animateColorAsState(
         targetValue = when {
             isConnected && isDark -> GradientConnectedStartDark
@@ -178,10 +179,7 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
                 SegmentedButton(
                     selected = !isGlobalMode,
                     onClick = {
-                        if (isGlobalMode) {
-                            isGlobalMode = false
-                            viewModel.proxyMode = "rule"
-                        }
+                        if (isGlobalMode) viewModel.proxyMode = "rule"
                     },
                     shape = SegmentedButtonDefaults.itemShape(0, 2),
                     colors = segmentColors
@@ -189,10 +187,7 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
                 SegmentedButton(
                     selected = isGlobalMode,
                     onClick = {
-                        if (!isGlobalMode) {
-                            isGlobalMode = true
-                            viewModel.proxyMode = "global"
-                        }
+                        if (!isGlobalMode) viewModel.proxyMode = "global"
                     },
                     shape = SegmentedButtonDefaults.itemShape(1, 2),
                     colors = segmentColors

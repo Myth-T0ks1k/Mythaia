@@ -143,7 +143,7 @@ fun CustomRuleSetDetailScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -243,7 +243,9 @@ fun CustomRuleSetDetailScreen(
                         .background(MaterialTheme.colorScheme.surface),
                     contentPadding = PaddingValues(vertical = 4.dp)
                 ) {
-                    items(rules.size, key = { it }) { index ->
+                    // Keyed by content rather than position, so deleting a
+                    // row does not hand its state to the one below.
+                    items(rules.size, key = { "${rules[it].type.rawValue}|${rules[it].value}|$it" }) { index ->
                         RuleRow(
                             rule = rules[index],
                             onDelete = {
@@ -267,8 +269,13 @@ fun CustomRuleSetDetailScreen(
         AddRuleSheet(
             onDismiss = { showAddRule = false },
             onAdd = { type, value ->
-                viewModel.ruleSetRepository.addRule(customRuleSetId, DomainRule(type, value))
-                viewModel.syncRoutingConfigurationToNE()
+                // Same shape the importer stores: a bare IP gets its /32, a
+                // country code goes upper-case. The router drops anything else.
+                val rule = DomainRule(type, RuleParser.normalize(value, type))
+                if (customRuleSet?.rules.orEmpty().none { r -> r == rule }) {
+                    viewModel.ruleSetRepository.addRule(customRuleSetId, rule)
+                    viewModel.syncRoutingConfigurationToNE()
+                }
                 showAddRule = false
             }
         )
@@ -456,6 +463,8 @@ private fun AddRuleSheet(
     var value by remember { mutableStateOf("") }
     var typeMenuOpen by remember { mutableStateOf(false) }
 
+    val trimmedValue = value.trim()
+    val valueValid = trimmedValue.isNotEmpty() && RuleParser.isValid(trimmedValue, type)
     val placeholder = when (type) {
         DomainRuleType.DOMAIN_SUFFIX -> stringResource(R.string.example_domain)
         DomainRuleType.DOMAIN_KEYWORD -> stringResource(R.string.example_keyword)
@@ -484,7 +493,7 @@ private fun AddRuleSheet(
                 )
                 TextButton(
                     onClick = { onAdd(type, value.trim()) },
-                    enabled = value.trim().isNotEmpty()
+                    enabled = valueValid
                 ) { Text(stringResource(R.string.add)) }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -537,6 +546,10 @@ private fun AddRuleSheet(
                 onValueChange = { value = it },
                 label = { Text(stringResource(R.string.value_label)) },
                 placeholder = { Text(placeholder) },
+                isError = trimmedValue.isNotEmpty() && !valueValid,
+                supportingText = if (trimmedValue.isNotEmpty() && !valueValid) {
+                    { Text(stringResource(R.string.invalid_rule_value)) }
+                } else null,
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = wingTextFieldColors(),
@@ -757,7 +770,39 @@ internal object RuleParser {
         return DomainRule(type, normalize(value, type))
     }
 
-    private fun normalize(value: String, type: DomainRuleType): String = when (type) {
+    /**
+     * Whether [value] can be stored as a rule of [type]: the router silently
+     * discards anything that does not parse, so the sheet refuses it up front.
+     */
+    fun isValid(value: String, type: DomainRuleType): Boolean {
+        val v = value.trim()
+        if (v.isEmpty() || v.any { it.isWhitespace() }) return false
+        return when (type) {
+            DomainRuleType.DOMAIN_SUFFIX,
+            DomainRuleType.DOMAIN_KEYWORD -> !v.contains("://") && !v.contains('/')
+            DomainRuleType.IP_CIDR -> {
+                val (addr, prefix) = splitCidr(v) ?: return false
+                val octets = addr.split('.')
+                octets.size == 4 && octets.all { it.toIntOrNull()?.let { n -> n in 0..255 } == true } &&
+                    (prefix == null || prefix in 0..32)
+            }
+            DomainRuleType.IP_CIDR6 -> {
+                val (addr, prefix) = splitCidr(v) ?: return false
+                addr.contains(':') && runCatching { java.net.InetAddress.getByName(addr) }.isSuccess &&
+                    (prefix == null || prefix in 0..128)
+            }
+            DomainRuleType.GEOIP -> v.removePrefix("geoip:").let { it.length == 2 && it.all { c -> c.isLetter() } }
+        }
+    }
+
+    private fun splitCidr(v: String): Pair<String, Int?>? {
+        val slash = v.indexOf('/')
+        if (slash < 0) return v to null
+        val prefix = v.substring(slash + 1).toIntOrNull() ?: return null
+        return v.substring(0, slash) to prefix
+    }
+
+    fun normalize(value: String, type: DomainRuleType): String = when (type) {
         DomainRuleType.IP_CIDR -> if ("/" in value) value else "$value/32"
         DomainRuleType.IP_CIDR6 -> if ("/" in value) value else "$value/128"
         // Stored bare and uppercase; the router compares it to what the

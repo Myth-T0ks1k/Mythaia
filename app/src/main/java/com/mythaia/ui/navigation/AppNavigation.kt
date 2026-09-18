@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -101,7 +102,7 @@ fun AppNavigation(viewModel: VpnViewModel) {
             titleResId = R.string.chains,
             route = ChainsRoute,
             selectedIcon = Icons.Filled.Link,
-            unselectedIcon = Icons.Filled.Link
+            unselectedIcon = Icons.Outlined.Link
         ),
         TopLevelRoute(
             titleResId = R.string.settings,

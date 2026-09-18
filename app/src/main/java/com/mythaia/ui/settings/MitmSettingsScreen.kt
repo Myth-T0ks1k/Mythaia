@@ -73,7 +73,7 @@ import kotlinx.coroutines.withContext
  * the tunnel stays inert, exactly as it does for a user who never opens this
  * screen.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun MitmSettingsScreen(
     viewModel: VpnViewModel,
@@ -193,26 +193,37 @@ fun MitmSettingsScreen(
                 }
             }
 
+            var showRegenerateConfirm by remember { mutableStateOf(false) }
+            var showRemoveConfirm by remember { mutableStateOf(false) }
+            val installManualMessage = stringResource(R.string.mitm_install_manual)
+
+            fun generate() {
+                scope.launch {
+                    val ok = runCatching { repo.generateCa() }.isSuccess
+                    snackbarHostState.showSnackbar(
+                        if (ok) caGeneratedMessage else caGenerateFailedMessage
+                    )
+                }
+            }
+
             Button(
-                onClick = {
-                    scope.launch {
-                        val ok = runCatching { repo.generateCa() }.isSuccess
-                        snackbarHostState.showSnackbar(
-                            if (ok) caGeneratedMessage else caGenerateFailedMessage
-                        )
-                    }
-                },
+                // Replacing a certificate other devices already trust is
+                // destructive, so the second time round it asks first.
+                onClick = { if (caInstalled) showRegenerateConfirm = true else generate() },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 shape = RoundedCornerShape(14.dp)
             ) {
-                Text(stringResource(R.string.mitm_generate_ca))
+                Text(stringResource(if (caInstalled) R.string.mitm_regenerate_ca else R.string.mitm_generate_ca))
             }
 
             if (caInstalled) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedButton(
                         onClick = { exportLauncher.launch(exportFileName) },
                         shape = RoundedCornerShape(14.dp)
@@ -221,6 +232,13 @@ fun MitmSettingsScreen(
                     }
                     OutlinedButton(
                         onClick = {
+                            // Since Android 11 the KeyChain install intent
+                            // refuses CA certificates outright; on those
+                            // devices the only route is the export + Settings.
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                scope.launch { snackbarHostState.showSnackbar(installManualMessage) }
+                                return@OutlinedButton
+                            }
                             scope.launch {
                                 val der = repo.caCertificateDer() ?: return@launch
                                 val intent = KeyChain.createInstallIntent().apply {
@@ -234,7 +252,62 @@ fun MitmSettingsScreen(
                     ) {
                         Text(stringResource(R.string.mitm_install_certificate))
                     }
+                    OutlinedButton(
+                        onClick = { showRemoveConfirm = true },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text(stringResource(R.string.mitm_remove_certificate))
+                    }
                 }
+            }
+
+            if (showRegenerateConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showRegenerateConfirm = false },
+                    shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    title = { Text(stringResource(R.string.mitm_regenerate_ca)) },
+                    text = { Text(stringResource(R.string.mitm_regenerate_ca_message)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showRegenerateConfirm = false
+                            generate()
+                        }) { Text(stringResource(R.string.ok), color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showRegenerateConfirm = false }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    }
+                )
+            }
+
+            if (showRemoveConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showRemoveConfirm = false },
+                    shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    title = { Text(stringResource(R.string.mitm_remove_certificate)) },
+                    text = { Text(stringResource(R.string.mitm_remove_ca_message)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showRemoveConfirm = false
+                            scope.launch { runCatching { repo.clearCa() } }
+                        }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showRemoveConfirm = false }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    }
+                )
             }
 
             Text(

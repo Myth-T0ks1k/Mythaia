@@ -56,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,9 +96,11 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     val selectedConfigId by viewModel.selectedConfigId.collectAsState()
     val latencyResults by viewModel.latencyResults.collectAsState()
 
-    var showingAddSheet by remember { mutableStateOf(false) }
-    var showingManualAddSheet by remember { mutableStateOf(false) }
-    var deepLinkPrefill by remember { mutableStateOf<String?>(null) }
+    var showingAddSheet by rememberSaveable { mutableStateOf(false) }
+    var showingManualAddSheet by rememberSaveable { mutableStateOf(false) }
+    var deepLinkPrefill by rememberSaveable { mutableStateOf<String?>(null) }
+    var configurationToDelete by remember { mutableStateOf<ProxyConfiguration?>(null) }
+    var subscriptionToDelete by remember { mutableStateOf<Subscription?>(null) }
 
     // Auto-open the Add sheet when a deep link arrives (vless://, ss://, socks5://, or mythaia://add-proxy?link=…).
     val pendingDeepLink by viewModel.pendingDeepLinkUrl.collectAsState()
@@ -118,8 +121,8 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
 
     val scope = rememberCoroutineScope()
 
-    var searchQuery by remember { mutableStateOf("") }
-    var sortByLatency by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var sortByLatency by rememberSaveable { mutableStateOf(false) }
 
     /**
      * Name or address, case-insensitively. A subscription can carry hundreds of
@@ -179,7 +182,10 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                         // competing round.
                         IconButton(
                             onClick = { scope.launch { viewModel.autoSelectFastest() } },
-                            enabled = !autoSelecting && configurations.isNotEmpty()
+                            // Only servers that can be measured count; a list of
+                            // WireGuard profiles alone has nothing to race.
+                            enabled = !autoSelecting &&
+                                configurations.any { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }
                         ) {
                             if (autoSelecting) {
                                 CircularProgressIndicator(
@@ -354,7 +360,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                             latency = latencyResults[config.id],
                             onSelect = { viewModel.setSelectedConfiguration(config) },
                             onEdit = { configurationToEdit = config },
-                            onDelete = { viewModel.deleteConfiguration(config) },
+                            onDelete = { configurationToDelete = config },
                             onTestLatency = { viewModel.testLatency(forConfig = config) }
                         )
                     }
@@ -371,6 +377,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                             subscription = subscription,
                             isCollapsed = isCollapsed,
                             isUpdating = updatingSubscriptionId == subscription.id,
+                            updateEnabled = updatingSubscriptionId == null,
                             onToggleCollapse = {
                                 collapsedSubscriptions = if (isCollapsed) {
                                     collapsedSubscriptions - subscription.id
@@ -393,7 +400,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                                     }
                                 }
                             },
-                            onDelete = { viewModel.deleteSubscription(subscription) },
+                            onDelete = { subscriptionToDelete = subscription },
                             onRename = { subscriptionToRename = subscription },
                             onTestLatency = { viewModel.testLatencies(forConfigs = configs) }
                         )
@@ -407,7 +414,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                                 editingDisabled = editingDisabled,
                                 onSelect = { viewModel.setSelectedConfiguration(config) },
                                 onEdit = { configurationToEdit = config },
-                                onDelete = { viewModel.deleteConfiguration(config) },
+                                onDelete = { configurationToDelete = config },
                                 onTestLatency = { viewModel.testLatency(forConfig = config) }
                             )
                         }
@@ -415,6 +422,55 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                 }
             }
         }
+    }
+
+    // Deleting is one tap in a long-press menu, so it asks first; a slip
+    // would otherwise take a subscription's whole server list with it.
+    configurationToDelete?.let { config ->
+        AlertDialog(
+            onDismissRequest = { configurationToDelete = null },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            title = { Text(stringResource(R.string.delete_proxy_title)) },
+            text = { Text(stringResource(R.string.delete_proxy_message, config.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    configurationToDelete = null
+                    viewModel.deleteConfiguration(config)
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { configurationToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    subscriptionToDelete?.let { subscription ->
+        val count = configurations.count { it.subscriptionId == subscription.id }
+        AlertDialog(
+            onDismissRequest = { subscriptionToDelete = null },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            title = { Text(stringResource(R.string.delete_subscription_title)) },
+            text = { Text(stringResource(R.string.delete_subscription_message, subscription.name, count)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    subscriptionToDelete = null
+                    viewModel.deleteSubscription(subscription)
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { subscriptionToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 
     if (showingAddSheet) {
@@ -563,6 +619,7 @@ private fun SubscriptionHeader(
     subscription: Subscription,
     isCollapsed: Boolean,
     isUpdating: Boolean,
+    updateEnabled: Boolean,
     onToggleCollapse: () -> Unit,
     onUpdate: () -> Unit,
     onDelete: () -> Unit,
@@ -605,7 +662,7 @@ private fun SubscriptionHeader(
                 color = MaterialTheme.colorScheme.primary
             )
         } else {
-            IconButton(onClick = onUpdate, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = onUpdate, enabled = updateEnabled) {
                 Icon(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = stringResource(R.string.update),
@@ -616,10 +673,10 @@ private fun SubscriptionHeader(
         }
 
         Box {
-            IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = { showMenu = true }) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
-                    contentDescription = null,
+                    contentDescription = stringResource(R.string.more_options),
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -643,6 +700,7 @@ private fun SubscriptionHeader(
                 )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.update)) },
+                    enabled = updateEnabled,
                     onClick = {
                         showMenu = false
                         onUpdate()
@@ -746,7 +804,15 @@ private fun ConfigurationRow(
                     onClick = {
                         showMenu = false
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("proxy_url", configuration.toUrl()))
+                        val clip = ClipData.newPlainText("proxy_url", configuration.toUrl())
+                        // The link carries the credentials; keep them out of
+                        // the clipboard preview Android 13+ shows on copy.
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                            clip.description.extras = android.os.PersistableBundle().apply {
+                                putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                            }
+                        }
+                        clipboard.setPrimaryClip(clip)
                     }
                 )
                 DropdownMenuItem(

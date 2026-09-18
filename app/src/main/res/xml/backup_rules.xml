@@ -1,13 +1,18 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Auto Backup (API 23-30). Server credentials, the MITM root-certificate
+    private key and the trusted-certificate list stay on the device: a restore
+    onto another phone would hand them to whoever holds that account. The rule
+    database and the GeoIP file are regenerable bulk and only eat the quota.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="file" path="mitm" />
+    <exclude domain="file" path="configurations.json" />
+    <exclude domain="file" path="subscriptions.json" />
+    <exclude domain="file" path="chains.json" />
+    <exclude domain="file" path="routing.json" />
+    <exclude domain="file" path="Rules.db" />
+    <exclude domain="file" path="Rules.db.version" />
+    <exclude domain="file" path="geoip.mmdb" />
+    <exclude domain="sharedpref" path="mythaia_settings.xml" />
 </full-backup-content>

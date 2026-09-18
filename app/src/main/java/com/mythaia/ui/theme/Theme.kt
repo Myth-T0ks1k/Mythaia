@@ -8,7 +8,18 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+
+/**
+ * Whether [MythaiaTheme] is drawing its dark palette.
+ *
+ * Read this, not `isSystemInDarkTheme()`, wherever a colour depends on the
+ * palette: the user can pin the app to light or dark regardless of the device,
+ * and the system flag would then pick the token for the wrong ground.
+ */
+val LocalMythaiaDarkTheme = staticCompositionLocalOf { false }
 
 private val DarkColorScheme = darkColorScheme(
     primary = LightAzure,
@@ -108,9 +119,11 @@ fun MythaiaTheme(
         else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    CompositionLocalProvider(LocalMythaiaDarkTheme provides darkTheme) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

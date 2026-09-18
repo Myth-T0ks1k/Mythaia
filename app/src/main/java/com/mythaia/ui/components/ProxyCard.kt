@@ -1,13 +1,15 @@
 package com.mythaia.ui.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.isSystemInDarkTheme
+import com.mythaia.ui.theme.LocalMythaiaDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -62,7 +64,9 @@ fun ProxyCardContent(
                     Text(
                         text = configuration.name,
                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (isSelected) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -74,10 +78,11 @@ fun ProxyCardContent(
                     }
                 }
                 Text(
-                    text = "${configuration.serverAddress}:${configuration.serverPort}",
+                    text = configuration.displayEndpoint,
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Row {
                     val badgeColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
@@ -121,7 +126,7 @@ fun LatencyBadge(latency: LatencyResult?, modifier: Modifier = Modifier) {
         is LatencyResult.Testing -> {
             CircularProgressIndicator(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = modifier.width(20.dp),
+                modifier = modifier.size(20.dp),
                 strokeWidth = 2.dp
             )
         }
@@ -131,7 +136,7 @@ fun LatencyBadge(latency: LatencyResult?, modifier: Modifier = Modifier) {
             // every token has a dark-mode counterpart.
             val color = when {
                 latency.ms < 300 -> MaterialTheme.colorScheme.primary
-                latency.ms < 600 -> if (isSystemInDarkTheme()) WarningDark else WarningLight
+                latency.ms < 600 -> if (LocalMythaiaDarkTheme.current) WarningDark else WarningLight
                 else -> MaterialTheme.colorScheme.error
             }
             Text(

@@ -77,18 +77,28 @@ class MythaiaWidgetProvider : AppWidgetProvider() {
             context.getColor(if (active) R.color.widget_on else R.color.widget_off)
         )
 
-        val toggle = Intent(context, MythaiaWidgetProvider::class.java).apply {
-            action = ACTION_TOGGLE
-        }
-        views.setOnClickPendingIntent(
-            R.id.widget_root,
+        // Stopping is a broadcast to this receiver; connecting opens the app
+        // directly. Starting an Activity from inside a broadcast is what
+        // Android 10+ restricts, so the connect tap must not go through one.
+        val click = if (active) {
             PendingIntent.getBroadcast(
                 context,
                 0,
-                toggle,
+                Intent(context, MythaiaWidgetProvider::class.java).apply { action = ACTION_TOGGLE },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-        )
+        } else {
+            PendingIntent.getActivity(
+                context,
+                1,
+                Intent(context, MainActivity::class.java).apply {
+                    action = MainActivity.ACTION_CONNECT
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+        views.setOnClickPendingIntent(R.id.widget_root, click)
         return views
     }
 

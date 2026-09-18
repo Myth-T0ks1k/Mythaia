@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,12 +76,20 @@ fun QrScannerScreen(
     val context = LocalContext.current
     var hasCameraPermission by remember { mutableStateOf(false) }
     var permissionDenied by remember { mutableStateOf(false) }
+    // "Don't ask again" (or a second refusal) makes the system answer without
+    // showing a prompt; the only way forward then is the app's settings page.
+    var permissionBlocked by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasCameraPermission = granted
-        if (!granted) permissionDenied = true
+        if (!granted) {
+            permissionDenied = true
+            val activity = context as? android.app.Activity
+            permissionBlocked = activity != null &&
+                !activity.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -199,16 +208,43 @@ fun QrScannerScreen(
                             color = Bone,
                             style = MaterialTheme.typography.titleMedium
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(
+                                if (permissionBlocked) R.string.camera_permission_blocked
+                                else R.string.camera_permission_rationale
+                            ),
+                            color = Bone.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp)
+                        )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
-                            onClick = onDismiss,
+                            onClick = {
+                                if (permissionBlocked) {
+                                    val intent = android.content.Intent(
+                                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        android.net.Uri.fromParts("package", context.packageName, null)
+                                    )
+                                    runCatching { context.startActivity(intent) }
+                                    onDismiss()
+                                } else {
+                                    permissionDenied = false
+                                    permissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
+                            },
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = LightAzure,
                                 contentColor = DeepInk
                             )
                         ) {
-                            Text(stringResource(R.string.ok))
+                            Text(stringResource(if (permissionBlocked) R.string.open_settings else R.string.try_again))
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onDismiss) {
+                            Text(stringResource(R.string.cancel), color = Bone)
                         }
                     }
                 }
