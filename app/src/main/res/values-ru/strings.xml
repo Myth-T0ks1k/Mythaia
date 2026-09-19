@@ -375,4 +375,21 @@
 
     <string name="no_connectivity">Подключено · через этот сервер нет интернета</string>
     <string name="close">Закрыть</string>
+
+    <string name="key">Ключ</string>
+    <string name="up_mbps">Отдача, Мбит/с</string>
+    <string name="down_mbps">Загрузка, Мбит/с</string>
+    <string name="bandwidth_hint">Оставьте пустыми для BBR; укажите оба, чтобы использовать Brutal на этой скорости.</string>
+    <string name="obfuscation">Обфускация</string>
+    <string name="obfs_password">Пароль обфускации</string>
+    <string name="cipher">Шифр</string>
+    <string name="uplink_carrier">Транспорт вверх</string>
+    <string name="downlink_carrier">Транспорт вниз</string>
+    <string name="multiplex">Мультиплекс</string>
+    <string name="pure_downlink">Чистый downlink</string>
+    <string name="http_mask">HTTP-маска</string>
+    <string name="mask_host">Host маски</string>
+    <string name="mask_path">Путь маски</string>
+    <string name="ascii_mode">Режим ASCII</string>
+    <string name="aead_method">AEAD</string>
 </resources>

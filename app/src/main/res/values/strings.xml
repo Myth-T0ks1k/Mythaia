@@ -394,4 +394,22 @@
     <!-- Connectivity and settings sheet -->
     <string name="no_connectivity">Connected · no internet through this server</string>
     <string name="close">Close</string>
+
+    <!-- Editor fields for the newer protocols -->
+    <string name="key">Key</string>
+    <string name="up_mbps">Upload, Mbit/s</string>
+    <string name="down_mbps">Download, Mbit/s</string>
+    <string name="bandwidth_hint">Leave both empty for BBR; set both to use Brutal at that rate.</string>
+    <string name="obfuscation">Obfuscation</string>
+    <string name="obfs_password">Obfuscation password</string>
+    <string name="cipher">Cipher</string>
+    <string name="uplink_carrier">Uplink carrier</string>
+    <string name="downlink_carrier">Downlink carrier</string>
+    <string name="multiplex">Multiplex</string>
+    <string name="pure_downlink">Pure downlink</string>
+    <string name="http_mask">HTTP mask</string>
+    <string name="mask_host">Mask host</string>
+    <string name="mask_path">Mask path</string>
+    <string name="ascii_mode">ASCII mode</string>
+    <string name="aead_method">AEAD</string>
 </resources>

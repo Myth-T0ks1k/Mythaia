@@ -363,4 +363,21 @@
 
     <string name="no_connectivity">已连接 · 此服务器无法访问互联网</string>
     <string name="close">关闭</string>
+
+    <string name="key">密钥</string>
+    <string name="up_mbps">上行，Mbit/s</string>
+    <string name="down_mbps">下行，Mbit/s</string>
+    <string name="bandwidth_hint">两项留空则使用 BBR；两项都填则以该速率使用 Brutal。</string>
+    <string name="obfuscation">混淆</string>
+    <string name="obfs_password">混淆密码</string>
+    <string name="cipher">加密方式</string>
+    <string name="uplink_carrier">上行载体</string>
+    <string name="downlink_carrier">下行载体</string>
+    <string name="multiplex">多路复用</string>
+    <string name="pure_downlink">纯下行</string>
+    <string name="http_mask">HTTP 伪装</string>
+    <string name="mask_host">伪装主机</string>
+    <string name="mask_path">伪装路径</string>
+    <string name="ascii_mode">ASCII 模式</string>
+    <string name="aead_method">AEAD</string>
 </resources>

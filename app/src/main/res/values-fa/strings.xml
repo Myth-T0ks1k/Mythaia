@@ -367,4 +367,21 @@
 
     <string name="no_connectivity">متصل · از این سرور اینترنتی نیست</string>
     <string name="close">بستن</string>
+
+    <string name="key">کلید</string>
+    <string name="up_mbps">آپلود، مگابیت/ثانیه</string>
+    <string name="down_mbps">دانلود، مگابیت/ثانیه</string>
+    <string name="bandwidth_hint">هر دو را خالی بگذارید تا BBR استفاده شود؛ هر دو را پر کنید تا Brutal با آن نرخ به کار رود.</string>
+    <string name="obfuscation">مبهم‌سازی</string>
+    <string name="obfs_password">رمز مبهم‌سازی</string>
+    <string name="cipher">رمزنگاری</string>
+    <string name="uplink_carrier">حامل آپلود</string>
+    <string name="downlink_carrier">حامل دانلود</string>
+    <string name="multiplex">مالتی‌پلکس</string>
+    <string name="pure_downlink">دانلود خالص</string>
+    <string name="http_mask">ماسک HTTP</string>
+    <string name="mask_host">میزبان ماسک</string>
+    <string name="mask_path">مسیر ماسک</string>
+    <string name="ascii_mode">حالت ASCII</string>
+    <string name="aead_method">AEAD</string>
 </resources>

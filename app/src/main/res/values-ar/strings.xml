@@ -383,4 +383,21 @@
 
     <string name="no_connectivity">متصل · لا إنترنت عبر هذا الخادم</string>
     <string name="close">إغلاق</string>
+
+    <string name="key">المفتاح</string>
+    <string name="up_mbps">الرفع، ميغابت/ث</string>
+    <string name="down_mbps">التنزيل، ميغابت/ث</string>
+    <string name="bandwidth_hint">اتركهما فارغين لـ BBR؛ عبّئهما معاً لاستخدام Brutal بتلك السرعة.</string>
+    <string name="obfuscation">التعمية</string>
+    <string name="obfs_password">كلمة مرور التعمية</string>
+    <string name="cipher">التشفير</string>
+    <string name="uplink_carrier">ناقل الرفع</string>
+    <string name="downlink_carrier">ناقل التنزيل</string>
+    <string name="multiplex">تعدد الإرسال</string>
+    <string name="pure_downlink">تنزيل خالص</string>
+    <string name="http_mask">قناع HTTP</string>
+    <string name="mask_host">مضيف القناع</string>
+    <string name="mask_path">مسار القناع</string>
+    <string name="ascii_mode">وضع ASCII</string>
+    <string name="aead_method">AEAD</string>
 </resources>

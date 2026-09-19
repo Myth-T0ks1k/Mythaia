@@ -1,6 +1,5 @@
 package com.mythaia.ui.proxy
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -41,41 +40,61 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.mythaia.R
 import com.mythaia.data.model.HttpUpgradeConfiguration
 import com.mythaia.data.model.NaiveProtocol
 import com.mythaia.data.model.OutboundProtocol
+import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.RealityConfiguration
 import com.mythaia.data.model.TlsConfiguration
 import com.mythaia.data.model.TlsFingerprint
 import com.mythaia.data.model.TlsVersion
-import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.WebSocketConfiguration
 import com.mythaia.data.model.XHttpConfiguration
 import com.mythaia.data.model.XHttpMode
+import com.mythaia.ui.components.WingSectionTitle
 import com.mythaia.ui.components.wingTextFieldColors
+import com.mythaia.vpn.protocol.grpc.GrpcConfiguration
+import com.mythaia.vpn.protocol.sudoku.SudokuAeadMethod
+import com.mythaia.vpn.protocol.sudoku.SudokuAsciiMode
+import com.mythaia.vpn.protocol.sudoku.SudokuHttpMaskMode
+import com.mythaia.vpn.protocol.sudoku.SudokuMultiplex
 import com.mythaia.vpn.util.base64UrlToByteArrayOrNull
 import com.mythaia.vpn.util.hexToByteArrayOrNull
 import com.mythaia.vpn.util.toBase64Url
 import com.mythaia.vpn.util.toHex
 import java.util.UUID
 
-// Wing form language: compact 14dp field corners inside 20dp paper cards.
-private val FieldShape = RoundedCornerShape(14.dp)
-private val CardShape = RoundedCornerShape(20.dp)
+// Wing form language: 18dp fields inside soft 24dp panels.
+private val FieldShape = RoundedCornerShape(18.dp)
+private val CardShape = RoundedCornerShape(24.dp)
 
-/** Protocols the field-by-field form renders completely. */
-private val EDITABLE_PROTOCOLS = setOf(
+/** Every protocol the app dials, except WireGuard, which has a file editor of its own. */
+private val EDITABLE_PROTOCOLS = listOf(
     OutboundProtocol.VLESS,
+    OutboundProtocol.VMESS,
     OutboundProtocol.TROJAN,
     OutboundProtocol.SHADOWSOCKS,
     OutboundProtocol.SOCKS5,
+    OutboundProtocol.HYSTERIA2,
+    OutboundProtocol.TUIC,
+    OutboundProtocol.ANYTLS,
+    OutboundProtocol.NOWHERE,
+    OutboundProtocol.SUDOKU,
     OutboundProtocol.NAIVE_HTTP11,
     OutboundProtocol.NAIVE_HTTP2
 )
 
+/**
+ * The field-by-field editor for a server.
+ *
+ * Every protocol the app speaks is here, each with the fields its links
+ * carry. Sub-configurations are built with `copy()` from what is stored, so
+ * a setting the form does not show (ECH, a FinalMask fragment, early data,
+ * headers, Sudoku padding tables) survives a save instead of being dropped.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProxyEditorScreen(
@@ -98,10 +117,8 @@ fun ProxyEditorScreen(
 
     var wsHost by remember { mutableStateOf(c?.websocket?.host ?: "") }
     var wsPath by remember { mutableStateOf(c?.websocket?.path ?: "/") }
-
     var httpUpgradeHost by remember { mutableStateOf(c?.httpUpgrade?.host ?: "") }
     var httpUpgradePath by remember { mutableStateOf(c?.httpUpgrade?.path ?: "/") }
-
     var xhttpHost by remember { mutableStateOf(c?.xhttp?.host ?: "") }
     var xhttpPath by remember { mutableStateOf(c?.xhttp?.path ?: "/") }
     var xhttpMode by remember { mutableStateOf(c?.xhttp?.mode?.raw ?: "auto") }
@@ -131,36 +148,70 @@ fun ProxyEditorScreen(
 
     var ssPassword by remember { mutableStateOf(c?.ssPassword ?: "") }
     var ssMethod by remember { mutableStateOf(c?.ssMethod ?: "aes-128-gcm") }
-
     var naiveUsername by remember { mutableStateOf(c?.naiveUsername ?: "") }
     var naivePassword by remember { mutableStateOf(c?.naivePassword ?: "") }
-
     var socks5Username by remember { mutableStateOf(c?.socks5Username ?: "") }
     var socks5Password by remember { mutableStateOf(c?.socks5Password ?: "") }
-
     var trojanPassword by remember { mutableStateOf(c?.trojanPassword ?: "") }
+
+    // Hysteria2, AnyTLS, Nowhere and TUIC authenticate with one password (a
+    // key, for Nowhere); TUIC pairs it with a UUID.
+    var password by remember { mutableStateOf(c?.password ?: "") }
+    var vmessSecurity by remember { mutableStateOf(c?.vmessSecurity ?: "auto") }
+    var hyUp by remember { mutableStateOf(c?.hysteriaUpMbps?.toString() ?: "") }
+    var hyDown by remember { mutableStateOf(c?.hysteriaDownMbps?.toString() ?: "") }
+    var obfs by remember { mutableStateOf(c?.obfuscation ?: "none") }
+    var obfsPassword by remember { mutableStateOf(c?.obfuscationPassword ?: "") }
+    var nowhereUp by remember { mutableStateOf(c?.nowhereUplink ?: "udp") }
+    var nowhereDown by remember { mutableStateOf(c?.nowhereDownlink ?: "udp") }
+    var nowhereMux by remember { mutableStateOf(c?.nowhereMultiplex ?: false) }
+
+    var sudokuKey by remember { mutableStateOf(c?.sudokuKey ?: "") }
+    var sudokuAead by remember { mutableStateOf(c?.sudokuAeadMethod ?: SudokuAeadMethod.CHACHA20_POLY1305.id) }
+    var sudokuAscii by remember { mutableStateOf(c?.sudokuAsciiMode ?: SudokuAsciiMode.PREFER_ENTROPY.id) }
+    var sudokuPure by remember { mutableStateOf(c?.sudokuEnablePureDownlink ?: true) }
+    var sudokuMux by remember { mutableStateOf(c?.sudokuMultiplex ?: SudokuMultiplex.OFF.id) }
+    var sudokuMaskDisable by remember { mutableStateOf(c?.sudokuHttpMaskDisable ?: false) }
+    var sudokuMaskMode by remember { mutableStateOf(c?.sudokuHttpMaskMode ?: SudokuHttpMaskMode.LEGACY.id) }
+    var sudokuMaskTls by remember { mutableStateOf(c?.sudokuHttpMaskTls ?: false) }
+    var sudokuMaskHost by remember { mutableStateOf(c?.sudokuHttpMaskHost ?: "") }
+    var sudokuMaskPath by remember { mutableStateOf(c?.sudokuHttpMaskPathRoot ?: "") }
 
     val isShadowsocks = selectedProtocol == OutboundProtocol.SHADOWSOCKS
     val isSocks5 = selectedProtocol == OutboundProtocol.SOCKS5
     val isNaive = selectedProtocol.isNaive
     val isTrojan = selectedProtocol == OutboundProtocol.TROJAN
     val isVless = selectedProtocol == OutboundProtocol.VLESS
+    val isVmess = selectedProtocol == OutboundProtocol.VMESS
+    val isHysteria2 = selectedProtocol == OutboundProtocol.HYSTERIA2
+    val isTuic = selectedProtocol == OutboundProtocol.TUIC
+    val isAnyTls = selectedProtocol == OutboundProtocol.ANYTLS
+    val isNowhere = selectedProtocol == OutboundProtocol.NOWHERE
+    val isSudoku = selectedProtocol == OutboundProtocol.SUDOKU
     val isReality = security == "reality"
     val isTLS = security == "tls"
 
-    // The field-by-field form covers these; anything else (Hysteria2, VMess,
-    // AnyTLS, TUIC, WireGuard...) came from a link and only its name and
-    // address can be edited here, so no field it does not render is lost.
+    // Protocols where TLS is the protocol itself, not an option.
+    val tlsMandatory = isTrojan || isHysteria2 || isTuic || isAnyTls || isNowhere
+    // Protocols that pick TLS on or off.
+    val tlsOptional = isVless || isVmess
+    val showsTls = tlsMandatory || tlsOptional
+
     val fullEditor = selectedProtocol in EDITABLE_PROTOCOLS
 
     val portValue = serverPort.trim().toIntOrNull()
     val portValid = portValue != null && portValue in 1..65535
+    val uuidValid = runCatching { UUID.fromString(uuid.trim()) }.isSuccess
     val publicKeyBytes = publicKey.trim().base64UrlToByteArrayOrNull()
     val publicKeyValid = publicKeyBytes != null && publicKeyBytes.size == 32
     val shortIdBytes = shortId.trim().hexToByteArrayOrNull()
     val shortIdValid = shortIdBytes != null && shortIdBytes.size <= 8
     val xhttpExtraValid = xhttpExtra.isBlank() ||
         runCatching { org.json.JSONObject(xhttpExtra) }.isSuccess
+    // Brutal needs both directions; BBR needs neither.
+    val mbpsValid = (hyUp.isBlank() || hyUp.trim().toIntOrNull()?.let { it > 0 } == true) &&
+        (hyDown.isBlank() || hyDown.trim().toIntOrNull()?.let { it > 0 } == true) &&
+        (hyUp.isBlank() == hyDown.isBlank())
 
     val isValid = name.isNotBlank() &&
             serverAddress.isNotBlank() &&
@@ -170,7 +221,12 @@ fun ProxyEditorScreen(
                 isShadowsocks -> ssPassword.isNotEmpty()
                 isSocks5 -> true
                 isTrojan -> trojanPassword.isNotEmpty()
-                else -> runCatching { UUID.fromString(uuid.trim()) }.isSuccess &&
+                isHysteria2 -> password.isNotEmpty() && mbpsValid && (obfs == "none" || obfsPassword.isNotEmpty())
+                isAnyTls || isNowhere -> password.isNotEmpty()
+                isTuic -> uuidValid && password.isNotEmpty()
+                isSudoku -> sudokuKey.isNotBlank()
+                isVmess -> uuidValid
+                else -> uuidValid &&
                         (!isReality || (sni.isNotBlank() && publicKeyValid && shortIdValid)) &&
                         (transport != "xhttp" || xhttpExtraValid)
             })
@@ -205,16 +261,13 @@ fun ProxyEditorScreen(
                             typedAddress.drop(1).dropLast(1) else typedAddress
                         val port = (portValue ?: return@IconButton).toUShort()
 
-                        // A protocol this form does not render: keep everything
-                        // the link carried and change only what is shown.
                         if (!fullEditor) {
                             val base = configuration ?: return@IconButton
                             onSave(base.copy(name = trimmedName, serverAddress = bareAddress, serverPort = port))
                             return@IconButton
                         }
 
-                        val needsUuid =
-                            !(isShadowsocks || isNaive || isSocks5 || isTrojan)
+                        val needsUuid = isVless || isVmess || isTuic
                         val parsedUUID = if (!needsUuid) {
                             configuration?.uuid ?: UUID.randomUUID()
                         } else {
@@ -223,29 +276,32 @@ fun ProxyEditorScreen(
 
                         val alpnList = tlsALPN.split(",").map { it.trim() }
                             .filter { it.isNotEmpty() }.takeIf { it.isNotEmpty() }
+                        val baseTls = configuration?.tls ?: TlsConfiguration(serverName = bareAddress)
+                        val sniOrAddress = tlsSNI.trim().ifEmpty { bareAddress }
 
-                        // Sub-configurations start from what is stored, so a
-                        // setting the form does not show (ECH, fragment, early
-                        // data, headers) survives a save.
+                        // The TLS layer, for every protocol that has one.
                         var tlsConfiguration: TlsConfiguration? = null
-                        if (isTLS && isVless) {
-                            tlsConfiguration = (configuration?.tls ?: TlsConfiguration(serverName = bareAddress)).copy(
-                                serverName = tlsSNI.trim().ifEmpty { bareAddress },
+                        if ((tlsOptional && isTLS) || isHysteria2 || isTuic || isAnyTls) {
+                            tlsConfiguration = baseTls.copy(
+                                serverName = sniOrAddress,
                                 alpn = alpnList,
                                 allowInsecure = tlsAllowInsecure,
                                 fingerprint = fingerprint,
-                                minVersion = tlsMinVersion,
-                                maxVersion = tlsMaxVersion
+                                minVersion = if (isVless) tlsMinVersion else baseTls.minVersion,
+                                maxVersion = if (isVless) tlsMaxVersion else baseTls.maxVersion
                             )
                         }
+                        if (isNowhere) {
+                            // Nowhere pins neither a fingerprint nor a version.
+                            tlsConfiguration = baseTls.copy(serverName = sniOrAddress, alpn = alpnList)
+                        }
 
-                        // Trojan: TLS is mandatory. Build from the shared
-                        // tlsSNI/tlsALPN/fingerprint state.
                         var trojanTlsConfiguration: TlsConfiguration? = null
                         if (isTrojan) {
                             trojanTlsConfiguration = (configuration?.trojanTls ?: TlsConfiguration(serverName = bareAddress)).copy(
-                                serverName = tlsSNI.trim().ifEmpty { bareAddress },
+                                serverName = sniOrAddress,
                                 alpn = alpnList,
+                                allowInsecure = tlsAllowInsecure,
                                 fingerprint = fingerprint
                             )
                             tlsConfiguration = trojanTlsConfiguration
@@ -263,32 +319,36 @@ fun ProxyEditorScreen(
                             )
                         }
 
+                        val effectiveTransport = when {
+                            isVless -> transport
+                            isVmess -> if (transport == "ws") "ws" else "tcp"
+                            isTuic -> "quic"
+                            else -> "tcp"
+                        }
+
                         var wsConfiguration: WebSocketConfiguration? = null
-                        if (transport == "ws" && isVless) {
+                        if (effectiveTransport == "ws" && (isVless || isVmess)) {
                             val host = wsHost.trim().ifEmpty { bareAddress }
                             wsConfiguration = (configuration?.websocket ?: WebSocketConfiguration(host = host))
                                 .copy(host = host, path = wsPath.trim().ifEmpty { "/" })
                         }
-
                         var httpUpgradeConfiguration: HttpUpgradeConfiguration? = null
                         if (transport == "httpupgrade" && isVless) {
                             val host = httpUpgradeHost.trim().ifEmpty { bareAddress }
                             httpUpgradeConfiguration = (configuration?.httpUpgrade ?: HttpUpgradeConfiguration(host = host))
                                 .copy(host = host, path = httpUpgradePath.trim().ifEmpty { "/" })
                         }
-
                         var xhttpConfiguration: XHttpConfiguration? = null
                         if (transport == "xhttp" && isVless) {
                             val host = xhttpHost.trim().ifEmpty { bareAddress }
-                            val mode = XHttpMode.fromRaw(xhttpMode)
                             xhttpConfiguration = XHttpConfiguration.fromExtraJson(
-                                host = host, path = xhttpPath.trim().ifEmpty { "/" }, mode = mode, extraJson = xhttpExtra
+                                host = host, path = xhttpPath.trim().ifEmpty { "/" },
+                                mode = XHttpMode.fromRaw(xhttpMode), extraJson = xhttpExtra
                             )
                         }
-
-                        var grpcConfiguration: com.mythaia.vpn.protocol.grpc.GrpcConfiguration? = null
+                        var grpcConfiguration: GrpcConfiguration? = null
                         if (transport == "grpc" && isVless) {
-                            grpcConfiguration = com.mythaia.vpn.protocol.grpc.GrpcConfiguration(
+                            grpcConfiguration = GrpcConfiguration(
                                 serviceName = grpcServiceName,
                                 authority = grpcAuthority,
                                 multiMode = grpcMultiMode,
@@ -301,16 +361,16 @@ fun ProxyEditorScreen(
                             OutboundProtocol.NAIVE_HTTP2 -> NaiveProtocol.HTTP2
                             else -> null
                         }
+                        val usesPassword = isHysteria2 || isTuic || isAnyTls || isNowhere
+                        val effectiveSecurity = when {
+                            tlsMandatory -> "tls"
+                            tlsOptional -> security
+                            else -> "none"
+                        }
 
-                        val nonVless = isShadowsocks || isNaive || isSocks5 || isTrojan
-
-                        // Built from the loaded configuration where there is
-                        // one, so a field this editor does not surface —
-                        // password, the Hysteria2 bandwidth pair, the VMess
-                        // cipher — survives a save instead of being dropped.
                         val config = (configuration ?: ProxyConfiguration(
-                            name = name,
-                            serverAddress = serverAddress,
+                            name = trimmedName,
+                            serverAddress = bareAddress,
                             serverPort = port,
                             uuid = parsedUUID,
                             encryption = encryption
@@ -320,23 +380,19 @@ fun ProxyEditorScreen(
                             serverAddress = bareAddress,
                             serverPort = port,
                             uuid = parsedUUID,
-                            encryption = if (nonVless) "none" else encryption,
-                            transport = if (nonVless) "tcp" else transport,
+                            encryption = if (isVless) encryption.trim().ifEmpty { "none" } else "none",
+                            transport = effectiveTransport,
                             // Vision needs a TLS or Reality layer to ride on.
-                            flow = if (nonVless || security == "none") null else flow.ifEmpty { null },
-                            security = when {
-                                isNaive || isShadowsocks || isSocks5 -> "none"
-                                isTrojan -> "tls"
-                                else -> security
-                            },
+                            flow = if (isVless && effectiveSecurity != "none" && transport == "tcp") flow.ifEmpty { null } else null,
+                            security = effectiveSecurity,
                             tls = tlsConfiguration,
-                            reality = realityConfiguration,
+                            reality = if (isVless) realityConfiguration else null,
                             websocket = wsConfiguration,
                             httpUpgrade = httpUpgradeConfiguration,
                             xhttp = xhttpConfiguration,
                             grpc = grpcConfiguration,
-                            muxEnabled = if (nonVless) false else muxEnabled,
-                            xudpEnabled = if (nonVless) false else xudpEnabled,
+                            muxEnabled = if (isVless) muxEnabled else false,
+                            xudpEnabled = if (isVless) xudpEnabled else false,
                             subscriptionId = configuration?.subscriptionId,
                             outboundProtocol = selectedProtocol,
                             ssPassword = if (isShadowsocks) ssPassword else null,
@@ -348,7 +404,25 @@ fun ProxyEditorScreen(
                             naiveProtocol = naiveProto,
                             trojanPassword = if (isTrojan) trojanPassword else null,
                             trojanTls = if (isTrojan) trojanTlsConfiguration else null,
-                            // Preserve the original testseed rather than resetting to default.
+                            password = if (usesPassword) password else null,
+                            vmessSecurity = if (isVmess) vmessSecurity.takeIf { it != "auto" } else null,
+                            hysteriaUpMbps = if (isHysteria2) hyUp.trim().toIntOrNull() else null,
+                            hysteriaDownMbps = if (isHysteria2) hyDown.trim().toIntOrNull() else null,
+                            obfuscation = if (isHysteria2 && obfs != "none") obfs else null,
+                            obfuscationPassword = if (isHysteria2 && obfs != "none") obfsPassword else null,
+                            nowhereUplink = if (isNowhere) nowhereUp else null,
+                            nowhereDownlink = if (isNowhere) nowhereDown else null,
+                            nowhereMultiplex = isNowhere && nowhereMux,
+                            sudokuKey = if (isSudoku) sudokuKey.trim() else null,
+                            sudokuAeadMethod = if (isSudoku) sudokuAead else null,
+                            sudokuAsciiMode = if (isSudoku) sudokuAscii else null,
+                            sudokuEnablePureDownlink = if (isSudoku) sudokuPure else true,
+                            sudokuMultiplex = if (isSudoku) sudokuMux else null,
+                            sudokuHttpMaskDisable = isSudoku && sudokuMaskDisable,
+                            sudokuHttpMaskMode = if (isSudoku) sudokuMaskMode else null,
+                            sudokuHttpMaskTls = isSudoku && sudokuMaskTls,
+                            sudokuHttpMaskHost = if (isSudoku) sudokuMaskHost.trim().ifEmpty { null } else null,
+                            sudokuHttpMaskPathRoot = if (isSudoku) sudokuMaskPath.trim().ifEmpty { null } else null,
                             testseed = configuration?.testseed ?: listOf(900u, 500u, 900u, 256u)
                         )
                         onSave(config)
@@ -367,15 +441,7 @@ fun ProxyEditorScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             SectionCard(title = stringResource(R.string.name)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(stringResource(R.string.name)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = FieldShape,
-                    colors = wingTextFieldColors()
-                )
+                WingField(value = name, onValueChange = { name = it }, label = stringResource(R.string.name))
             }
 
             if (!fullEditor) {
@@ -391,36 +457,30 @@ fun ProxyEditorScreen(
                 DropdownField(
                     label = stringResource(R.string.protocol_label),
                     selectedValue = selectedProtocol.name,
-                    options = listOf(
-                        OutboundProtocol.VLESS.name to "VLESS",
-                        OutboundProtocol.TROJAN.name to "Trojan",
-                        OutboundProtocol.SHADOWSOCKS.name to "Shadowsocks",
-                        OutboundProtocol.SOCKS5.name to "SOCKS5",
-                        OutboundProtocol.NAIVE_HTTP11.name to "HTTPS",
-                        OutboundProtocol.NAIVE_HTTP2.name to "HTTP2"
-                    ),
+                    options = EDITABLE_PROTOCOLS.map { it.name to it.displayName },
                     onSelect = { value ->
-                        val nextProtocol = OutboundProtocol.valueOf(value)
-                        selectedProtocol = nextProtocol
-                        if (nextProtocol != OutboundProtocol.VLESS) {
+                        val next = OutboundProtocol.valueOf(value)
+                        selectedProtocol = next
+                        if (next != OutboundProtocol.VLESS) {
                             flow = ""
-                            transport = "tcp"
-                            security = if (nextProtocol == OutboundProtocol.TROJAN) "tls" else "none"
+                            if (next != OutboundProtocol.VMESS) transport = "tcp"
+                            security = when (next) {
+                                OutboundProtocol.TROJAN, OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC,
+                                OutboundProtocol.ANYTLS, OutboundProtocol.NOWHERE -> "tls"
+                                OutboundProtocol.VMESS -> if (security == "reality") "none" else security
+                                else -> "none"
+                            }
                         }
                     }
                 )
             }
 
             SectionCard(title = stringResource(R.string.server)) {
-                OutlinedTextField(
+                WingField(
                     value = serverAddress,
                     onValueChange = { serverAddress = it },
-                    label = { Text(stringResource(R.string.address)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    shape = FieldShape,
-                    colors = wingTextFieldColors()
+                    label = stringResource(R.string.address),
+                    keyboardType = KeyboardType.Uri
                 )
                 OutlinedTextField(
                     value = serverPort,
@@ -437,120 +497,154 @@ fun ProxyEditorScreen(
                     colors = wingTextFieldColors()
                 )
 
-                if (!fullEditor) {
-                    // Nothing else is editable for this protocol.
-                } else if (isNaive) {
-                    OutlinedTextField(
-                        value = naiveUsername,
-                        onValueChange = { naiveUsername = it },
-                        label = { Text(stringResource(R.string.username)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                    OutlinedTextField(
-                        value = naivePassword,
-                        onValueChange = { naivePassword = it },
-                        label = { Text(stringResource(R.string.password)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                } else if (isSocks5) {
-                    OutlinedTextField(
-                        value = socks5Username,
-                        onValueChange = { socks5Username = it },
-                        label = { Text(stringResource(R.string.username)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                    OutlinedTextField(
-                        value = socks5Password,
-                        onValueChange = { socks5Password = it },
-                        label = { Text(stringResource(R.string.password)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                } else if (isShadowsocks) {
-                    OutlinedTextField(
-                        value = ssPassword,
-                        onValueChange = { ssPassword = it },
-                        label = { Text(stringResource(R.string.password)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                    DropdownField(
-                        label = stringResource(R.string.method),
-                        selectedValue = ssMethod,
-                        options = listOf(
-                            "none" to stringResource(R.string.none),
-                            "aes-128-gcm" to "AES-128-GCM",
-                            "aes-256-gcm" to "AES-256-GCM",
-                            "chacha20-ietf-poly1305" to "ChaCha20-Poly1305",
-                            "2022-blake3-aes-128-gcm" to "BLAKE3-AES-128-GCM",
-                            "2022-blake3-aes-256-gcm" to "BLAKE3-AES-256-GCM",
-                            "2022-blake3-chacha20-poly1305" to "BLAKE3-ChaCha20-Poly1305"
-                        ),
-                        onSelect = { ssMethod = it }
-                    )
-                } else if (isTrojan) {
-                    // Trojan exposes only a password here; TLS SNI/ALPN/fingerprint
-                    // live in the shared TLS section below.
-                    OutlinedTextField(
-                        value = trojanPassword,
-                        onValueChange = { trojanPassword = it },
-                        label = { Text(stringResource(R.string.password)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                } else {
-                    OutlinedTextField(
-                        value = uuid,
-                        onValueChange = { uuid = it },
-                        label = { Text(stringResource(R.string.uuid)) },
-                        isError = uuid.isNotEmpty() && runCatching { UUID.fromString(uuid.trim()) }.isFailure,
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = FieldShape,
-                        colors = wingTextFieldColors()
-                    )
-                    DropdownField(
-                        label = stringResource(R.string.encryption),
-                        selectedValue = encryption,
-                        options = listOf("none" to stringResource(R.string.none)),
-                        onSelect = { encryption = it }
-                    )
+                when {
+                    !fullEditor -> {}
+                    isNaive -> {
+                        WingField(naiveUsername, { naiveUsername = it }, stringResource(R.string.username))
+                        WingField(naivePassword, { naivePassword = it }, stringResource(R.string.password), secret = true)
+                    }
+                    isSocks5 -> {
+                        WingField(socks5Username, { socks5Username = it }, stringResource(R.string.username))
+                        WingField(socks5Password, { socks5Password = it }, stringResource(R.string.password), secret = true)
+                    }
+                    isShadowsocks -> {
+                        WingField(ssPassword, { ssPassword = it }, stringResource(R.string.password), secret = true)
+                        DropdownField(
+                            label = stringResource(R.string.method),
+                            selectedValue = ssMethod,
+                            options = listOf(
+                                "none" to stringResource(R.string.none),
+                                "aes-128-gcm" to "AES-128-GCM",
+                                "aes-256-gcm" to "AES-256-GCM",
+                                "chacha20-ietf-poly1305" to "ChaCha20-Poly1305",
+                                "2022-blake3-aes-128-gcm" to "BLAKE3-AES-128-GCM",
+                                "2022-blake3-aes-256-gcm" to "BLAKE3-AES-256-GCM",
+                                "2022-blake3-chacha20-poly1305" to "BLAKE3-ChaCha20-Poly1305"
+                            ),
+                            onSelect = { ssMethod = it }
+                        )
+                    }
+                    isTrojan -> {
+                        WingField(trojanPassword, { trojanPassword = it }, stringResource(R.string.password), secret = true)
+                    }
+                    isHysteria2 -> {
+                        WingField(password, { password = it }, stringResource(R.string.password), secret = true)
+                        WingField(hyUp, { hyUp = it }, stringResource(R.string.up_mbps), keyboardType = KeyboardType.Number)
+                        WingField(hyDown, { hyDown = it }, stringResource(R.string.down_mbps), keyboardType = KeyboardType.Number)
+                        Text(
+                            text = stringResource(R.string.bandwidth_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (mbpsValid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                        )
+                        DropdownField(
+                            label = stringResource(R.string.obfuscation),
+                            selectedValue = obfs,
+                            options = listOf("none" to stringResource(R.string.none), "salamander" to "Salamander"),
+                            onSelect = { obfs = it }
+                        )
+                        if (obfs != "none") {
+                            WingField(obfsPassword, { obfsPassword = it }, stringResource(R.string.obfs_password), secret = true)
+                        }
+                    }
+                    isTuic -> {
+                        UuidField(uuid, { uuid = it }, uuidValid)
+                        WingField(password, { password = it }, stringResource(R.string.password), secret = true)
+                    }
+                    isAnyTls -> {
+                        WingField(password, { password = it }, stringResource(R.string.password), secret = true)
+                    }
+                    isNowhere -> {
+                        WingField(password, { password = it }, stringResource(R.string.key), secret = true)
+                        DropdownField(
+                            label = stringResource(R.string.uplink_carrier),
+                            selectedValue = nowhereUp,
+                            options = listOf("udp" to "UDP", "tcp" to "TCP"),
+                            onSelect = { nowhereUp = it }
+                        )
+                        DropdownField(
+                            label = stringResource(R.string.downlink_carrier),
+                            selectedValue = nowhereDown,
+                            options = listOf("udp" to "UDP", "tcp" to "TCP"),
+                            onSelect = { nowhereDown = it }
+                        )
+                        if (nowhereUp == "tcp" || nowhereDown == "tcp") {
+                            SwitchRow(stringResource(R.string.multiplex), nowhereMux) { nowhereMux = it }
+                        }
+                    }
+                    isSudoku -> {
+                        WingField(sudokuKey, { sudokuKey = it }, stringResource(R.string.key), secret = true)
+                        DropdownField(
+                            label = stringResource(R.string.aead_method),
+                            selectedValue = sudokuAead,
+                            options = SudokuAeadMethod.entries.map { it.id to it.displayName },
+                            onSelect = { sudokuAead = it }
+                        )
+                        DropdownField(
+                            label = stringResource(R.string.ascii_mode),
+                            selectedValue = sudokuAscii,
+                            options = SudokuAsciiMode.entries.map { it.id to it.displayName },
+                            onSelect = { sudokuAscii = it }
+                        )
+                        DropdownField(
+                            label = stringResource(R.string.multiplex),
+                            selectedValue = sudokuMux,
+                            options = SudokuMultiplex.entries.map { it.id to it.displayName },
+                            onSelect = { sudokuMux = it }
+                        )
+                        SwitchRow(stringResource(R.string.pure_downlink), sudokuPure) { sudokuPure = it }
+                        SwitchRow(stringResource(R.string.http_mask), !sudokuMaskDisable) { sudokuMaskDisable = !it }
+                        if (!sudokuMaskDisable) {
+                            DropdownField(
+                                label = stringResource(R.string.mode),
+                                selectedValue = sudokuMaskMode,
+                                options = SudokuHttpMaskMode.entries.map { it.id to it.displayName },
+                                onSelect = { sudokuMaskMode = it }
+                            )
+                            SwitchRow(stringResource(R.string.tls), sudokuMaskTls) { sudokuMaskTls = it }
+                            WingField(sudokuMaskHost, { sudokuMaskHost = it }, stringResource(R.string.mask_host))
+                            WingField(sudokuMaskPath, { sudokuMaskPath = it }, stringResource(R.string.mask_path))
+                        }
+                    }
+                    isVmess -> {
+                        UuidField(uuid, { uuid = it }, uuidValid)
+                        DropdownField(
+                            label = stringResource(R.string.cipher),
+                            selectedValue = vmessSecurity,
+                            options = listOf(
+                                "auto" to stringResource(R.string.auto),
+                                "aes-128-gcm" to "AES-128-GCM",
+                                "chacha20-poly1305" to "ChaCha20-Poly1305",
+                                "none" to stringResource(R.string.none),
+                                "zero" to "Zero"
+                            ),
+                            onSelect = { vmessSecurity = it }
+                        )
+                    }
+                    else -> {
+                        UuidField(uuid, { uuid = it }, uuidValid)
+                        WingField(
+                            value = encryption,
+                            onValueChange = { encryption = it },
+                            label = stringResource(R.string.encryption),
+                            placeholder = "none"
+                        )
+                    }
                 }
             }
 
-            // Only VLESS exposes a user-selectable transport. Trojan mandates
-            // TCP+TLS; Naive/SOCKS5/Shadowsocks have no transport knob.
-            if (isVless) {
+            // VLESS chooses among every transport; VMess between TCP and WebSocket.
+            if (isVless || isVmess) {
                 SectionCard(title = stringResource(R.string.transport)) {
                     DropdownField(
                         label = stringResource(R.string.transport),
                         selectedValue = transport,
-                        options = listOf(
+                        options = if (isVless) listOf(
                             "tcp" to "TCP",
                             "ws" to "WebSocket",
                             "httpupgrade" to "HTTPUpgrade",
                             "xhttp" to "XHTTP",
                             "grpc" to "gRPC"
-                        ),
+                        ) else listOf("tcp" to "TCP", "ws" to "WebSocket"),
                         onSelect = {
                             transport = it
                             if (flow.isNotEmpty() && it != "tcp") flow = ""
@@ -558,66 +652,16 @@ fun ProxyEditorScreen(
                     )
 
                     if (transport == "ws") {
-                        OutlinedTextField(
-                            value = wsHost,
-                            onValueChange = { wsHost = it },
-                            label = { Text(stringResource(R.string.host)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
-                        OutlinedTextField(
-                            value = wsPath,
-                            onValueChange = { wsPath = it },
-                            label = { Text(stringResource(R.string.path)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
+                        WingField(wsHost, { wsHost = it }, stringResource(R.string.host))
+                        WingField(wsPath, { wsPath = it }, stringResource(R.string.path))
                     }
-
-                    if (transport == "httpupgrade") {
-                        OutlinedTextField(
-                            value = httpUpgradeHost,
-                            onValueChange = { httpUpgradeHost = it },
-                            label = { Text(stringResource(R.string.host)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
-                        OutlinedTextField(
-                            value = httpUpgradePath,
-                            onValueChange = { httpUpgradePath = it },
-                            label = { Text(stringResource(R.string.path)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
+                    if (transport == "httpupgrade" && isVless) {
+                        WingField(httpUpgradeHost, { httpUpgradeHost = it }, stringResource(R.string.host))
+                        WingField(httpUpgradePath, { httpUpgradePath = it }, stringResource(R.string.path))
                     }
-
-                    if (transport == "xhttp") {
-                        OutlinedTextField(
-                            value = xhttpHost,
-                            onValueChange = { xhttpHost = it },
-                            label = { Text(stringResource(R.string.host)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
-                        OutlinedTextField(
-                            value = xhttpPath,
-                            onValueChange = { xhttpPath = it },
-                            label = { Text(stringResource(R.string.path)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
+                    if (transport == "xhttp" && isVless) {
+                        WingField(xhttpHost, { xhttpHost = it }, stringResource(R.string.host))
+                        WingField(xhttpPath, { xhttpPath = it }, stringResource(R.string.path))
                         DropdownField(
                             label = stringResource(R.string.mode),
                             selectedValue = xhttpMode,
@@ -644,47 +688,19 @@ fun ProxyEditorScreen(
                             colors = wingTextFieldColors()
                         )
                     }
-
-                    if (transport == "grpc") {
-                        OutlinedTextField(
-                            value = grpcServiceName,
-                            onValueChange = { grpcServiceName = it },
-                            label = { Text(stringResource(R.string.grpc_service_name)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
-                        OutlinedTextField(
-                            value = grpcAuthority,
-                            onValueChange = { grpcAuthority = it },
-                            label = { Text(stringResource(R.string.grpc_authority)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
+                    if (transport == "grpc" && isVless) {
+                        WingField(grpcServiceName, { grpcServiceName = it }, stringResource(R.string.grpc_service_name))
+                        WingField(grpcAuthority, { grpcAuthority = it }, stringResource(R.string.grpc_authority))
                         DropdownField(
                             label = stringResource(R.string.mode),
                             selectedValue = if (grpcMultiMode) "multi" else "gun",
-                            options = listOf(
-                                "gun" to "Gun",
-                                "multi" to "Multi"
-                            ),
+                            options = listOf("gun" to "Gun", "multi" to "Multi"),
                             onSelect = { grpcMultiMode = (it == "multi") }
                         )
-                        OutlinedTextField(
-                            value = grpcUserAgent,
-                            onValueChange = { grpcUserAgent = it },
-                            label = { Text(stringResource(R.string.user_agent)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
+                        WingField(grpcUserAgent, { grpcUserAgent = it }, stringResource(R.string.user_agent))
                     }
 
-                    if (!isShadowsocks && transport == "tcp" && (isTLS || isReality)) {
+                    if (isVless && transport == "tcp" && (isTLS || isReality)) {
                         DropdownField(
                             label = stringResource(R.string.flow),
                             selectedValue = flow,
@@ -695,74 +711,43 @@ fun ProxyEditorScreen(
                             ),
                             onSelect = { flow = it }
                         )
-                        SwitchRow(
-                            label = "Mux",
-                            checked = muxEnabled,
-                            onCheckedChange = {
-                                muxEnabled = it
-                                if (!it) xudpEnabled = false
-                            }
-                        )
+                        SwitchRow("Mux", muxEnabled) {
+                            muxEnabled = it
+                            if (!it) xudpEnabled = false
+                        }
                         if (muxEnabled) {
-                            SwitchRow(
-                                label = "XUDP",
-                                checked = xudpEnabled,
-                                onCheckedChange = { xudpEnabled = it }
-                            )
+                            SwitchRow("XUDP", xudpEnabled) { xudpEnabled = it }
                         }
                     }
                 }
             }
 
-            if (isVless || isTrojan) {
+            if (showsTls) {
                 SectionCard(title = stringResource(R.string.tls)) {
-                    // For Trojan the TLS layer is mandatory: don't show the
-                    // none/TLS/Reality picker, just render the TLS fields directly.
-                    if (!isTrojan) {
+                    if (tlsOptional) {
                         DropdownField(
                             label = stringResource(R.string.security),
                             selectedValue = security,
-                            options = listOf(
+                            options = if (isVless) listOf(
                                 "none" to stringResource(R.string.none),
                                 "tls" to "TLS",
                                 "reality" to "Reality"
+                            ) else listOf(
+                                "none" to stringResource(R.string.none),
+                                "tls" to "TLS"
                             ),
                             onSelect = { security = it }
                         )
                     }
 
-                    if (isTLS || isTrojan) {
-                        OutlinedTextField(
-                            value = tlsSNI,
-                            onValueChange = { tlsSNI = it },
-                            label = { Text(stringResource(R.string.sni)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
-                        OutlinedTextField(
-                            value = tlsALPN,
-                            onValueChange = { tlsALPN = it },
-                            label = { Text(stringResource(R.string.alpn)) },
-                            placeholder = { Text("h2,http/1.1") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
-                        if (!isTrojan) {
-                            SwitchRow(
-                                label = stringResource(R.string.allow_insecure),
-                                checked = tlsAllowInsecure,
-                                onCheckedChange = { tlsAllowInsecure = it }
-                            )
+                    if (isTLS || tlsMandatory) {
+                        WingField(tlsSNI, { tlsSNI = it }, stringResource(R.string.sni))
+                        WingField(tlsALPN, { tlsALPN = it }, stringResource(R.string.alpn), placeholder = "h2,http/1.1")
+                        if (!isNowhere) {
+                            SwitchRow(stringResource(R.string.allow_insecure), tlsAllowInsecure) { tlsAllowInsecure = it }
+                            FingerprintDropdown(selected = fingerprint, onSelect = { fingerprint = it })
                         }
-                        FingerprintDropdown(
-                            selected = fingerprint,
-                            onSelect = { fingerprint = it }
-                        )
-                        if (!isTrojan) {
+                        if (isVless) {
                             DropdownField(
                                 label = stringResource(R.string.min_tls_version),
                                 selectedValue = tlsMinVersion?.name ?: "ANY",
@@ -790,16 +775,8 @@ fun ProxyEditorScreen(
                         }
                     }
 
-                    if (isReality) {
-                        OutlinedTextField(
-                            value = sni,
-                            onValueChange = { sni = it },
-                            label = { Text(stringResource(R.string.sni)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = wingTextFieldColors()
-                        )
+                    if (isReality && isVless) {
+                        WingField(sni, { sni = it }, stringResource(R.string.sni))
                         OutlinedTextField(
                             value = publicKey,
                             onValueChange = { publicKey = it },
@@ -826,10 +803,7 @@ fun ProxyEditorScreen(
                             shape = FieldShape,
                             colors = wingTextFieldColors()
                         )
-                        FingerprintDropdown(
-                            selected = fingerprint,
-                            onSelect = { fingerprint = it }
-                        )
+                        FingerprintDropdown(selected = fingerprint, onSelect = { fingerprint = it })
                     }
                 }
             }
@@ -839,28 +813,56 @@ fun ProxyEditorScreen(
     }
 }
 
-/**
- * Wing grouped-form section: a slate small-caps header above a paper card
- * (radius 20, 1dp outline border, no shadow) holding the section's fields.
- */
+/** A single-line text field in the Wing shape. */
+@Composable
+private fun WingField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    secret: Boolean = false,
+    placeholder: String? = null,
+    keyboardType: KeyboardType = KeyboardType.Text
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        placeholder = placeholder?.let { { Text(it) } },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        shape = FieldShape,
+        colors = wingTextFieldColors()
+    )
+}
+
+@Composable
+private fun UuidField(value: String, onValueChange: (String) -> Unit, valid: Boolean) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(stringResource(R.string.uuid)) },
+        isError = value.isNotEmpty() && !valid,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = FieldShape,
+        colors = wingTextFieldColors()
+    )
+}
+
+/** A Mythaia section: feather-marked title above a soft panel of fields. */
 @Composable
 private fun SectionCard(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = title.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
-            letterSpacing = 1.2.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-        )
+        WingSectionTitle(title = title)
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = CardShape,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+            color = MaterialTheme.colorScheme.surfaceContainerLow
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),

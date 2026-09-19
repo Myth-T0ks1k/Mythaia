@@ -367,4 +367,21 @@
 
     <string name="no_connectivity">Baglanyldy · bu serwer arkaly internet ýok</string>
     <string name="close">Ýap</string>
+
+    <string name="key">Açar</string>
+    <string name="up_mbps">Ýükleme, Mbit/s</string>
+    <string name="down_mbps">Göçürip alma, Mbit/s</string>
+    <string name="bandwidth_hint">BBR üçin ikisini-de boş goýuň; ikisini-de dolduryň — şol tizlikde Brutal ulanylar.</string>
+    <string name="obfuscation">Obfuskasiýa</string>
+    <string name="obfs_password">Obfuskasiýa paroly</string>
+    <string name="cipher">Şifr</string>
+    <string name="uplink_carrier">Ýokary göteriji</string>
+    <string name="downlink_carrier">Aşaky göteriji</string>
+    <string name="multiplex">Multipleks</string>
+    <string name="pure_downlink">Arassa aşaky</string>
+    <string name="http_mask">HTTP maska</string>
+    <string name="mask_host">Maska hosty</string>
+    <string name="mask_path">Maska ýoly</string>
+    <string name="ascii_mode">ASCII tertibi</string>
+    <string name="aead_method">AEAD</string>
 </resources>

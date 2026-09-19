@@ -363,4 +363,21 @@
 
     <string name="no_connectivity">Đã kết nối · không có internet qua máy chủ này</string>
     <string name="close">Đóng</string>
+
+    <string name="key">Khóa</string>
+    <string name="up_mbps">Tải lên, Mbit/s</string>
+    <string name="down_mbps">Tải xuống, Mbit/s</string>
+    <string name="bandwidth_hint">Để trống cả hai để dùng BBR; điền cả hai để dùng Brutal ở tốc độ đó.</string>
+    <string name="obfuscation">Làm rối</string>
+    <string name="obfs_password">Mật khẩu làm rối</string>
+    <string name="cipher">Mã hóa</string>
+    <string name="uplink_carrier">Kênh tải lên</string>
+    <string name="downlink_carrier">Kênh tải xuống</string>
+    <string name="multiplex">Ghép kênh</string>
+    <string name="pure_downlink">Downlink thuần</string>
+    <string name="http_mask">Mặt nạ HTTP</string>
+    <string name="mask_host">Host mặt nạ</string>
+    <string name="mask_path">Đường dẫn mặt nạ</string>
+    <string name="ascii_mode">Chế độ ASCII</string>
+    <string name="aead_method">AEAD</string>
 </resources>

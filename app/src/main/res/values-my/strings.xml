@@ -363,4 +363,21 @@
 
     <string name="no_connectivity">ချိတ်ဆက်ပြီး · ဤဆာဗာမှ အင်တာနက် မရ</string>
     <string name="close">ပိတ်ရန်</string>
+
+    <string name="key">ကီး</string>
+    <string name="up_mbps">အပ်လုဒ်၊ Mbit/s</string>
+    <string name="down_mbps">ဒေါင်းလုဒ်၊ Mbit/s</string>
+    <string name="bandwidth_hint">BBR အတွက် နှစ်ခုလုံး လွတ်ထားပါ။ နှစ်ခုလုံး ဖြည့်ပါက ထိုနှုန်းဖြင့် Brutal သုံးမည်။</string>
+    <string name="obfuscation">Obfuscation</string>
+    <string name="obfs_password">Obfuscation စကားဝှက်</string>
+    <string name="cipher">စာဝှက်</string>
+    <string name="uplink_carrier">အပ်လင့်ခ် ကယ်ရီယာ</string>
+    <string name="downlink_carrier">ဒေါင်းလင့်ခ် ကယ်ရီယာ</string>
+    <string name="multiplex">Multiplex</string>
+    <string name="pure_downlink">Pure downlink</string>
+    <string name="http_mask">HTTP mask</string>
+    <string name="mask_host">Mask host</string>
+    <string name="mask_path">Mask path</string>
+    <string name="ascii_mode">ASCII mode</string>
+    <string name="aead_method">AEAD</string>
 </resources>

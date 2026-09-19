@@ -371,4 +371,21 @@
 
     <string name="no_connectivity">Conectado · sin internet a través de este servidor</string>
     <string name="close">Cerrar</string>
+
+    <string name="key">Clave</string>
+    <string name="up_mbps">Subida, Mbit/s</string>
+    <string name="down_mbps">Bajada, Mbit/s</string>
+    <string name="bandwidth_hint">Vacíos: BBR; ambos rellenos: Brutal a esa velocidad.</string>
+    <string name="obfuscation">Ofuscación</string>
+    <string name="obfs_password">Contraseña de ofuscación</string>
+    <string name="cipher">Cifrado</string>
+    <string name="uplink_carrier">Transporte de subida</string>
+    <string name="downlink_carrier">Transporte de bajada</string>
+    <string name="multiplex">Multiplexación</string>
+    <string name="pure_downlink">Bajada pura</string>
+    <string name="http_mask">Máscara HTTP</string>
+    <string name="mask_host">Host de la máscara</string>
+    <string name="mask_path">Ruta de la máscara</string>
+    <string name="ascii_mode">Modo ASCII</string>
+    <string name="aead_method">AEAD</string>
 </resources>
