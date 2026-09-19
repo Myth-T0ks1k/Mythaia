@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import com.mythaia.vpn.util.TransportLogLevel
 
 /**
  * Represents a single TCP connection through the VPN.
@@ -656,7 +657,7 @@ class LwipTcpConnection(
     private fun logTransportFailure(
         operation: String,
         error: Throwable,
-        defaultLevel: LwipStack.LogLevel = LwipStack.LogLevel.ERROR
+        defaultLevel: TransportLogLevel = TransportLogLevel.ERROR
     ) {
         TransportErrorLogger.log(
             operation = operation,
@@ -725,7 +726,7 @@ class LwipTcpConnection(
                             }
                         } catch (_: CancellationException) {
                         } catch (e: Exception) {
-                            if (!closed) logTransportFailure("Send", e, LwipStack.LogLevel.WARNING)
+                            if (!closed) logTransportFailure("Send", e, TransportLogLevel.WARNING)
                             lwipExecutor.execute { abort() }
                         }
                     }
@@ -843,7 +844,7 @@ class LwipTcpConnection(
                         }
                     } catch (_: CancellationException) {
                     } catch (e: Exception) {
-                        if (!closed) logTransportFailure("Send", e, LwipStack.LogLevel.WARNING)
+                        if (!closed) logTransportFailure("Send", e, TransportLogLevel.WARNING)
                         lwipExecutor.execute { abort() }
                     }
                 }
@@ -965,7 +966,7 @@ class LwipTcpConnection(
             } catch (_: CancellationException) {
                 lwipExecutor.execute { coalesceFlushInFlight = false }
             } catch (e: Exception) {
-                if (!closed) logTransportFailure("Send", e, LwipStack.LogLevel.WARNING)
+                if (!closed) logTransportFailure("Send", e, TransportLogLevel.WARNING)
                 lwipExecutor.execute {
                     coalesceFlushInFlight = false
                     abort()
@@ -1114,7 +1115,7 @@ class LwipTcpConnection(
                 if (closed || cancelled) return@execute
 
                 if (error != null) {
-                    logTransportFailure("Receive", error, LwipStack.LogLevel.WARNING)
+                    logTransportFailure("Receive", error, TransportLogLevel.WARNING)
                     abort()
                     return@execute
                 }

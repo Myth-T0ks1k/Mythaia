@@ -21,6 +21,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ScheduledExecutorService
+import com.mythaia.vpn.util.TransportLogLevel
 
 /**
  * Represents a single UDP "flow" (identified by 5-tuple).
@@ -83,7 +84,7 @@ class LwipUdpFlow(
     private fun logTransportFailure(
         operation: String,
         error: Throwable,
-        defaultLevel: LwipStack.LogLevel
+        defaultLevel: TransportLogLevel
     ) {
         TransportErrorLogger.log(
             operation = operation,
@@ -277,7 +278,7 @@ class LwipUdpFlow(
                     lwipExecutor.execute {
                         proxyConnecting = false
                         if (closed) return@execute
-                        logTransportFailure("Mux dispatch", e, LwipStack.LogLevel.ERROR)
+                        logTransportFailure("Mux dispatch", e, TransportLogLevel.ERROR)
                         releaseProtocol()
                         LwipStack.instance?.udpFlows?.remove(flowKey)
                     }
@@ -351,7 +352,7 @@ class LwipUdpFlow(
                     proxyConnecting = false
                     if (closed) return@execute
                     if (e !is ProxyError.Dropped) {
-                        logTransportFailure("Connect", e, LwipStack.LogLevel.ERROR)
+                        logTransportFailure("Connect", e, TransportLogLevel.ERROR)
                     }
                     releaseProtocol()
                     LwipStack.instance?.udpFlows?.remove(flowKey)
@@ -408,7 +409,7 @@ class LwipUdpFlow(
                     proxyConnecting = false
                     if (closed) return@execute
                     if (e !is ProxyError.Dropped) {
-                        logTransportFailure("Connect", e, LwipStack.LogLevel.ERROR)
+                        logTransportFailure("Connect", e, TransportLogLevel.ERROR)
                     }
                     releaseProtocol()
                     LwipStack.instance?.udpFlows?.remove(flowKey)
@@ -433,7 +434,7 @@ class LwipUdpFlow(
             logTransportFailure(
                 "SS UDP session",
                 IllegalStateException("Shadowsocks credentials missing or malformed"),
-                LwipStack.LogLevel.ERROR
+                TransportLogLevel.ERROR
             )
             close()
             stack.udpFlows.remove(flowKey)
@@ -454,7 +455,7 @@ class LwipUdpFlow(
             errorHandler = { error ->
                 lwipExecutor.execute {
                     if (closed) return@execute
-                    logTransportFailure("SS UDP session", error, LwipStack.LogLevel.WARNING)
+                    logTransportFailure("SS UDP session", error, TransportLogLevel.WARNING)
                     close()
                     LwipStack.instance?.udpFlows?.remove(flowKey)
                 }
@@ -532,7 +533,7 @@ class LwipUdpFlow(
                 lwipExecutor.execute {
                     proxyConnecting = false
                     if (closed) return@execute
-                    logTransportFailure("Connect", e, LwipStack.LogLevel.ERROR)
+                    logTransportFailure("Connect", e, TransportLogLevel.ERROR)
                     close()
                     LwipStack.instance?.udpFlows?.remove(flowKey)
                 }

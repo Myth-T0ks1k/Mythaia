@@ -50,6 +50,10 @@ import kotlinx.serialization.json.Json
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.UUID
+import com.mythaia.vpn.protocol.tls.reload
+import com.mythaia.vpn.util.reload
+import com.mythaia.vpn.protocol.tls.read
+import com.mythaia.vpn.protocol.tls.write
 
 enum class VpnStatus {
     DISCONNECTED, CONNECTING, CONNECTED, DISCONNECTING, REASSERTING

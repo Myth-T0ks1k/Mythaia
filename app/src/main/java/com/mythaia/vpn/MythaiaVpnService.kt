@@ -33,6 +33,8 @@ import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.LogBuffer
 import kotlinx.serialization.json.Json
+import com.mythaia.vpn.protocol.tls.reload
+import com.mythaia.vpn.util.reload
 
 /**
  * Android VPN service that creates a TUN interface, runs the lwIP TCP/IP stack,
@@ -292,7 +294,7 @@ class MythaiaVpnService : VpnService() {
 
         // Set the underlying physical network for DnsCache so DNS resolution
         // bypasses the VPN tunnel.
-        findUnderlyingNetwork()?.let { DnsCache.setUnderlyingNetwork(it) }
+        findUnderlyingNetwork()?.let { DnsCache.setUnderlyingNetwork(AndroidUnderlyingNetwork(it)) }
 
         val stack = LwipStack(this)
         lwipStack = stack
@@ -499,7 +501,7 @@ class MythaiaVpnService : VpnService() {
             socketFn = { protect(it) },
             datagramFn = { protect(it) }
         )
-        findUnderlyingNetwork()?.let { DnsCache.setUnderlyingNetwork(it) }
+        findUnderlyingNetwork()?.let { DnsCache.setUnderlyingNetwork(AndroidUnderlyingNetwork(it)) }
         DnsCache.setActiveProxyDomain(parsed.peer.endpointHost)
 
         MythaiaLogger.logSink = { message, level -> LogBuffer.append(message, level) }
@@ -820,7 +822,7 @@ class MythaiaVpnService : VpnService() {
                 // Underlying interface DNS / route may have changed; refresh DnsCache
                 // so subsequent resolutions go through the new interface.
                 if (network == lastUnderlyingNetwork) {
-                    DnsCache.setUnderlyingNetwork(network)
+                    DnsCache.setUnderlyingNetwork(network?.let { AndroidUnderlyingNetwork(it) })
                 }
             }
         }
@@ -954,7 +956,7 @@ class MythaiaVpnService : VpnService() {
 
         // Refresh DnsCache so domain resolution always goes through the new
         // physical interface.
-        DnsCache.setUnderlyingNetwork(network)
+        DnsCache.setUnderlyingNetwork(network?.let { AndroidUnderlyingNetwork(it) })
 
         if (!wasAvailable) {
             logger.info("[VPN] Network path restored: ${transportSummary(transports)}; restarting connections")

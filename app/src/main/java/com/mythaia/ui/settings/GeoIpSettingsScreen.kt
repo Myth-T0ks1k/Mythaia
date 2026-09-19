@@ -45,6 +45,9 @@ import com.mythaia.viewmodel.VpnViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.mythaia.vpn.util.file
+import com.mythaia.vpn.util.importFrom
+import com.mythaia.vpn.util.clear
 
 /**
  * Imports the MaxMind database that `geoip:` routing rules need.
@@ -77,7 +80,7 @@ fun GeoIpSettingsScreen(
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
-                        GeoIpDatabase.import(context, stream)
+                        GeoIpDatabase.importFrom(context, stream)
                     } ?: false
                 }.getOrDefault(false)
             }

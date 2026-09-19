@@ -23,6 +23,8 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import com.mythaia.vpn.protocol.tls.reload
+import com.mythaia.vpn.util.reload
 
 /**
  * Main coordinator for the lwIP TCP/IP stack on Android.
@@ -782,17 +784,6 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             }
         }
     }
-
-    /**
-     * Tunnel-event severity: INFO / WARNING / ERROR only. Used by
-     * `logTransportFailure` to pick the log channel for a classified socket
-     * failure.
-     *
-     * Do not add a DEBUG case — [MythaiaLogger]'s `debug` channel is
-     * intentionally separate from the user-facing buffer (see
-     * MythaiaLogger.kt::debug).
-     */
-    enum class LogLevel { INFO, WARNING, ERROR }
 
     private fun handleSettingsChanged() {
         lwipExecutor.execute {

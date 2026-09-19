@@ -1,0 +1,573 @@
+package com.mythaia.desktop.engine
+
+import com.mythaia.vpn.util.MythaiaLogger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketAddress
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+
+/** One side of a relayed connection: the proxy server or a direct socket. */
+interface Upstream {
+    suspend fun send(data: ByteArray)
+    /** Null at end of stream. */
+    suspend fun receive(): ByteArray?
+    fun close()
+}
+
+/** Opens upstreams for the local listeners; routing decisions happen inside. */
+interface Dialer {
+    /** Null when the route blocks this destination. */
+    suspend fun dial(host: String, port: Int, initialData: ByteArray?): Upstream?
+    suspend fun dialUdp(host: String, port: Int): Upstream?
+}
+
+/** Byte counters the home screen shows. */
+class TrafficStats {
+    val up = AtomicLong(0)
+    val down = AtomicLong(0)
+    val connections = AtomicInteger(0)
+
+    fun reset() {
+        up.set(0); down.set(0); connections.set(0)
+    }
+}
+
+/**
+ * The local inbound: SOCKS5 (CONNECT and UDP ASSOCIATE) and HTTP (CONNECT
+ * and plain forwarding), each port accepting either — the first byte says
+ * which. Everything that arrives is handed to the [Dialer].
+ */
+class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficStats) {
+    private val logger = MythaiaLogger("LocalProxy")
+
+    // Blocking socket I/O needs a thread per direction per connection; a
+    // cached pool grows with the browser's connection count and shrinks after.
+    private val pool = Executors.newCachedThreadPool { r ->
+        Thread(r, "mythaia-io").apply { isDaemon = true }
+    }
+    private val io = pool.asCoroutineDispatcher()
+
+    private var scope: CoroutineScope? = null
+    private val listeners = mutableListOf<ServerSocket>()
+    private val running = AtomicBoolean(false)
+    @Volatile private var udpEnabled = true
+    @Volatile private var bindAddress: InetAddress = InetAddress.getLoopbackAddress()
+
+    val isRunning: Boolean get() = running.get()
+
+    @Throws(IOException::class)
+    fun start(socksPort: Int, httpPort: Int, allowLan: Boolean, udp: Boolean) {
+        if (running.get()) return
+        udpEnabled = udp
+        bindAddress = if (allowLan) InetAddress.getByName("0.0.0.0") else InetAddress.getLoopbackAddress()
+        val ports = listOf(socksPort, httpPort).distinct().filter { it in 1..65535 }
+        val opened = mutableListOf<ServerSocket>()
+        try {
+            for (port in ports) {
+                val server = ServerSocket()
+                server.reuseAddress = true
+                server.bind(InetSocketAddress(bindAddress, port), 128)
+                opened += server
+            }
+        } catch (e: IOException) {
+            opened.forEach { runCatching { it.close() } }
+            throw e
+        }
+        val newScope = CoroutineScope(SupervisorJob() + io)
+        scope = newScope
+        listeners.clear()
+        listeners += opened
+        running.set(true)
+        for (server in opened) {
+            newScope.launch { acceptLoop(server) }
+        }
+        logger.info("Listening on ${ports.joinToString { "${bindAddress.hostAddress}:$it" }}")
+    }
+
+    fun stop() {
+        if (!running.getAndSet(false)) return
+        listeners.forEach { runCatching { it.close() } }
+        listeners.clear()
+        scope?.cancel()
+        scope = null
+        logger.info("Stopped")
+    }
+
+    private suspend fun acceptLoop(server: ServerSocket) {
+        val current = scope ?: return
+        while (running.get() && !server.isClosed) {
+            val client = try {
+                withContext(io) { server.accept() }
+            } catch (e: IOException) {
+                if (running.get()) logger.debug("accept: ${e.message}")
+                break
+            }
+            current.launch {
+                stats.connections.incrementAndGet()
+                try {
+                    client.tcpNoDelay = true
+                    handle(client)
+                } catch (_: CancellationException) {
+                } catch (e: Exception) {
+                    logger.debug("connection: ${e.message ?: e}")
+                } finally {
+                    stats.connections.decrementAndGet()
+                    runCatching { client.close() }
+                }
+            }
+        }
+    }
+
+    private suspend fun handle(client: Socket) {
+        client.soTimeout = HANDSHAKE_TIMEOUT_MS
+        val input = client.getInputStream()
+        val output = client.getOutputStream()
+        val first = withContext(io) { input.read() }
+        if (first < 0) return
+        when (first) {
+            0x05 -> handleSocks5(client, input, output)
+            0x04 -> logger.debug("SOCKS4 is not supported")
+            else -> handleHttp(client, input, output, first)
+        }
+    }
+
+    // ------------------------------------------------------------------ SOCKS5
+
+    private suspend fun handleSocks5(client: Socket, input: InputStream, output: OutputStream) {
+        val methodCount = readByte(input)
+        val methods = readFully(input, methodCount)
+        if (!methods.contains(0.toByte())) {
+            write(output, byteArrayOf(0x05, 0xFF.toByte()))
+            return
+        }
+        write(output, byteArrayOf(0x05, 0x00))
+
+        val header = readFully(input, 4)
+        if (header[0] != 0x05.toByte()) return
+        val command = header[1].toInt()
+        val (host, port) = readSocksAddress(input, header[3].toInt())
+
+        when (command) {
+            CMD_CONNECT -> {
+                val upstream = try {
+                    dialer.dial(host, port, null)
+                } catch (e: Exception) {
+                    logger.debug("dial $host:$port failed: ${e.message ?: e}")
+                    write(output, socksReply(REP_HOST_UNREACHABLE))
+                    return
+                }
+                if (upstream == null) {
+                    write(output, socksReply(REP_NOT_ALLOWED))
+                    return
+                }
+                write(output, socksReply(REP_SUCCESS))
+                client.soTimeout = 0
+                relay(client, input, output, upstream)
+            }
+            CMD_UDP_ASSOCIATE -> {
+                if (!udpEnabled) {
+                    write(output, socksReply(REP_COMMAND_NOT_SUPPORTED))
+                    return
+                }
+                udpAssociate(client, input, output)
+            }
+            else -> write(output, socksReply(REP_COMMAND_NOT_SUPPORTED))
+        }
+    }
+
+    private suspend fun udpAssociate(client: Socket, input: InputStream, output: OutputStream) {
+        val relaySocket = DatagramSocket(InetSocketAddress(bindAddress, 0))
+        try {
+            val bound = relaySocket.localAddress.let { if (it.isAnyLocalAddress) client.localAddress else it }
+            val reply = ByteArrayOutputStream().apply {
+                write(byteArrayOf(0x05, 0x00, 0x00))
+                val addr = bound.address
+                write(if (addr.size == 4) 0x01 else 0x04)
+                write(addr)
+                write(relaySocket.localPort ushr 8)
+                write(relaySocket.localPort and 0xFF)
+            }.toByteArray()
+            write(output, reply)
+            client.soTimeout = 0
+
+            coroutineScope {
+                val relayJob = launch { udpRelayLoop(relaySocket) }
+                // The association lives as long as the TCP control connection.
+                withContext(io) {
+                    try {
+                        while (input.read() >= 0) { /* clients send nothing here */ }
+                    } catch (_: IOException) {
+                    }
+                }
+                relayJob.cancel()
+            }
+        } finally {
+            runCatching { relaySocket.close() }
+        }
+    }
+
+    private suspend fun udpRelayLoop(relaySocket: DatagramSocket) = coroutineScope {
+        val upstreams = ConcurrentHashMap<String, Upstream>()
+        val jobs = ConcurrentHashMap<String, Job>()
+        var clientAddress: SocketAddress? = null
+        val buffer = ByteArray(65_535)
+        try {
+            while (true) {
+                val packet = DatagramPacket(buffer, buffer.size)
+                withContext(io) { relaySocket.receive(packet) }
+                if (clientAddress == null) clientAddress = packet.socketAddress
+                val data = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
+                if (data.size < 4 || data[2] != 0.toByte()) continue // fragments unsupported
+                val parsed = parseUdpHeader(data) ?: continue
+                val (host, port, headerLength) = parsed
+                val key = "$host:$port"
+                val payload = data.copyOfRange(headerLength, data.size)
+                val upstream = upstreams[key] ?: run {
+                    val created = try {
+                        dialer.dialUdp(host, port)
+                    } catch (e: Exception) {
+                        logger.debug("udp dial $key: ${e.message ?: e}")
+                        null
+                    } ?: return@run null
+                    upstreams[key] = created
+                    val header = data.copyOfRange(0, headerLength)
+                    val target = clientAddress
+                    jobs[key] = launch {
+                        try {
+                            while (true) {
+                                val answer = created.receive() ?: break
+                                stats.down.addAndGet(answer.size.toLong())
+                                val out = ByteArray(header.size + answer.size)
+                                System.arraycopy(header, 0, out, 0, header.size)
+                                System.arraycopy(answer, 0, out, header.size, answer.size)
+                                withContext(io) { relaySocket.send(DatagramPacket(out, out.size, target)) }
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            upstreams.remove(key)
+                            runCatching { created.close() }
+                        }
+                    }
+                    created
+                } ?: continue
+                stats.up.addAndGet(payload.size.toLong())
+                try {
+                    upstream.send(payload)
+                } catch (e: Exception) {
+                    upstreams.remove(key)
+                    jobs.remove(key)?.cancel()
+                    runCatching { upstream.close() }
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            jobs.values.forEach { it.cancel() }
+            upstreams.values.forEach { runCatching { it.close() } }
+        }
+    }
+
+    /** host, port and the header length of a SOCKS5 UDP datagram. */
+    private fun parseUdpHeader(data: ByteArray): Triple<String, Int, Int>? {
+        var offset = 3
+        val atyp = data[offset++].toInt()
+        val host: String
+        when (atyp) {
+            0x01 -> {
+                if (data.size < offset + 6) return null
+                host = InetAddress.getByAddress(data.copyOfRange(offset, offset + 4)).hostAddress
+                offset += 4
+            }
+            0x03 -> {
+                val len = data[offset++].toInt() and 0xFF
+                if (data.size < offset + len + 2) return null
+                host = String(data, offset, len, Charsets.US_ASCII)
+                offset += len
+            }
+            0x04 -> {
+                if (data.size < offset + 18) return null
+                host = InetAddress.getByAddress(data.copyOfRange(offset, offset + 16)).hostAddress
+                offset += 16
+            }
+            else -> return null
+        }
+        val port = ((data[offset].toInt() and 0xFF) shl 8) or (data[offset + 1].toInt() and 0xFF)
+        offset += 2
+        return Triple(host, port, offset)
+    }
+
+    private suspend fun readSocksAddress(input: InputStream, atyp: Int): Pair<String, Int> {
+        val host = when (atyp) {
+            0x01 -> InetAddress.getByAddress(readFully(input, 4)).hostAddress
+            0x03 -> String(readFully(input, readByte(input)), Charsets.US_ASCII)
+            0x04 -> InetAddress.getByAddress(readFully(input, 16)).hostAddress
+            else -> throw IOException("bad address type $atyp")
+        }
+        val portBytes = readFully(input, 2)
+        val port = ((portBytes[0].toInt() and 0xFF) shl 8) or (portBytes[1].toInt() and 0xFF)
+        return host to port
+    }
+
+    private fun socksReply(code: Int): ByteArray =
+        byteArrayOf(0x05, code.toByte(), 0x00, 0x01, 0, 0, 0, 0, 0, 0)
+
+    // ------------------------------------------------------------------- HTTP
+
+    private suspend fun handleHttp(client: Socket, input: InputStream, output: OutputStream, firstByte: Int) {
+        val head = readHead(input, firstByte) ?: return
+        val headText = String(head.head, Charsets.ISO_8859_1)
+        val lines = headText.split("\r\n").filter { it.isNotEmpty() }
+        val requestLine = lines.firstOrNull() ?: return
+        val parts = requestLine.split(" ")
+        if (parts.size < 3) {
+            write(output, httpError(400, "Bad Request"))
+            return
+        }
+        val method = parts[0].uppercase()
+        val target = parts[1]
+        val version = parts[2]
+        val headers = lines.drop(1)
+
+        if (method == "CONNECT") {
+            val (host, port) = splitHostPort(target, 443) ?: run {
+                write(output, httpError(400, "Bad Request"))
+                return
+            }
+            val upstream = try {
+                dialer.dial(host, port, null)
+            } catch (e: Exception) {
+                logger.debug("dial $host:$port failed: ${e.message ?: e}")
+                write(output, httpError(502, "Bad Gateway"))
+                return
+            }
+            if (upstream == null) {
+                write(output, httpError(403, "Forbidden"))
+                return
+            }
+            write(output, "$version 200 Connection established\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+            client.soTimeout = 0
+            if (head.remainder.isNotEmpty()) {
+                stats.up.addAndGet(head.remainder.size.toLong())
+                upstream.send(head.remainder)
+            }
+            relay(client, input, output, upstream)
+            return
+        }
+
+        // Plain HTTP: absolute-form target, or origin-form with a Host header.
+        val hostHeader = headers.firstOrNull { it.startsWith("host:", ignoreCase = true) }
+            ?.substringAfter(':')?.trim()
+        val (host, port, path) = when {
+            target.startsWith("http://", ignoreCase = true) -> {
+                val rest = target.substring(7)
+                val slash = rest.indexOf('/')
+                val authority = if (slash >= 0) rest.substring(0, slash) else rest
+                val p = if (slash >= 0) rest.substring(slash) else "/"
+                val hp = splitHostPort(authority, 80) ?: run {
+                    write(output, httpError(400, "Bad Request"))
+                    return
+                }
+                Triple(hp.first, hp.second, p)
+            }
+            hostHeader != null -> {
+                val hp = splitHostPort(hostHeader, 80) ?: run {
+                    write(output, httpError(400, "Bad Request"))
+                    return
+                }
+                Triple(hp.first, hp.second, target)
+            }
+            else -> {
+                write(output, httpError(400, "Bad Request"))
+                return
+            }
+        }
+
+        val forwarded = StringBuilder()
+        forwarded.append(method).append(' ').append(path).append(' ').append(version).append("\r\n")
+        var hasHost = false
+        for (header in headers) {
+            val name = header.substringBefore(':').trim().lowercase()
+            when (name) {
+                "proxy-connection", "proxy-authorization", "connection", "keep-alive" -> continue
+                "host" -> hasHost = true
+            }
+            forwarded.append(header).append("\r\n")
+        }
+        if (!hasHost) forwarded.append("Host: ").append(if (port == 80) host else "$host:$port").append("\r\n")
+        // One request per connection: the upstream stream is not re-parsed here.
+        forwarded.append("Connection: close\r\n\r\n")
+        val initial = forwarded.toString().toByteArray(Charsets.ISO_8859_1) + head.remainder
+
+        val upstream = try {
+            dialer.dial(host, port, initial)
+        } catch (e: Exception) {
+            logger.debug("dial $host:$port failed: ${e.message ?: e}")
+            write(output, httpError(502, "Bad Gateway"))
+            return
+        }
+        if (upstream == null) {
+            write(output, httpError(403, "Forbidden"))
+            return
+        }
+        stats.up.addAndGet(initial.size.toLong())
+        client.soTimeout = 0
+        relay(client, input, output, upstream)
+    }
+
+    private class Head(val head: ByteArray, val remainder: ByteArray)
+
+    /** Reads up to the blank line; what came after it in the same read is [Head.remainder]. */
+    private suspend fun readHead(input: InputStream, firstByte: Int): Head? = withContext(io) {
+        val buffer = ByteArrayOutputStream()
+        buffer.write(firstByte)
+        val chunk = ByteArray(4096)
+        while (buffer.size() < MAX_HEAD) {
+            val bytes = buffer.toByteArray()
+            val end = indexOfBlankLine(bytes)
+            if (end >= 0) {
+                return@withContext Head(bytes.copyOfRange(0, end + 4), bytes.copyOfRange(end + 4, bytes.size))
+            }
+            val n = input.read(chunk)
+            if (n < 0) return@withContext null
+            buffer.write(chunk, 0, n)
+        }
+        null
+    }
+
+    private fun indexOfBlankLine(bytes: ByteArray): Int {
+        for (i in 0..bytes.size - 4) {
+            if (bytes[i] == '\r'.code.toByte() && bytes[i + 1] == '\n'.code.toByte() &&
+                bytes[i + 2] == '\r'.code.toByte() && bytes[i + 3] == '\n'.code.toByte()) return i
+        }
+        return -1
+    }
+
+    private fun splitHostPort(authority: String, defaultPort: Int): Pair<String, Int>? {
+        val text = authority.trim()
+        if (text.isEmpty()) return null
+        if (text.startsWith("[")) {
+            val close = text.indexOf(']')
+            if (close < 0) return null
+            val host = text.substring(1, close)
+            val port = text.substring(close + 1).removePrefix(":").toIntOrNull() ?: defaultPort
+            return host to port
+        }
+        val colon = text.lastIndexOf(':')
+        if (colon < 0 || text.count { it == ':' } > 1) return text to defaultPort
+        val port = text.substring(colon + 1).toIntOrNull() ?: return null
+        return text.substring(0, colon) to port
+    }
+
+    private fun httpError(code: Int, reason: String): ByteArray =
+        "HTTP/1.1 $code $reason\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1)
+
+    // ------------------------------------------------------------------ relay
+
+    /** Copies both ways until either side ends, then closes both. */
+    private suspend fun relay(client: Socket, input: InputStream, output: OutputStream, upstream: Upstream) {
+        try {
+            coroutineScope {
+                val uplink = launch {
+                    val buffer = ByteArray(32 * 1024)
+                    try {
+                        while (true) {
+                            val n = withContext(io) { input.read(buffer) }
+                            if (n < 0) break
+                            if (n == 0) continue
+                            stats.up.addAndGet(n.toLong())
+                            upstream.send(buffer.copyOf(n))
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                val downlink = launch {
+                    try {
+                        while (true) {
+                            val data = upstream.receive() ?: break
+                            if (data.isEmpty()) continue
+                            stats.down.addAndGet(data.size.toLong())
+                            withContext(io) {
+                                output.write(data)
+                                output.flush()
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                // Whichever direction finishes first ends the connection: the
+                // proxy protocols carry no half-close, so waiting for the other
+                // side would only hold the socket open.
+                val first = kotlinx.coroutines.selects.select<Unit> {
+                    uplink.onJoin { }
+                    downlink.onJoin { }
+                }
+                runCatching { upstream.close() }
+                runCatching { client.close() }
+                uplink.cancel()
+                downlink.cancel()
+                first
+            }
+        } finally {
+            runCatching { upstream.close() }
+        }
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    private suspend fun readByte(input: InputStream): Int = withContext(io) {
+        val b = input.read()
+        if (b < 0) throw IOException("closed")
+        b
+    }
+
+    private suspend fun readFully(input: InputStream, count: Int): ByteArray = withContext(io) {
+        val out = ByteArray(count)
+        var read = 0
+        while (read < count) {
+            val n = input.read(out, read, count - read)
+            if (n < 0) throw IOException("closed")
+            read += n
+        }
+        out
+    }
+
+    private suspend fun write(output: OutputStream, data: ByteArray) = withContext(io) {
+        output.write(data)
+        output.flush()
+    }
+
+    companion object {
+        private const val HANDSHAKE_TIMEOUT_MS = 15_000
+        private const val MAX_HEAD = 64 * 1024
+        private const val CMD_CONNECT = 1
+        private const val CMD_UDP_ASSOCIATE = 3
+        private const val REP_SUCCESS = 0
+        private const val REP_NOT_ALLOWED = 2
+        private const val REP_HOST_UNREACHABLE = 4
+        private const val REP_COMMAND_NOT_SUPPORTED = 7
+    }
+}
+
+/** Whether [address] is a v4 literal; the relay reply needs the family. */
+internal fun InetAddress.isV4(): Boolean = this is Inet4Address

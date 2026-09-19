@@ -109,9 +109,11 @@ static const char *run_self_test(char *buf, size_t buflen) {
   memcpy(dcid.data, kDcid, sizeof(kDcid));
   dcid.datalen = sizeof(kDcid);
 
-  /* Step 1: the Initial secrets, i.e. HKDF-Extract then Expand-Label. */
+  /* Step 1: the Initial secrets, i.e. HKDF-Extract then Expand-Label.
+   * ngtcp2 hands back (rx, tx): on the client side rx is the server's
+   * secret and tx the client's. */
   rv = ngtcp2_crypto_derive_initial_secrets(
-    client_secret, server_secret, initial_secret, NGTCP2_PROTO_VER_V1, &dcid,
+    server_secret, client_secret, initial_secret, NGTCP2_PROTO_VER_V1, &dcid,
     NGTCP2_CRYPTO_SIDE_CLIENT);
   if (rv != 0) {
     snprintf(buf, buflen, "derive_initial_secrets failed (%d)", rv);

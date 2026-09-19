@@ -13,6 +13,7 @@ import java.io.File
 import java.net.InetAddress
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import com.mythaia.vpn.util.load
 
 sealed class RouteAction {
     data object Direct : RouteAction()

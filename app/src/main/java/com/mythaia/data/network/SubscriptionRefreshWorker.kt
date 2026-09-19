@@ -16,6 +16,8 @@ import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.MythaiaLogger
 import java.util.concurrent.TimeUnit
+import com.mythaia.vpn.protocol.tls.reload
+import com.mythaia.vpn.util.reload
 
 private val logger = MythaiaLogger("Subscriptions")
 

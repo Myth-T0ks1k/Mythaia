@@ -20,6 +20,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.util.UUID
+import com.mythaia.vpn.protocol.tls.reload
+import com.mythaia.vpn.util.reload
 
 private val logger = MythaiaLogger("AutoSelect")
 

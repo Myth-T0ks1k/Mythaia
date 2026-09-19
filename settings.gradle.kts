@@ -25,3 +25,5 @@ dependencyResolutionManagement {
 rootProject.name = "Mythaia"
 include(":app")
 include(":wear")
+include(":core")
+include(":desktop")
