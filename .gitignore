@@ -61,3 +61,4 @@ desktop/build/
 desktop/native/build/
 desktop/native/out/
 desktop/resources/windows-x64/
+*.zip
