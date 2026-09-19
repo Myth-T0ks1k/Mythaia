@@ -23,6 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.IconButton
+import com.mythaia.ui.components.WingIconTile
+import com.mythaia.ui.components.WingSectionTitle
 import androidx.compose.material.icons.automirrored.filled.CallMerge
 import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.filled.Info
@@ -85,7 +89,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: VpnViewModel) {
+fun SettingsScreen(viewModel: VpnViewModel, onClose: () -> Unit = {}) {
     val context = LocalContext.current
     var showRoutingRules by rememberSaveable { mutableStateOf(false) }
     var showAcknowledgements by rememberSaveable { mutableStateOf(false) }
@@ -116,6 +120,9 @@ fun SettingsScreen(viewModel: VpnViewModel) {
         showTrustedCertificates = false
         showAdvancedSettings = false
     }
+    // At the root, back closes the sheet — the arrow does the same, and a
+    // swipe never does, so a scroll cannot throw the user out by accident.
+    BackHandler(enabled = !activeSubScreen) { onClose() }
 
     val currentRoute = when {
         showRoutingRules -> "routing"
@@ -180,7 +187,8 @@ fun SettingsScreen(viewModel: VpnViewModel) {
                 onOpenRoutingRules = { showRoutingRules = true },
                 onOpenTrustedCertificates = { showTrustedCertificates = true },
                 onOpenAcknowledgements = { showAcknowledgements = true },
-                onOpenAdvancedSettings = { showAdvancedSettings = true }
+                onOpenAdvancedSettings = { showAdvancedSettings = true },
+                onClose = onClose
             )
         }
     }
@@ -235,17 +243,29 @@ private fun SettingsRoot(
     onOpenRoutingRules: () -> Unit,
     onOpenTrustedCertificates: () -> Unit,
     onOpenAcknowledgements: () -> Unit,
-    onOpenAdvancedSettings: () -> Unit
+    onOpenAdvancedSettings: () -> Unit,
+    onClose: () -> Unit
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings)) },
+                navigationIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.close)
+                        )
+                    }
+                },
+                // Inside a sheet there is no status bar to leave room for.
+                windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     scrolledContainerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
         }
@@ -421,12 +441,7 @@ private fun ThemeModeRow(mode: ThemeMode, onModeChange: (ThemeMode) -> Unit) {
  */
 @Composable
 internal fun SectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.sp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp)
-    )
+    WingSectionTitle(title = title)
 }
 
 /**
@@ -437,9 +452,8 @@ internal fun SectionHeader(title: String) {
 private fun SettingsGroupCard(content: @Composable () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column { content() }
     }
@@ -449,9 +463,9 @@ private fun SettingsGroupCard(content: @Composable () -> Unit) {
 @Composable
 private fun SettingsRowDivider() {
     HorizontalDivider(
-        modifier = Modifier.padding(start = 60.dp),
+        modifier = Modifier.padding(start = 66.dp, end = 16.dp),
         thickness = 1.dp,
-        color = MaterialTheme.colorScheme.outlineVariant
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
     )
 }
 
@@ -471,8 +485,8 @@ private fun SettingsIcon(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(16.dp)
+            tint = Color.White,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
@@ -488,8 +502,8 @@ private fun SettingsIcon(
         Icon(
             painter = painter,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(16.dp)
+            tint = Color.White,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
@@ -501,15 +515,7 @@ private fun SettingsIconContainer(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-        contentAlignment = Alignment.Center
-    ) {
-        content()
-    }
+    WingIconTile(modifier = modifier, size = 34.dp) { content() }
 }
 
 @Composable

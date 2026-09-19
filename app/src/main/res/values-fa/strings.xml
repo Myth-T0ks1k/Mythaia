@@ -349,8 +349,8 @@
 
     <string name="proxy_chain">زنجیره پراکسی</string>
     <string name="group_default">پیش‌فرض</string>
-    <string name="auto_mode">خودکار · سریع‌ترین هندشیک</string>
-    <string name="auto_mode_hint">گروه را می‌سنجد و سریع‌ترین سرور را دنبال می‌کند؛ هنگام اتصال هر ۲ دقیقه دوباره بررسی می‌کند.</string>
+    <string name="auto_mode">خودکار · بهترین پینگ</string>
+    <string name="auto_mode_hint">فوراً وصل می‌شود، سپس گروه را با پینگ واقعی می‌سنجد و به سریع‌ترین می‌رود؛ هنگام اتصال هر ۲ دقیقه دوباره بررسی می‌کند.</string>
     <string name="auto_prefix">خودکار · %1$s</string>
     <string name="pinned">سنجاق‌شده</string>
     <string name="auto_picked">انتخاب خودکار</string>
@@ -364,4 +364,7 @@
     <string name="front_targets">اهداف (هر خط یکی)</string>
     <string name="fronting_hint">اشتراک با اتصال به این میزبان‌ها به جای میزبان لینک دانلود می‌شود و SNI بالا در هندشیک TLS استفاده می‌شود. برای پنل‌هایی که دامنه‌شان مسدود است اما CDN آن‌ها نه.</string>
     <string name="no_servers_in_group">هنوز سروری در این گروه نیست.</string>
+
+    <string name="no_connectivity">متصل · از این سرور اینترنتی نیست</string>
+    <string name="close">بستن</string>
 </resources>

@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -132,40 +135,11 @@ fun AppNavigation(viewModel: VpnViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (wideLayout) return@Scaffold
-            Column {
-                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline)
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp
-                ) {
-                    topLevelRoutes.forEach { topLevelRoute ->
-                        val selected = isSelected(topLevelRoute)
-                        NavigationBarItem(
-                            icon = {
-                                Icon(
-                                    imageVector = if (selected) topLevelRoute.selectedIcon else topLevelRoute.unselectedIcon,
-                                    contentDescription = stringResource(topLevelRoute.titleResId)
-                                )
-                            },
-                            label = {
-                                Text(
-                                    stringResource(topLevelRoute.titleResId),
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                            ),
-                            selected = selected,
-                            onClick = { go(topLevelRoute) }
-                        )
-                    }
-                }
-            }
+            WingBottomBar(
+                routes = topLevelRoutes,
+                isSelected = { isSelected(it) },
+                onSelect = { go(it) }
+            )
         }
     ) { innerPadding ->
         if (wideLayout) {
@@ -234,14 +208,20 @@ fun AppNavigation(viewModel: VpnViewModel) {
     // with its own drill-down, lives inside the sheet; the sub-screens' own
     // back handling takes precedence until they are back at the root.
     if (showSettings) {
+        // Opened by a swipe up, closed only by the arrow or the back gesture:
+        // the sheet refuses to be dragged away so a scroll cannot dismiss it.
         ModalBottomSheet(
             onDismissRequest = { showSettings = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetState = rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
+                confirmValueChange = { it != SheetValue.Hidden }
+            ),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.background
+            containerColor = MaterialTheme.colorScheme.background,
+            dragHandle = null
         ) {
-            Box(modifier = Modifier.fillMaxHeight(0.94f)) {
-                SettingsScreen(viewModel = viewModel)
+            Box(modifier = Modifier.fillMaxHeight(0.96f)) {
+                SettingsScreen(viewModel = viewModel, onClose = { showSettings = false })
             }
         }
     }
@@ -267,7 +247,9 @@ private fun AppNavHost(
             )
         }
         composable<ProxiesRoute> {
-            Box(modifier = Modifier.padding(contentPadding)) {
+            // Only the bottom inset: the screen draws its own header under the
+            // status bar, and the outer padding would leave a blank band there.
+            Box(modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding())) {
                 ProxyListScreen(viewModel = viewModel)
             }
         }
@@ -290,6 +272,61 @@ private fun AppNavHost(
                 }
             }
         )
+    }
+}
+
+/**
+ * The Mythaia bottom bar: a paper slab with rounded shoulders, the active
+ * destination sitting in an azure pill with its label beside the icon, the
+ * other one quiet.
+ */
+@Composable
+private fun WingBottomBar(
+    routes: List<TopLevelRoute>,
+    isSelected: (TopLevelRoute) -> Boolean,
+    onSelect: (TopLevelRoute) -> Unit
+) {
+    androidx.compose.material3.Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shadowElevation = 12.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            routes.forEach { route ->
+                val selected = isSelected(route)
+                androidx.compose.material3.Surface(
+                    onClick = { onSelect(route) },
+                    shape = RoundedCornerShape(50),
+                    color = if (selected) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent,
+                    contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (selected) route.selectedIcon else route.unselectedIcon,
+                            contentDescription = stringResource(route.titleResId),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text(
+                            text = stringResource(route.titleResId),
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

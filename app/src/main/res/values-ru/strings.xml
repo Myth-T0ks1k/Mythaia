@@ -357,8 +357,8 @@
 
     <string name="proxy_chain">Цепь прокси</string>
     <string name="group_default">Default</string>
-    <string name="auto_mode">Авто · лучший по хендшейку</string>
-    <string name="auto_mode_hint">Замеряет группу и держится за самый быстрый сервер; при подключении перепроверяет каждые 2 минуты.</string>
+    <string name="auto_mode">Авто · лучший по пингу</string>
+    <string name="auto_mode_hint">Подключается сразу, затем замеряет группу по настоящему пингу и переходит на самый быстрый; при подключении перепроверяет каждые 2 минуты.</string>
     <string name="auto_prefix">Авто · %1$s</string>
     <string name="pinned">Закреплён</string>
     <string name="auto_picked">Выбран автоматически</string>
@@ -372,4 +372,7 @@
     <string name="front_targets">Target-адреса (по одному в строке)</string>
     <string name="fronting_hint">Подписка скачивается через подключение к этим адресам вместо хоста из ссылки, с указанным SNI в TLS. Для панелей, чей домен заблокирован, а CDN нет.</string>
     <string name="no_servers_in_group">В этой группе пока нет серверов.</string>
+
+    <string name="no_connectivity">Подключено · через этот сервер нет интернета</string>
+    <string name="close">Закрыть</string>
 </resources>

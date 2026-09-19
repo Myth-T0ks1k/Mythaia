@@ -345,8 +345,8 @@
 
     <string name="proxy_chain">Chuỗi proxy</string>
     <string name="group_default">Mặc định</string>
-    <string name="auto_mode">Tự động · handshake nhanh nhất</string>
-    <string name="auto_mode_hint">Đo nhóm và bám theo máy chủ nhanh nhất; kiểm tra lại mỗi 2 phút khi đang kết nối.</string>
+    <string name="auto_mode">Tự động · ping tốt nhất</string>
+    <string name="auto_mode_hint">Kết nối ngay, sau đó đo nhóm bằng ping thật và chuyển sang máy chủ nhanh nhất; kiểm tra lại mỗi 2 phút khi đang kết nối.</string>
     <string name="auto_prefix">Tự động · %1$s</string>
     <string name="pinned">Đã ghim</string>
     <string name="auto_picked">Do Tự động chọn</string>
@@ -360,4 +360,7 @@
     <string name="front_targets">Đích (mỗi dòng một)</string>
     <string name="fronting_hint">Gói đăng ký được tải bằng cách kết nối tới các máy chủ này thay cho máy chủ trong liên kết, với SNI ở trên trong handshake TLS. Dành cho panel bị chặn tên miền nhưng CDN thì không.</string>
     <string name="no_servers_in_group">Nhóm này chưa có máy chủ.</string>
+
+    <string name="no_connectivity">Đã kết nối · không có internet qua máy chủ này</string>
+    <string name="close">Đóng</string>
 </resources>

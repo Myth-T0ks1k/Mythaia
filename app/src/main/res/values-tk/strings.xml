@@ -349,8 +349,8 @@
 
     <string name="proxy_chain">Proksi zynjyry</string>
     <string name="group_default">Adaty</string>
-    <string name="auto_mode">Awto · iň çalt handshake</string>
-    <string name="auto_mode_hint">Topary ölçeýär we iň çalt serwere eýerýär; baglanan wagty her 2 minutdan gaýtadan barlaýar.</string>
+    <string name="auto_mode">Awto · iň gowy ping</string>
+    <string name="auto_mode_hint">Dessine birigýär, soňra topary hakyky ping bilen ölçeýär we iň çaltyna geçýär; baglanan wagty her 2 minutdan gaýtadan barlaýar.</string>
     <string name="auto_prefix">Awto · %1$s</string>
     <string name="pinned">Berkidildi</string>
     <string name="auto_picked">Awto saýlady</string>
@@ -364,4 +364,7 @@
     <string name="front_targets">Maksatlar (her setirde biri)</string>
     <string name="fronting_hint">Abuna baglanyşygyň öz hostuna däl-de, şu hostlara birigip, TLS handshake-de ýokardaky SNI bilen ýüklenýär. Domeni petiklenen, ýöne CDN-i petiklenmedik paneller üçin.</string>
     <string name="no_servers_in_group">Bu toparda entek serwer ýok.</string>
+
+    <string name="no_connectivity">Baglanyldy · bu serwer arkaly internet ýok</string>
+    <string name="close">Ýap</string>
 </resources>

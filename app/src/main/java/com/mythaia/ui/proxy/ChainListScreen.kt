@@ -61,7 +61,7 @@ import com.mythaia.ui.components.LatencyBadge
 import com.mythaia.viewmodel.VpnViewModel
 
 // Wing visual language: compact 14dp corners for list rows, 28dp for sheets.
-private val ChainRowShape = RoundedCornerShape(14.dp)
+private val ChainRowShape = RoundedCornerShape(22.dp)
 private val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
 /**
@@ -305,8 +305,8 @@ private fun ChainRow(
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = ChainRowShape,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, borderColor)
+            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                    else MaterialTheme.colorScheme.surfaceContainerLow
         ) {
             Row(
                 modifier = Modifier

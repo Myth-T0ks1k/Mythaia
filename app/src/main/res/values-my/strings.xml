@@ -345,8 +345,8 @@
 
     <string name="proxy_chain">ပရောက်စီကွင်းဆက်</string>
     <string name="group_default">မူလ</string>
-    <string name="auto_mode">အလိုအလျောက် · handshake အမြန်ဆုံး</string>
-    <string name="auto_mode_hint">အုပ်စုကို တိုင်းတာပြီး အမြန်ဆုံးဆာဗာကို လိုက်သည်။ ချိတ်ဆက်စဉ် ၂ မိနစ်တစ်ခါ ပြန်စစ်သည်။</string>
+    <string name="auto_mode">အလိုအလျောက် · ping အမြန်ဆုံး</string>
+    <string name="auto_mode_hint">ချက်ချင်း ချိတ်ဆက်ပြီး အုပ်စုကို တကယ့် ping ဖြင့် တိုင်းတာ၍ အမြန်ဆုံးသို့ ပြောင်းသည်။ ချိတ်ဆက်စဉ် ၂ မိနစ်တစ်ခါ ပြန်စစ်သည်။</string>
     <string name="auto_prefix">အလိုအလျောက် · %1$s</string>
     <string name="pinned">ပင်ထိုးထား</string>
     <string name="auto_picked">အလိုအလျောက် ရွေးချယ်ထား</string>
@@ -360,4 +360,7 @@
     <string name="front_targets">ပစ်မှတ်များ (တစ်ကြောင်းတစ်ခု)</string>
     <string name="fronting_hint">လင့်ခ်၏ host အစား ဤ host များကို ချိတ်ဆက်ပြီး TLS handshake တွင် အထက်ပါ SNI သုံး၍ စာရင်းသွင်းမှုကို ဒေါင်းလုဒ်ဆွဲသည်။ ဒိုမိန်း ပိတ်ထားသော်လည်း CDN မပိတ်သော panel များအတွက်။</string>
     <string name="no_servers_in_group">ဤအုပ်စုတွင် ဆာဗာ မရှိသေးပါ။</string>
+
+    <string name="no_connectivity">ချိတ်ဆက်ပြီး · ဤဆာဗာမှ အင်တာနက် မရ</string>
+    <string name="close">ပိတ်ရန်</string>
 </resources>

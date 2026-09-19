@@ -353,8 +353,8 @@
 
     <string name="proxy_chain">Cadena de proxies</string>
     <string name="group_default">Predeterminado</string>
-    <string name="auto_mode">Auto · handshake más rápido</string>
-    <string name="auto_mode_hint">Mide el grupo y sigue al servidor más rápido; vuelve a comprobar cada 2 minutos mientras está conectado.</string>
+    <string name="auto_mode">Auto · mejor ping</string>
+    <string name="auto_mode_hint">Conecta al instante, luego mide el grupo por ping real y pasa al más rápido; vuelve a comprobar cada 2 minutos mientras está conectado.</string>
     <string name="auto_prefix">Auto · %1$s</string>
     <string name="pinned">Fijado</string>
     <string name="auto_picked">Elegido por Auto</string>
@@ -368,4 +368,7 @@
     <string name="front_targets">Destinos (uno por línea)</string>
     <string name="fronting_hint">La suscripción se descarga conectando a estos hosts en lugar del de la URL, con el SNI indicado en el handshake TLS. Para paneles cuyo dominio está bloqueado pero su CDN no.</string>
     <string name="no_servers_in_group">Aún no hay servidores en este grupo.</string>
+
+    <string name="no_connectivity">Conectado · sin internet a través de este servidor</string>
+    <string name="close">Cerrar</string>
 </resources>

@@ -358,21 +358,15 @@ private fun intervalLabel(hours: Int): String = when (hours) {
 
 @Composable
 private fun WingSectionLabel(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.sp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-    )
+    com.mythaia.ui.components.WingSectionTitle(title = title)
 }
 
 @Composable
 private fun WingGroupCard(content: @Composable () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column { content() }
     }
@@ -381,26 +375,20 @@ private fun WingGroupCard(content: @Composable () -> Unit) {
 @Composable
 private fun WingRowDivider() {
     HorizontalDivider(
-        modifier = Modifier.padding(start = 60.dp),
+        modifier = Modifier.padding(start = 66.dp, end = 16.dp),
         thickness = 1.dp,
-        color = MaterialTheme.colorScheme.outlineVariant
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
     )
 }
 
 @Composable
 private fun WingIconTile(icon: ImageVector) {
-    Box(
-        modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-        contentAlignment = Alignment.Center
-    ) {
+    com.mythaia.ui.components.WingIconTile(size = 34.dp) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(16.dp)
+            tint = androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.size(18.dp)
         )
     }
 }

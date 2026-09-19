@@ -321,6 +321,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             autoReconnectTimes.clear()
             bindToService()
             startStatsPolling()
+            startConnectivityProbe()
             updateAutoLoop()
             return
         }
@@ -328,6 +329,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Down. Whatever we thought we were doing, the tunnel is gone.
         val wasUp = _vpnStatus.value == VpnStatus.CONNECTED
         stopStatsPolling()
+        stopConnectivityProbe()
         unbindFromService()
         updateAutoLoop()
         if (_vpnStatus.value != VpnStatus.DISCONNECTED) {
@@ -348,6 +350,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun onServiceStartFailed(message: String) {
         stopStatsPolling()
+        stopConnectivityProbe()
         unbindFromService()
         updateAutoLoop()
         pendingReconnect = false
@@ -360,6 +363,47 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** True after a start failed or the tunnel dropped, until the next successful connect. */
     private val _lastConnectFailed = MutableStateFlow(false)
     val lastConnectFailed: StateFlow<Boolean> = _lastConnectFailed.asStateFlow()
+
+    /**
+     * Whether traffic actually gets through the live server.
+     *
+     * A tunnel can be "connected" — the TUN is up — while the proxy behind
+     * it never answers. null until the first probe of a session reports.
+     */
+    private val _connectivityOk = MutableStateFlow<Boolean?>(null)
+    val connectivityOk: StateFlow<Boolean?> = _connectivityOk.asStateFlow()
+
+    private var probeJob: Job? = null
+
+    /** A real request through the live server, shortly after connecting and then every minute. */
+    private fun startConnectivityProbe() {
+        probeJob?.cancel()
+        probeJob = viewModelScope.launch {
+            var delayMs = PROBE_FIRST_DELAY_MS
+            while (true) {
+                delay(delayMs)
+                delayMs = PROBE_INTERVAL_MS
+                if (_vpnStatus.value != VpnStatus.CONNECTED) break
+                val liveId = MythaiaVpnService.activeConfigId ?: continue
+                val live = configRepository.get(liveId) ?: selectedConfiguration ?: continue
+                val result = LatencyTester.test(applyGlobalAllowInsecure(live), LatencyKind.HTTP)
+                if (_vpnStatus.value != VpnStatus.CONNECTED) break
+                _latencyResults.value = _latencyResults.value + (live.id to result)
+                val ok = result is LatencyResult.Success
+                _connectivityOk.value = ok
+                // Dead on the wire while on Auto: find one that answers.
+                if (!ok && activeIsAuto && !_autoSelecting.value) {
+                    autoSelectFastest(_activeGroupId.value)
+                }
+            }
+        }
+    }
+
+    private fun stopConnectivityProbe() {
+        probeJob?.cancel()
+        probeJob = null
+        _connectivityOk.value = null
+    }
 
     fun clearLastConnectFailed() {
         _lastConnectFailed.value = false
@@ -608,13 +652,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val autoSelecting: StateFlow<Boolean> = _autoSelecting.asStateFlow()
 
     /**
-     * Measures every candidate in [groupId] by handshake and records the
-     * fastest as Auto's pick for that group.
+     * Measures every candidate in [groupId] by real ping (an HTTP round trip
+     * through the proxy, as v2rayNG and Hiddify do) and records the fastest
+     * as Auto's pick for that group.
      *
      * If the group is the active one, is on Auto, and a tunnel is up, the
      * tunnel moves to the pick when it differs from the server in use by more
      * than a small margin — enough to follow a real change, not enough to
-     * flap between two servers a few milliseconds apart.
+     * flap between two servers a few milliseconds apart. It does not wait
+     * for the whole round when the live server has already failed: the
+     * first server that answers takes over at once.
      *
      * @return the pick, or null when nothing answered.
      */
@@ -625,17 +672,38 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         _autoSelecting.value = true
         try {
-            _latencyKind.value = LatencyKind.HANDSHAKE
+            _latencyKind.value = LatencyKind.HTTP
             syncProxyServerAddresses(candidates)
             candidates.forEach { config ->
                 _latencyResults.value = _latencyResults.value + (config.id to LatencyResult.Testing)
             }
 
             val results = HashMap<UUID, Int>()
-            LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) }, LatencyKind.HANDSHAKE)
+            var liveFailed = false
+            var switchedEarly = false
+            LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) }, LatencyKind.HTTP)
                 .collect { (id, result) ->
                     _latencyResults.value = _latencyResults.value + (id to result)
                     if (result is LatencyResult.Success) results[id] = result.ms
+
+                    // The server on the wire is dead and this one answers:
+                    // move now rather than after every other server has been
+                    // timed. The end of the round still settles on the best.
+                    val live = MythaiaVpnService.activeConfigId
+                    if (id == live && result !is LatencyResult.Success && result !is LatencyResult.Testing) {
+                        liveFailed = true
+                    }
+                    val canSwitch = groupId == _activeGroupId.value && activeIsAuto &&
+                        _vpnStatus.value == VpnStatus.CONNECTED
+                    if (canSwitch && !switchedEarly && result is LatencyResult.Success && id != live &&
+                        (liveFailed || live == null || _connectivityOk.value == false)
+                    ) {
+                        configRepository.get(id)?.let { early ->
+                            switchedEarly = true
+                            logger.info("[AutoSelect] Live server is down; moving to ${early.name} early")
+                            switchConfig(early)
+                        }
+                    }
                 }
 
             val bestEntry = results.minByOrNull { it.value } ?: return null
@@ -767,17 +835,39 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Starts on the current selection. On an Auto group with no recent
-     * measurement, measures first so the first connection is to the fastest
-     * server and not to whichever happens to be first in the list.
+     * Starts on the current selection.
+     *
+     * On an Auto group the tunnel comes up at once on the last pick (or the
+     * first server), and the round of measurements runs behind it; the
+     * tunnel moves to the winner when the round settles. Waiting for the
+     * round first would leave the user staring at a spinner for the length
+     * of the slowest timeout, which is what made the old flow feel broken.
      */
     private fun connectWithSelection() {
         val context = getApplication<Application>()
         val gid = _activeGroupId.value
-        if (activeIsAuto && !autoChoiceFresh(gid) && autoCandidates(gid).isNotEmpty()) {
+        val config = selectedConfiguration
+
+        if (config != null) {
+            startVpnService(config)
+            if (activeIsAuto && !autoChoiceFresh(gid) && autoCandidates(gid).size > 1) {
+                viewModelScope.launch {
+                    // Let the start land before the measurements compete
+                    // with it for the radio.
+                    delay(AUTO_FIRST_ROUND_DELAY_MS)
+                    if (_vpnStatus.value == VpnStatus.CONNECTED || _vpnStatus.value == VpnStatus.CONNECTING) {
+                        autoSelectFastest(gid)
+                    }
+                }
+            }
+            return
+        }
+
+        // Nothing to start on yet (an Auto group with no pick): measure first.
+        if (activeIsAuto && autoCandidates(gid).isNotEmpty()) {
             _vpnStatus.value = VpnStatus.CONNECTING
             viewModelScope.launch {
-                val chosen = autoSelectFastest(gid) ?: selectedConfiguration
+                val chosen = autoSelectFastest(gid)
                 if (chosen == null) {
                     _vpnStatus.value = VpnStatus.DISCONNECTED
                     _startError.value = context.getString(R.string.auto_select_none)
@@ -786,11 +876,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (_vpnStatus.value != VpnStatus.CONNECTING) return@launch
                 startVpnService(chosen)
             }
-            return
         }
-
-        val config = selectedConfiguration ?: return
-        startVpnService(config)
     }
 
     fun onVpnPermissionGranted() {
@@ -918,6 +1004,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun switchConfig(config: ProxyConfiguration) {
         val context = getApplication<Application>()
+        // A new server has yet to prove itself.
+        _connectivityOk.value = null
+        if (_vpnStatus.value == VpnStatus.CONNECTED) startConnectivityProbe()
         viewModelScope.launch {
             val resolvedConfig = withContext(Dispatchers.IO) {
                 resolveServerAddress(applyGlobalAllowInsecure(config))
@@ -1562,6 +1651,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         /** How often Auto re-measures a live group. */
         const val AUTO_RECHECK_MS = 2 * 60 * 1000L
+
+        /** Head start the connect gets before the first measurement round. */
+        const val AUTO_FIRST_ROUND_DELAY_MS = 1500L
+
+        /** Connectivity probe: first check after the tunnel is up, then the cadence. */
+        const val PROBE_FIRST_DELAY_MS = 2500L
+        const val PROBE_INTERVAL_MS = 60 * 1000L
 
         /** A new best has to beat the current server by this much to be worth a switch. */
         const val AUTO_SWITCH_MARGIN_MS = 50

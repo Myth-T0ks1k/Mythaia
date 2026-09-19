@@ -110,7 +110,7 @@ object AutoSelectEngine {
         if (candidates.isEmpty()) return
 
         val results = HashMap<UUID, Int>()
-        LatencyTester.testAll(candidates, LatencyKind.HANDSHAKE).collect { (id, result) ->
+        LatencyTester.testAll(candidates, LatencyKind.HTTP).collect { (id, result) ->
             if (result is LatencyResult.Success) results[id] = result.ms
         }
         val bestEntry = results.minByOrNull { it.value } ?: return
@@ -129,7 +129,7 @@ object AutoSelectEngine {
     private suspend fun measure(candidates: List<ProxyConfiguration>): ProxyConfiguration? {
         if (candidates.isEmpty()) return null
         val results = HashMap<UUID, Int>()
-        LatencyTester.testAll(candidates, LatencyKind.HANDSHAKE).collect { (id, result) ->
+        LatencyTester.testAll(candidates, LatencyKind.HTTP).collect { (id, result) ->
             if (result is LatencyResult.Success) results[id] = result.ms
         }
         val bestId = results.minByOrNull { it.value }?.key ?: return null

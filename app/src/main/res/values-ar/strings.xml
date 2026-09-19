@@ -365,8 +365,8 @@
 
     <string name="proxy_chain">سلسلة الوكلاء</string>
     <string name="group_default">الافتراضي</string>
-    <string name="auto_mode">تلقائي · أسرع مصافحة</string>
-    <string name="auto_mode_hint">يقيس المجموعة ويتبع أسرع خادم؛ يعيد الفحص كل دقيقتين أثناء الاتصال.</string>
+    <string name="auto_mode">تلقائي · أفضل ping</string>
+    <string name="auto_mode_hint">يتصل فوراً ثم يقيس المجموعة بالـ ping الحقيقي وينتقل إلى الأسرع؛ يعيد الفحص كل دقيقتين أثناء الاتصال.</string>
     <string name="auto_prefix">تلقائي · %1$s</string>
     <string name="pinned">مثبّت</string>
     <string name="auto_picked">اختير تلقائياً</string>
@@ -380,4 +380,7 @@
     <string name="front_targets">الأهداف (واحد في كل سطر)</string>
     <string name="fronting_hint">يُحمَّل الاشتراك بالاتصال بهذه المضيفات بدل مضيف الرابط، مع SNI أعلاه في مصافحة TLS. للوحات التي حُجب نطاقها دون شبكة CDN الخاصة بها.</string>
     <string name="no_servers_in_group">لا توجد خوادم في هذه المجموعة بعد.</string>
+
+    <string name="no_connectivity">متصل · لا إنترنت عبر هذا الخادم</string>
+    <string name="close">إغلاق</string>
 </resources>

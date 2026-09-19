@@ -140,6 +140,7 @@ fun HomeScreen(
     val autoSelecting by viewModel.autoSelecting.collectAsState()
     val isGlobalMode by viewModel.isGlobalMode.collectAsState()
     val lastConnectFailed by viewModel.lastConnectFailed.collectAsState()
+    val connectivityOk by viewModel.connectivityOk.collectAsState()
 
     val isConnected = vpnStatus == VpnStatus.CONNECTED
     val isTransitioning = vpnStatus == VpnStatus.CONNECTING ||
@@ -215,9 +216,12 @@ fun HomeScreen(
             color = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary
         )
 
+        // A tunnel with no internet behind it earns the cross as much as a
+        // failed start does: "connected" means nothing if nothing gets through.
+        val noInternet = isConnected && connectivityOk == false
         EdgeStickers(
             visible = isConnected || lastConnectFailed,
-            failed = lastConnectFailed && !isConnected,
+            failed = (lastConnectFailed && !isConnected) || noInternet,
             contentPadding = contentPadding
         )
 
@@ -228,28 +232,28 @@ fun HomeScreen(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Brand line and the rule/global switch.
+            // Brand line, then the rule/global switch on its own row so
+            // neither label ever has to wrap.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                WingMark(modifier = Modifier.size(22.dp), color = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
+                WingMark(modifier = Modifier.size(24.dp), color = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                     color = if (isConnected) Color.White.copy(alpha = 0.92f) else MaterialTheme.colorScheme.onBackground
                 )
-                Spacer(modifier = Modifier.weight(1f))
-                ModePill(
-                    global = isGlobalMode,
-                    onGlobal = { viewModel.proxyMode = "global" },
-                    onRule = { viewModel.proxyMode = "rule" },
-                    onDarkGround = isConnected
-                )
             }
+            ModePill(
+                global = isGlobalMode,
+                onGlobal = { viewModel.proxyMode = "global" },
+                onRule = { viewModel.proxyMode = "rule" },
+                onDarkGround = isConnected
+            )
 
             Spacer(modifier = Modifier.weight(1f))
 
@@ -267,6 +271,7 @@ fun HomeScreen(
 
             val statusTextRes = when {
                 autoSelecting && !isConnected -> R.string.measuring
+                noInternet -> R.string.no_connectivity
                 else -> when (vpnStatus) {
                     VpnStatus.DISCONNECTED -> R.string.disconnected
                     VpnStatus.CONNECTING -> R.string.connecting
@@ -278,7 +283,13 @@ fun HomeScreen(
             Text(
                 text = stringResource(statusTextRes),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
-                color = if (isConnected) LightAzure else MaterialTheme.colorScheme.onSurfaceVariant
+                color = when {
+                    noInternet -> MaterialTheme.colorScheme.error
+                    isConnected -> LightAzure
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 32.dp)
             )
 
             Spacer(modifier = Modifier.height(if (isConnected) 18.dp else 28.dp))
@@ -390,8 +401,6 @@ fun HomeScreen(
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             SettingsHill(
                 onOpen = onOpenSettings,
@@ -522,9 +531,11 @@ private fun ModePill(
                 ) {
                     Text(
                         text = label,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelLarge,
                         color = if (selected) activeText else idleText,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
                     )
                 }
             }
@@ -612,7 +623,7 @@ private fun SettingsHill(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(96.dp)
+            .height(104.dp)
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragStart = { dragged = 0f },
@@ -624,46 +635,52 @@ private fun SettingsHill(
                 )
             }
     ) {
+        // Geometry in dp so the gear can be placed exactly on the crest:
+        // the line runs low across the screen and rises to a crest at 44dp.
+        val crestDp = 44.dp
+        val baseDp = 78.dp
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
-            val base = size.height * 0.62f
-            val crest = size.height * 0.16f
-            val hillHalf = w * 0.16f
+            val base = baseDp.toPx()
+            val crest = crestDp.toPx()
+            val hillHalf = w * 0.17f
             val cx = w / 2f
             val path = Path().apply {
                 moveTo(0f, base)
-                lineTo(cx - hillHalf * 1.6f, base)
-                cubicTo(cx - hillHalf * 0.9f, base, cx - hillHalf * 0.55f, crest, cx, crest)
-                cubicTo(cx + hillHalf * 0.55f, crest, cx + hillHalf * 0.9f, base, cx + hillHalf * 1.6f, base)
+                lineTo(cx - hillHalf * 1.7f, base)
+                cubicTo(cx - hillHalf * 0.95f, base, cx - hillHalf * 0.55f, crest, cx, crest)
+                cubicTo(cx + hillHalf * 0.55f, crest, cx + hillHalf * 0.95f, base, cx + hillHalf * 1.7f, base)
                 lineTo(w, base)
             }
             drawPath(path, lineColor, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-            // A small foot where the gear rests, like the stalk in the sketch.
-            drawLine(
-                lineColor,
-                Offset(cx, crest),
-                Offset(cx, crest - 6.dp.toPx()),
-                strokeWidth = 2.dp.toPx(),
-                cap = StrokeCap.Round
-            )
         }
-        Icon(
-            imageVector = Icons.Default.Settings,
-            contentDescription = stringResource(R.string.settings),
-            tint = gearColor,
+        // The gear stands on the crest: its bottom edge touches the line.
+        Surface(
+            onClick = onOpen,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = (-6).dp)
-                .size(30.dp)
-                .clickable(onClick = onOpen)
-        )
+                .offset(y = crestDp - 40.dp)
+                .size(40.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.settings),
+                    tint = gearColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
         Text(
             text = stringResource(R.string.settings),
             style = MaterialTheme.typography.labelMedium,
             color = labelColor,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 10.dp)
+                .align(Alignment.TopCenter)
+                .offset(y = baseDp + 6.dp)
                 .clickable(onClick = onOpen)
         )
     }
@@ -715,7 +732,15 @@ private fun GroupPickerSheet(
                     val isActive = selectedChainId == null && activeGroupId == group.id
                     FilterChip(
                         selected = browsing == group.id,
-                        onClick = { browsing = group.id },
+                        // Tapping a group is choosing it: the tunnel follows
+                        // this group (its pin, or Auto) even if the sheet is
+                        // then closed without picking a server.
+                        onClick = {
+                            browsing = group.id
+                            if (!(selectedChainId == null && activeGroupId == group.id)) {
+                                viewModel.selectGroup(group.id)
+                            }
+                        },
                         label = {
                             Text(
                                 text = "${if (group.isDefault) defaultGroupName else group.name} · ${group.configs.size}",

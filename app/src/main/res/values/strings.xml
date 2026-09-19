@@ -372,8 +372,8 @@
     <!-- Groups, Auto mode, checks, fronting -->
     <string name="proxy_chain">Proxy chain</string>
     <string name="group_default">Default</string>
-    <string name="auto_mode">Auto · fastest handshake</string>
-    <string name="auto_mode_hint">Measures the group and follows the fastest server; rechecks every 2 minutes while connected.</string>
+    <string name="auto_mode">Auto · fastest ping</string>
+    <string name="auto_mode_hint">Connects at once, then measures the group by real ping and moves to the fastest; rechecks every 2 minutes while connected.</string>
     <string name="auto_prefix">Auto · %1$s</string>
     <string name="pinned">Pinned</string>
     <string name="auto_picked">Chosen by Auto</string>
@@ -390,4 +390,8 @@
     <string name="front_targets">Targets (one per line)</string>
     <string name="fronting_hint">The subscription is downloaded by connecting to these hosts instead of the link\'s own, with the SNI above in the TLS handshake. For panels whose domain is blocked but whose CDN is not.</string>
     <string name="no_servers_in_group">No servers in this group yet.</string>
+
+    <!-- Connectivity and settings sheet -->
+    <string name="no_connectivity">Connected · no internet through this server</string>
+    <string name="close">Close</string>
 </resources>

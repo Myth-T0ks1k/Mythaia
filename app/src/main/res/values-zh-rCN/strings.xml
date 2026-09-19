@@ -345,8 +345,8 @@
 
     <string name="proxy_chain">代理链</string>
     <string name="group_default">默认</string>
-    <string name="auto_mode">自动 · 握手最快</string>
-    <string name="auto_mode_hint">测量该组并跟随最快的服务器；连接期间每 2 分钟重新检查。</string>
+    <string name="auto_mode">自动 · 延迟最低</string>
+    <string name="auto_mode_hint">立即连接，然后按真实延迟测量该组并切换到最快的服务器；连接期间每 2 分钟重新检查。</string>
     <string name="auto_prefix">自动 · %1$s</string>
     <string name="pinned">已固定</string>
     <string name="auto_picked">由自动模式选择</string>
@@ -360,4 +360,7 @@
     <string name="front_targets">目标地址（每行一个）</string>
     <string name="fronting_hint">下载订阅时连接到这些主机而非链接自身的主机，并在 TLS 握手中使用上面的 SNI。适用于域名被封但 CDN 未被封的面板。</string>
     <string name="no_servers_in_group">此组中尚无服务器。</string>
+
+    <string name="no_connectivity">已连接 · 此服务器无法访问互联网</string>
+    <string name="close">关闭</string>
 </resources>
