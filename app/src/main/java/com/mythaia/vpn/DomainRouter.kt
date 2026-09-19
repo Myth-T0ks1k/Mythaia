@@ -60,6 +60,16 @@ class DomainRouter(private val context: Context) {
     private var ipv4Trie = CIDRTrie()
     private var ipv6Trie = CIDRTrie()
 
+    // The country-bypass rules again, on their own. Global mode ignores every
+    // user rule but still has to let the home country through: a bank or a
+    // messenger that only answers from inside the country is unreachable via
+    // a foreign exit, whatever mode the switch is in.
+    private var bypassTrieRoot = TrieNode()
+    private val bypassKeywords = ArrayList<KeywordRule>()
+    private var bypassIpv4 = CIDRTrie()
+    private var bypassIpv6 = CIDRTrie()
+    private val bypassGeoip = HashSet<String>()
+
     private var configurationMap = HashMap<UUID, ProxyConfiguration>()
     private var domainRuleCount = 0
     private var ipRuleCount = 0
@@ -73,6 +83,11 @@ class DomainRouter(private val context: Context) {
         ipv4Trie = CIDRTrie()
         ipv6Trie = CIDRTrie()
         geoipRules.clear()
+        bypassTrieRoot = TrieNode()
+        bypassKeywords.clear()
+        bypassIpv4 = CIDRTrie()
+        bypassIpv6 = CIDRTrie()
+        bypassGeoip.clear()
         configurationMap.clear()
         domainRuleCount = 0
         ipRuleCount = 0
@@ -130,22 +145,28 @@ class DomainRouter(private val context: Context) {
                 when (type) {
                     DomainRuleType.DOMAIN_SUFFIX -> {
                         trieInsert(value.lowercase(), RouteAction.Direct)
+                        trieInsert(bypassTrieRoot, value.lowercase(), RouteAction.Direct)
                         bypassDomainCount++
                     }
                     DomainRuleType.DOMAIN_KEYWORD -> {
                         insertKeywordRule(value.lowercase(), RouteAction.Direct)
+                        bypassKeywords.add(KeywordRule(value.lowercase(), RouteAction.Direct, value.length))
                         bypassDomainCount++
                     }
                     DomainRuleType.IP_CIDR -> parseIPv4CIDR(value)?.let { (net, prefix) ->
                         ipv4Trie.insert(net, prefix, RouteAction.Direct)
+                        bypassIpv4.insert(net, prefix, RouteAction.Direct)
                         bypassIPCount++
                     }
                     DomainRuleType.IP_CIDR6 -> parseIPv6CIDR(value)?.let { (net, prefix) ->
                         ipv6Trie.insert(net, prefix, RouteAction.Direct)
+                        bypassIpv6.insert(net, prefix, RouteAction.Direct)
                         bypassIPCount++
                     }
                     DomainRuleType.GEOIP -> {
                         insertGeoipRule(value, RouteAction.Direct)
+                        value.removePrefix("geoip:").trim().uppercase()
+                            .takeIf { it.length == 2 }?.let(bypassGeoip::add)
                         bypassIPCount++
                     }
                 }
@@ -277,6 +298,28 @@ class DomainRouter(private val context: Context) {
         return geoipRules[country]
     }
 
+    /** Whether [domain] is in the country-bypass set, regardless of user rules. */
+    fun isBypassDomain(domain: String): Boolean {
+        if (domain.isEmpty()) return false
+        val lowered = domain.lowercase()
+        if (trieLookup(bypassTrieRoot, lowered) != null) return true
+        return bypassKeywords.any { lowered.contains(it.pattern) }
+    }
+
+    /** Whether [ip] is in the country-bypass set, regardless of user rules. */
+    fun isBypassIp(ip: String): Boolean {
+        if (ip.isEmpty()) return false
+        val cidr = if (ip.contains(':')) {
+            parseIPv6Address(ip)?.let { bypassIpv6.lookup(it) }
+        } else {
+            parseIPv4(ip)?.let { bypassIpv4.lookup(it) }
+        }
+        if (cidr != null) return true
+        if (bypassGeoip.isEmpty()) return false
+        val country = GeoIpDatabase.countryCode(ip) ?: return false
+        return country in bypassGeoip
+    }
+
     /** Resolves a [RouteAction.Proxy] to its [ProxyConfiguration]; null for Direct/Reject. */
     fun resolveConfiguration(action: RouteAction): ProxyConfiguration? = when (action) {
         RouteAction.Direct, RouteAction.Reject -> null
@@ -301,8 +344,10 @@ class DomainRouter(private val context: Context) {
         geoipRules[code] = action
     }
 
-    private fun trieInsert(suffix: String, action: RouteAction) {
-        var node = trieRoot
+    private fun trieInsert(suffix: String, action: RouteAction) = trieInsert(trieRoot, suffix, action)
+
+    private fun trieInsert(root: TrieNode, suffix: String, action: RouteAction) {
+        var node = root
         for (label in suffix.split('.').asReversed()) {
             if (label.isEmpty()) continue
             node = node.children.getOrPut(label) { TrieNode() }
@@ -310,8 +355,10 @@ class DomainRouter(private val context: Context) {
         node.action = action
     }
 
-    private fun trieLookup(domain: String): RouteAction? {
-        var node = trieRoot
+    private fun trieLookup(domain: String): RouteAction? = trieLookup(trieRoot, domain)
+
+    private fun trieLookup(root: TrieNode, domain: String): RouteAction? {
+        var node = root
         var deepest: RouteAction? = null
         for (label in domain.split('.').asReversed()) {
             val child = node.children[label] ?: break

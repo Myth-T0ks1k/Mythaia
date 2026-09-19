@@ -19,6 +19,7 @@ import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.model.ThemeMode
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.data.network.LatencyKind
 import com.mythaia.data.network.LatencyResult
 import com.mythaia.data.network.LatencyTester
 import com.mythaia.data.network.SubscriptionDomainHelper
@@ -52,6 +53,27 @@ import java.util.UUID
 
 enum class VpnStatus {
     DISCONNECTED, CONNECTING, CONNECTED, DISCONNECTING, REASSERTING
+}
+
+/**
+ * A set of servers the user can point the tunnel at as one thing.
+ *
+ * "Default" is every server that came from no subscription; every
+ * subscription is a group of its own. A group is either on Auto — the
+ * fastest server by handshake, re-measured while connected — or pinned to
+ * one server the user tapped.
+ */
+data class ProxyGroup(
+    val id: String,
+    val name: String,
+    val subscriptionId: UUID?,
+    val configs: List<ProxyConfiguration>
+) {
+    val isDefault: Boolean get() = subscriptionId == null
+
+    companion object {
+        const val DEFAULT_ID = "default"
+    }
 }
 
 private val logger = MythaiaLogger("VPNViewModel")
@@ -96,8 +118,28 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _uptimeSeconds = MutableStateFlow(0L)
     val uptimeSeconds: StateFlow<Long> = _uptimeSeconds.asStateFlow()
 
+    /** The server the tunnel is (or would be) on: the pin, or Auto's pick. */
     private val _selectedConfigId = MutableStateFlow<UUID?>(null)
     val selectedConfigId: StateFlow<UUID?> = _selectedConfigId.asStateFlow()
+
+    /** Which group the tunnel draws from; a chain selection overrides it. */
+    private val _activeGroupId = MutableStateFlow(
+        prefs.getString("activeGroupId", ProxyGroup.DEFAULT_ID) ?: ProxyGroup.DEFAULT_ID
+    )
+    val activeGroupId: StateFlow<String> = _activeGroupId.asStateFlow()
+
+    /** Group id to the server pinned in it. A group with no pin is on Auto. */
+    private val _pinnedByGroup = MutableStateFlow(loadPins())
+    val pinnedByGroup: StateFlow<Map<String, UUID>> = _pinnedByGroup.asStateFlow()
+
+    /** Group id to what Auto last chose, and when. Not persisted: it goes stale. */
+    private val _autoChoice = MutableStateFlow<Map<String, UUID>>(emptyMap())
+    val autoChoice: StateFlow<Map<String, UUID>> = _autoChoice.asStateFlow()
+    private val autoChoiceAt = HashMap<String, Long>()
+
+    /** What the numbers in [latencyResults] measure right now. */
+    private val _latencyKind = MutableStateFlow(LatencyKind.HANDSHAKE)
+    val latencyKind: StateFlow<LatencyKind> = _latencyKind.asStateFlow()
 
     private val _latencyResults = MutableStateFlow<Map<UUID, LatencyResult>>(emptyMap())
     val latencyResults: StateFlow<Map<UUID, LatencyResult>> = _latencyResults.asStateFlow()
@@ -267,51 +309,94 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { onServiceStartFailed(message) }
     }
 
+    /** True from the user's own disconnect until the next connect: not a failure. */
+    private var userStopped = true
+
     private fun onServiceActiveChanged(active: Boolean) {
         if (active) {
             if (_vpnStatus.value != VpnStatus.CONNECTED) {
                 _vpnStatus.value = VpnStatus.CONNECTED
             }
+            _lastConnectFailed.value = false
+            autoReconnectTimes.clear()
             bindToService()
             startStatsPolling()
+            updateAutoLoop()
             return
         }
 
         // Down. Whatever we thought we were doing, the tunnel is gone.
+        val wasUp = _vpnStatus.value == VpnStatus.CONNECTED
         stopStatsPolling()
         unbindFromService()
+        updateAutoLoop()
         if (_vpnStatus.value != VpnStatus.DISCONNECTED) {
             _vpnStatus.value = VpnStatus.DISCONNECTED
         }
         if (pendingReconnect) {
             pendingReconnect = false
             connect()
+            return
+        }
+        // A tunnel that fell over by itself — not stopped by the user — is
+        // what Auto is for: try the group again on whatever answers now.
+        if (wasUp && !userStopped) {
+            _lastConnectFailed.value = true
+            autoReconnectAfterFailure(_selectedConfigId.value)
         }
     }
 
     private fun onServiceStartFailed(message: String) {
         stopStatsPolling()
         unbindFromService()
+        updateAutoLoop()
         pendingReconnect = false
         _vpnStatus.value = VpnStatus.DISCONNECTED
         _startError.value = message
+        _lastConnectFailed.value = true
+        autoReconnectAfterFailure(_selectedConfigId.value)
+    }
+
+    /** True after a start failed or the tunnel dropped, until the next successful connect. */
+    private val _lastConnectFailed = MutableStateFlow(false)
+    val lastConnectFailed: StateFlow<Boolean> = _lastConnectFailed.asStateFlow()
+
+    fun clearLastConnectFailed() {
+        _lastConnectFailed.value = false
     }
 
     init {
+        com.mythaia.vpn.AutoSelectEngine.uiAlive = true
         MythaiaVpnService.addStateListener(serviceStateListener)
         MythaiaVpnService.addStartFailureListener(serviceFailureListener)
+
+        // Picks the background engine made while no screen was open.
+        prefs.getString("autoChoices", null)?.let { raw ->
+            runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
+                ?.mapNotNull { (k, v) -> runCatching { UUID.fromString(v) }.getOrNull()?.let { k to it } }
+                ?.toMap()
+                ?.let { _autoChoice.value = it }
+        }
 
         val savedChainId = prefs.getString("selectedChainId", null)?.let {
             runCatching { UUID.fromString(it) }.getOrNull()
         }
         if (savedChainId != null && chainRepository.get(savedChainId) != null) {
             _selectedChainId.value = savedChainId
-        } else {
-            prefs.getString("selectedConfigurationId", null)?.let { id ->
-                _selectedConfigId.value = runCatching { UUID.fromString(id) }.getOrNull()
+        }
+        // A selection saved before groups existed becomes a pin in its group.
+        prefs.getString("selectedConfigurationId", null)?.let { raw ->
+            val id = runCatching { UUID.fromString(raw) }.getOrNull()
+            val config = id?.let { configRepository.get(it) }
+            if (config != null && !_pinnedByGroup.value.containsKey(groupIdOf(config))) {
+                val gid = groupIdOf(config)
+                _pinnedByGroup.value = _pinnedByGroup.value + (gid to config.id)
+                _activeGroupId.value = gid
+                savePins()
+                prefs.edit { putString("activeGroupId", gid) }
             }
         }
-        ensureValidSelection()
+        recomputeSelection()
 
         // The service outlives the Activity. Coming back to a tunnel that never
         // stopped has to restore CONNECTED and rebind — otherwise the power
@@ -361,15 +446,153 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return configRepository.get(id)
         }
 
-    fun setSelectedConfiguration(config: ProxyConfiguration) {
+    // ---- Groups -------------------------------------------------------------
+
+    fun groupIdOf(config: ProxyConfiguration): String =
+        config.subscriptionId?.toString() ?: ProxyGroup.DEFAULT_ID
+
+    /** Every group, Default first, in subscription order. Empty groups are kept. */
+    fun groups(): List<ProxyGroup> {
+        val all = configRepository.getAll()
+        val default = ProxyGroup(
+            id = ProxyGroup.DEFAULT_ID,
+            name = "",
+            subscriptionId = null,
+            configs = all.filter { it.subscriptionId == null }
+        )
+        val subs = subscriptionRepository.getAll().map { sub ->
+            ProxyGroup(sub.id.toString(), sub.name, sub.id, all.filter { it.subscriptionId == sub.id })
+        }
+        return listOf(default) + subs
+    }
+
+    fun groupConfigs(groupId: String): List<ProxyConfiguration> {
+        val all = configRepository.getAll()
+        return if (groupId == ProxyGroup.DEFAULT_ID) all.filter { it.subscriptionId == null }
+        else all.filter { it.subscriptionId?.toString() == groupId }
+    }
+
+    /** Servers Auto may choose from: dialable, and not a layer-3 interface. */
+    private fun autoCandidates(groupId: String): List<ProxyConfiguration> =
+        groupConfigs(groupId).filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }
+
+    /** Whether [groupId] follows Auto (no pin). */
+    fun isAuto(groupId: String): Boolean = _pinnedByGroup.value[groupId] == null
+
+    /** Whether the tunnel is currently following Auto rather than a pin or a chain. */
+    val activeIsAuto: Boolean
+        get() = _selectedChainId.value == null && isAuto(_activeGroupId.value)
+
+    /**
+     * Makes [groupId] the group the tunnel draws from.
+     *
+     * On a live tunnel the switch is immediate: to the pin if the group has
+     * one, otherwise to whatever Auto picks after a fresh round.
+     */
+    fun selectGroup(groupId: String) {
+        val changedGroup = _activeGroupId.value != groupId || _selectedChainId.value != null
         _selectedChainId.value = null
         prefs.edit { remove("selectedChainId") }
-        _selectedConfigId.value = config.id
-        prefs.edit { putString("selectedConfigurationId", config.id.toString()) }
+        _activeGroupId.value = groupId
+        prefs.edit { putString("activeGroupId", groupId) }
+        recomputeSelection()
+        if (!changedGroup) return
+        applySelectionToTunnel(freshAuto = true)
+    }
 
-        if (_vpnStatus.value == VpnStatus.CONNECTED) {
-            switchConfig(config)
+    /**
+     * Pins the tunnel to one server: its group becomes active and stops
+     * following Auto until [useAuto] is called for it.
+     */
+    fun pinConfiguration(config: ProxyConfiguration) {
+        val gid = groupIdOf(config)
+        _selectedChainId.value = null
+        prefs.edit { remove("selectedChainId") }
+        _pinnedByGroup.value = _pinnedByGroup.value + (gid to config.id)
+        savePins()
+        _activeGroupId.value = gid
+        prefs.edit { putString("activeGroupId", gid) }
+        recomputeSelection()
+        applySelectionToTunnel(freshAuto = false)
+    }
+
+    /** Kept for callers that predate groups; a tap on a server pins it. */
+    fun setSelectedConfiguration(config: ProxyConfiguration) = pinConfiguration(config)
+
+    /** Lets [groupId] follow Auto again, and makes it the active group. */
+    fun useAuto(groupId: String) {
+        _selectedChainId.value = null
+        prefs.edit { remove("selectedChainId") }
+        _pinnedByGroup.value = _pinnedByGroup.value - groupId
+        savePins()
+        _activeGroupId.value = groupId
+        prefs.edit { putString("activeGroupId", groupId) }
+        recomputeSelection()
+        applySelectionToTunnel(freshAuto = true)
+    }
+
+    /**
+     * Brings the tunnel in line with the selection, if one is up. Auto runs a
+     * measurement first when asked, so the switch lands on today's fastest
+     * server rather than yesterday's.
+     */
+    private fun applySelectionToTunnel(freshAuto: Boolean) {
+        updateAutoLoop()
+        if (_vpnStatus.value != VpnStatus.CONNECTED) return
+        if (activeIsAuto && freshAuto) {
+            viewModelScope.launch { autoSelectFastest(_activeGroupId.value) }
+            return
         }
+        selectedConfiguration?.let { switchConfig(it) }
+    }
+
+    /**
+     * Derives [selectedConfigId] from the group state: the pin if it still
+     * exists, else Auto's last pick if it does, else the first candidate.
+     */
+    private fun recomputeSelection() {
+        val gid = _activeGroupId.value
+        val configs = groupConfigs(gid)
+
+        // Drop pins and picks that point at servers that are gone.
+        val livePins = _pinnedByGroup.value.filterValues { configRepository.get(it) != null }
+        if (livePins.size != _pinnedByGroup.value.size) {
+            _pinnedByGroup.value = livePins
+            savePins()
+        }
+        val liveAuto = _autoChoice.value.filterValues { configRepository.get(it) != null }
+        if (liveAuto.size != _autoChoice.value.size) _autoChoice.value = liveAuto
+
+        // A group that vanished (subscription deleted) falls back to Default.
+        if (gid != ProxyGroup.DEFAULT_ID && subscriptionRepository.getAll().none { it.id.toString() == gid }) {
+            _activeGroupId.value = ProxyGroup.DEFAULT_ID
+            prefs.edit { putString("activeGroupId", ProxyGroup.DEFAULT_ID) }
+            recomputeSelection()
+            return
+        }
+
+        val chosen = livePins[gid]
+            ?: liveAuto[gid]
+            ?: configs.firstOrNull { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }?.id
+            ?: configs.firstOrNull()?.id
+        _selectedConfigId.value = chosen
+        // Mirrors the selection for the tile, the widget and the watch, which
+        // read it without a view model.
+        prefs.edit { putString("selectedConfigurationId", chosen?.toString()) }
+    }
+
+    private fun loadPins(): Map<String, UUID> {
+        val raw = prefs.getString("groupPins", null) ?: return emptyMap()
+        return runCatching {
+            json.decodeFromString<Map<String, String>>(raw)
+                .mapNotNull { (k, v) -> runCatching { UUID.fromString(v) }.getOrNull()?.let { k to it } }
+                .toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun savePins() {
+        val raw = json.encodeToString(_pinnedByGroup.value.mapValues { it.value.toString() })
+        prefs.edit { putString("groupPins", raw) }
     }
 
     fun toggleVPN() {
@@ -385,61 +608,128 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val autoSelecting: StateFlow<Boolean> = _autoSelecting.asStateFlow()
 
     /**
-     * Whether connecting should pick the fastest server first.
+     * Measures every candidate in [groupId] by handshake and records the
+     * fastest as Auto's pick for that group.
      *
-     * Off by default: measuring every server before each connect costs a few
-     * seconds and a round trip to each one, which is not what someone who
-     * always uses the same server wants.
+     * If the group is the active one, is on Auto, and a tunnel is up, the
+     * tunnel moves to the pick when it differs from the server in use by more
+     * than a small margin — enough to follow a real change, not enough to
+     * flap between two servers a few milliseconds apart.
+     *
+     * @return the pick, or null when nothing answered.
      */
-    var autoSelectEnabled: Boolean
-        get() = prefs.getBoolean("autoSelectEnabled", false)
-        set(value) = prefs.edit { putBoolean("autoSelectEnabled", value) }
-
-    /**
-     * Measures every candidate and selects the fastest.
-     *
-     * Candidates are the servers that could actually be dialled: chains are
-     * left out (they are picked deliberately, and measuring one measures the
-     * whole path), and so is anything whose protocol this build cannot dial.
-     * A server that fails or is only reachable insecurely never wins, so a
-     * broken entry cannot be chosen just for answering first.
-     *
-     * @return the chosen server, or null when nothing answered.
-     */
-    suspend fun autoSelectFastest(): ProxyConfiguration? {
+    suspend fun autoSelectFastest(groupId: String = _activeGroupId.value): ProxyConfiguration? {
         if (_autoSelecting.value) return null
-
-        // A layer-3 interface is not a candidate: there is no per-flow dial to
-        // time, and the measurement would only ever come back as a failure.
-        val candidates = configRepository.getAll()
-            .filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }
+        val candidates = autoCandidates(groupId)
         if (candidates.isEmpty()) return null
 
         _autoSelecting.value = true
         try {
+            _latencyKind.value = LatencyKind.HANDSHAKE
             syncProxyServerAddresses(candidates)
             candidates.forEach { config ->
                 _latencyResults.value = _latencyResults.value + (config.id to LatencyResult.Testing)
             }
 
-            var bestId: UUID? = null
-            var bestMs = Int.MAX_VALUE
-
-            LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) })
+            val results = HashMap<UUID, Int>()
+            LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) }, LatencyKind.HANDSHAKE)
                 .collect { (id, result) ->
                     _latencyResults.value = _latencyResults.value + (id to result)
-                    if (result is LatencyResult.Success && result.ms < bestMs) {
-                        bestMs = result.ms
-                        bestId = id
-                    }
+                    if (result is LatencyResult.Success) results[id] = result.ms
                 }
 
-            val winner = bestId?.let { configRepository.get(it) } ?: return null
-            logger.info("[AutoSelect] ${winner.name} at ${bestMs}ms")
-            setSelectedConfiguration(winner)
+            val bestEntry = results.minByOrNull { it.value } ?: return null
+            val winner = configRepository.get(bestEntry.key) ?: return null
+            logger.info("[AutoSelect] ${groupLabel(groupId)}: ${winner.name} at ${bestEntry.value}ms")
+
+            _autoChoice.value = _autoChoice.value + (groupId to winner.id)
+            autoChoiceAt[groupId] = System.currentTimeMillis()
+            prefs.edit {
+                putString("autoChoices", json.encodeToString(_autoChoice.value.mapValues { it.value.toString() }))
+            }
+
+            if (groupId == _activeGroupId.value && activeIsAuto) {
+                recomputeSelection()
+                if (_vpnStatus.value == VpnStatus.CONNECTED) {
+                    // Compared with the server actually on the wire, not with
+                    // the selection: the two differ right after a pin is lifted.
+                    val live = MythaiaVpnService.activeConfigId
+                    val liveMs = live?.let { results[it] }
+                    val worthIt = live != winner.id &&
+                        (liveMs == null || liveMs - bestEntry.value >= AUTO_SWITCH_MARGIN_MS)
+                    if (worthIt) switchConfig(winner)
+                }
+            }
             return winner
         } finally {
             _autoSelecting.value = false
+        }
+    }
+
+    private fun groupLabel(groupId: String): String =
+        if (groupId == ProxyGroup.DEFAULT_ID) "Default" else
+            subscriptionRepository.getAll().firstOrNull { it.id.toString() == groupId }?.name ?: groupId
+
+    /** Whether Auto's pick for [groupId] is recent enough to connect to without a new round. */
+    private fun autoChoiceFresh(groupId: String): Boolean {
+        val at = autoChoiceAt[groupId] ?: return false
+        return _autoChoice.value[groupId] != null &&
+            System.currentTimeMillis() - at < AUTO_RECHECK_MS
+    }
+
+    /**
+     * The continuous part of Auto: while a tunnel is up on an Auto group,
+     * re-measure every two minutes and move to the best server.
+     */
+    private var autoLoopJob: Job? = null
+
+    private fun updateAutoLoop() {
+        val wanted = _vpnStatus.value == VpnStatus.CONNECTED && activeIsAuto
+        if (!wanted) {
+            autoLoopJob?.cancel()
+            autoLoopJob = null
+            return
+        }
+        if (autoLoopJob?.isActive == true) return
+        autoLoopJob = viewModelScope.launch {
+            while (true) {
+                delay(AUTO_RECHECK_MS)
+                if (_vpnStatus.value != VpnStatus.CONNECTED || !activeIsAuto) break
+                autoSelectFastest(_activeGroupId.value)
+            }
+        }
+    }
+
+    /**
+     * The tunnel went down on its own (a block, a dead server) while on Auto:
+     * measure again and come back up on whatever answers. Bounded so a
+     * network that is simply gone does not loop forever.
+     */
+    private var autoReconnectTimes = ArrayDeque<Long>()
+
+    private fun autoReconnectAfterFailure(failed: UUID?) {
+        if (!activeIsAuto) return
+        val now = System.currentTimeMillis()
+        while (autoReconnectTimes.isNotEmpty() && now - autoReconnectTimes.first() > AUTO_RECONNECT_WINDOW_MS) {
+            autoReconnectTimes.removeFirst()
+        }
+        if (autoReconnectTimes.size >= AUTO_RECONNECT_MAX) {
+            logger.warning("[AutoSelect] Not reconnecting: ${AUTO_RECONNECT_MAX} attempts in the window")
+            return
+        }
+        autoReconnectTimes.addLast(now)
+        failed?.let { _latencyResults.value = _latencyResults.value + (it to LatencyResult.Failed) }
+        viewModelScope.launch {
+            val gid = _activeGroupId.value
+            // Forget the pick that just failed so the round can move on.
+            if (failed != null && _autoChoice.value[gid] == failed) {
+                _autoChoice.value = _autoChoice.value - gid
+            }
+            val chosen = autoSelectFastest(gid) ?: return@launch
+            if (_vpnStatus.value == VpnStatus.DISCONNECTED) {
+                logger.info("[AutoSelect] Reconnecting on ${chosen.name}")
+                connect()
+            }
         }
     }
 
@@ -472,19 +762,28 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // A chain is an explicit choice; auto-select only ranges over single
-        // servers, so it does not override one. Nor does it override a
-        // WireGuard profile, which it cannot measure and so would discard.
-        if (autoSelectEnabled &&
-            _selectedChainId.value == null &&
-            selectedConfiguration?.outboundProtocol?.isLayer3 != true
-        ) {
+        userStopped = false
+        connectWithSelection()
+    }
+
+    /**
+     * Starts on the current selection. On an Auto group with no recent
+     * measurement, measures first so the first connection is to the fastest
+     * server and not to whichever happens to be first in the list.
+     */
+    private fun connectWithSelection() {
+        val context = getApplication<Application>()
+        val gid = _activeGroupId.value
+        if (activeIsAuto && !autoChoiceFresh(gid) && autoCandidates(gid).isNotEmpty()) {
+            _vpnStatus.value = VpnStatus.CONNECTING
             viewModelScope.launch {
-                val chosen = autoSelectFastest() ?: selectedConfiguration
+                val chosen = autoSelectFastest(gid) ?: selectedConfiguration
                 if (chosen == null) {
+                    _vpnStatus.value = VpnStatus.DISCONNECTED
                     _startError.value = context.getString(R.string.auto_select_none)
                     return@launch
                 }
+                if (_vpnStatus.value != VpnStatus.CONNECTING) return@launch
                 startVpnService(chosen)
             }
             return
@@ -497,20 +796,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun onVpnPermissionGranted() {
         if (!pendingConnectAfterPermission) return
         pendingConnectAfterPermission = false
-
-        if (autoSelectEnabled &&
-            _selectedChainId.value == null &&
-            selectedConfiguration?.outboundProtocol?.isLayer3 != true
-        ) {
-            viewModelScope.launch {
-                val chosen = autoSelectFastest() ?: selectedConfiguration ?: return@launch
-                startVpnService(chosen)
-            }
-            return
-        }
-
-        val config = selectedConfiguration ?: return
-        startVpnService(config)
+        userStopped = false
+        connectWithSelection()
     }
 
     fun onVpnPermissionDenied() {
@@ -577,6 +864,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnect() {
         val context = getApplication<Application>()
         val wasActive = MythaiaVpnService.isActive
+        userStopped = true
+        autoLoopJob?.cancel()
+        autoLoopJob = null
         _vpnStatus.value = VpnStatus.DISCONNECTING
 
         // A connect still resolving DNS must not go on to start the tunnel.
@@ -761,6 +1051,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        com.mythaia.vpn.AutoSelectEngine.uiAlive = false
         MythaiaVpnService.removeStateListener(serviceStateListener)
         MythaiaVpnService.removeStartFailureListener(serviceFailureListener)
         stopStatsPolling()
@@ -777,9 +1068,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addConfiguration(config: ProxyConfiguration) {
         configRepository.add(config)
-        if (_selectedConfigId.value == null) {
-            setSelectedConfiguration(config)
-        }
+        recomputeSelection()
     }
 
     fun updateConfiguration(config: ProxyConfiguration) {
@@ -800,18 +1089,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 selectedConfiguration?.chain?.any { it.id == config.id } == true)
 
         configRepository.delete(config.id)
-        if (_selectedConfigId.value == config.id) {
-            val remaining = configRepository.getAll()
-            _selectedConfigId.value = remaining.firstOrNull()?.id
-            prefs.edit { putString("selectedConfigurationId", _selectedConfigId.value?.toString()) }
-        }
         val chainId = _selectedChainId.value
         if (chainId != null) {
             val chain = chainRepository.get(chainId)
             if (chain == null || resolveChain(chain) == null) {
                 _selectedChainId.value = null
                 prefs.edit { remove("selectedChainId") }
-                ensureValidSelection()
             }
         }
 
@@ -826,6 +1109,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        recomputeSelection()
         checkOrphanedRuleSets()
 
         // Traffic was going through the deleted server. Move it to whatever is
@@ -843,9 +1127,30 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun addSubscription(configurations: List<ProxyConfiguration>, subscription: Subscription) {
         subscriptionRepository.add(subscription)
         configRepository.addAll(configurations.map { it.copy(subscriptionId = subscription.id) })
-        if (_selectedConfigId.value == null) {
-            configurations.firstOrNull()?.let { setSelectedConfiguration(it) }
+        // A first subscription on an empty app becomes the active group, on Auto.
+        if (groupConfigs(_activeGroupId.value).isEmpty() && _selectedChainId.value == null) {
+            _activeGroupId.value = subscription.id.toString()
+            prefs.edit { putString("activeGroupId", subscription.id.toString()) }
         }
+        recomputeSelection()
+    }
+
+    /** Name and fronting in one save; the name counts as customised once changed. */
+    fun updateSubscriptionSettings(
+        subscription: Subscription,
+        name: String,
+        frontSni: String?,
+        frontTargets: List<String>
+    ) {
+        val trimmedName = name.trim().ifEmpty { subscription.name }
+        subscriptionRepository.update(
+            subscription.copy(
+                name = trimmedName,
+                isNameCustomized = subscription.isNameCustomized || trimmedName != subscription.name,
+                frontSni = frontSni?.trim()?.takeIf { it.isNotEmpty() },
+                frontTargets = frontTargets.map { it.trim() }.filter { it.isNotEmpty() }
+            )
+        )
     }
 
     fun toggleSubscriptionCollapsed(subscription: Subscription) {
@@ -857,9 +1162,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSubscription(subscription: Subscription) {
+        val wasLive = _vpnStatus.value == VpnStatus.CONNECTED &&
+            _selectedChainId.value == null &&
+            _activeGroupId.value == subscription.id.toString()
         subscriptionRepository.delete(subscription.id, configRepository)
-        ensureValidSelection()
+        _pinnedByGroup.value = _pinnedByGroup.value - subscription.id.toString()
+        savePins()
+        recomputeSelection()
         checkOrphanedRuleSets()
+        if (wasLive) {
+            val next = selectedConfiguration
+            if (next != null) switchConfig(next) else disconnect()
+        }
     }
 
     suspend fun updateSubscription(subscription: Subscription) {
@@ -877,7 +1191,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             remnawaveHWID = hwid
         )
 
-        ensureValidSelection()
+        recomputeSelection()
         // A panel that renames a server gives it a fresh id, which orphans any
         // rule set assigned to it. Without this the assignment points at a dead
         // id, the user is never told, and that rule set silently stops routing.
@@ -895,25 +1209,32 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         get() = SubscriptionRefreshScheduler.intervalHours(getApplication())
         set(value) = SubscriptionRefreshScheduler.setIntervalHours(getApplication(), value)
 
-    fun testLatency(forConfig: ProxyConfiguration) {
+    fun testLatency(forConfig: ProxyConfiguration, kind: LatencyKind = _latencyKind.value) {
         syncProxyServerAddresses(forConfig)
+        _latencyKind.value = kind
         _latencyResults.value = _latencyResults.value + (forConfig.id to LatencyResult.Testing)
         viewModelScope.launch {
-            val result = LatencyTester.test(applyGlobalAllowInsecure(forConfig))
+            val result = LatencyTester.test(applyGlobalAllowInsecure(forConfig), kind)
             _latencyResults.value = _latencyResults.value + (forConfig.id to result)
         }
     }
 
-    /** Tests latency for a specific set of configurations. The caller filters
-     *  out collapsed subscriptions before invoking — we don't filter here. */
-    fun testLatencies(forConfigs: List<ProxyConfiguration>) {
+    /**
+     * Measures a set of servers. Switching the kind clears the old numbers:
+     * a TCP time and a handshake time next to each other would not compare.
+     */
+    fun testLatencies(forConfigs: List<ProxyConfiguration>, kind: LatencyKind = _latencyKind.value) {
         if (forConfigs.isEmpty()) return
         syncProxyServerAddresses(forConfigs)
+        if (_latencyKind.value != kind) {
+            _latencyKind.value = kind
+            _latencyResults.value = emptyMap()
+        }
         forConfigs.forEach { config ->
             _latencyResults.value = _latencyResults.value + (config.id to LatencyResult.Testing)
         }
         viewModelScope.launch {
-            LatencyTester.testAll(forConfigs.map { applyGlobalAllowInsecure(it) }).collect { (id, result) ->
+            LatencyTester.testAll(forConfigs.map { applyGlobalAllowInsecure(it) }, kind).collect { (id, result) ->
                 _latencyResults.value = _latencyResults.value + (id to result)
             }
         }
@@ -938,18 +1259,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (_selectedChainId.value == chain.id) {
             _selectedChainId.value = null
             prefs.edit { remove("selectedChainId") }
-            ensureValidSelection()
+            recomputeSelection()
+            updateAutoLoop()
         }
     }
 
     fun selectChain(chain: ProxyChain) {
         val resolved = resolveChain(chain) ?: return
         _selectedChainId.value = chain.id
-        prefs.edit {
-            putString("selectedChainId", chain.id.toString())
-            remove("selectedConfigurationId")
-        }
-        _selectedConfigId.value = null
+        prefs.edit { putString("selectedChainId", chain.id.toString()) }
+        updateAutoLoop()
 
         if (_vpnStatus.value == VpnStatus.CONNECTED) {
             switchConfig(resolved)
@@ -1225,15 +1544,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit { putBoolean("hasCompletedOnboarding", true) }
     }
 
-    private fun ensureValidSelection() {
-        val selectedId = _selectedConfigId.value
-        if (selectedId == null || configRepository.get(selectedId) == null) {
-            val newId = configRepository.getAll().firstOrNull()?.id
-            _selectedConfigId.value = newId
-            prefs.edit { putString("selectedConfigurationId", newId?.toString()) }
-        }
-    }
-
     private fun checkOrphanedRuleSets() {
         val configIds = configRepository.getAll().map { it.id.toString() }.toSet()
         val orphaned = ruleSetRepository.clearOrphanedAssignments(configIds)
@@ -1249,5 +1559,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         /** How long a stop may take to be confirmed before the UI gives up waiting. */
         const val DISCONNECT_WATCHDOG_MS = 3000L
+
+        /** How often Auto re-measures a live group. */
+        const val AUTO_RECHECK_MS = 2 * 60 * 1000L
+
+        /** A new best has to beat the current server by this much to be worth a switch. */
+        const val AUTO_SWITCH_MARGIN_MS = 50
+
+        /** At most this many unattended reconnects per window. */
+        const val AUTO_RECONNECT_MAX = 4
+        const val AUTO_RECONNECT_WINDOW_MS = 10 * 60 * 1000L
     }
 }

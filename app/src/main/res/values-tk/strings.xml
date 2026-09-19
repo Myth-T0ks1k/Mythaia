@@ -212,11 +212,8 @@
     <string name="mitm_delete_rule_set_message">«%1$s» aýrylsynmy? Muny yzyna alyp bolmaýar.</string>
 
     <!-- Auto-select -->
-    <string name="auto_select">Iň çalt serweri saýla</string>
     <string name="auto_select_now">Iň çalty saýla</string>
     <string name="auto_select_none">Hiç bir serwer jogap bermedi.</string>
-    <string name="auto_select_footer">Ähli serwerleri ölçäp, iň çaltyna birigýär. Her birikmä birnäçe sekunt goşýar we ähli serweriňize ýüzlenýär.</string>
-    <string name="connection">Birikme</string>
 
     <!-- Session readout -->
     <string name="connected_for">Birikdi</string>
@@ -282,7 +279,6 @@
     <string name="remnawave_hwid_prompt">Dowam etmek üçin Remnawave HWID-i açyň.</string>
     <string name="rename">Adyny üýtget</string>
     <string name="rename_rule_set">Düzgün toplumynyň adyny üýtget</string>
-    <string name="rename_subscription">Abunanyň adyny üýtget</string>
     <string name="reset">Täzeden düz</string>
     <string name="route_to">Şuňa ugrukdyr</string>
     <string name="routing_rules_updated_message">Şu marşrut düzgünleriniň ulanan proksisi pozuldy. Olar Deslapky ýagdaýa täzeden düzüldi: %1$s</string>
@@ -350,4 +346,22 @@
     <string name="dns_server_invalid">Saýlanan protokol üçin dogry serwer däl.</string>
     <string name="fingerprint_already_trusted">Bu barmak yzy eýýäm ynamly.</string>
     <string name="no_server_selected">Serwer saýlanmadyk.</string>
+
+    <string name="proxy_chain">Proksi zynjyry</string>
+    <string name="group_default">Adaty</string>
+    <string name="auto_mode">Awto · iň çalt handshake</string>
+    <string name="auto_mode_hint">Topary ölçeýär we iň çalt serwere eýerýär; baglanan wagty her 2 minutdan gaýtadan barlaýar.</string>
+    <string name="auto_prefix">Awto · %1$s</string>
+    <string name="pinned">Berkidildi</string>
+    <string name="auto_picked">Awto saýlady</string>
+    <string name="measuring">Ölçenýär…</string>
+    <string name="check_tcp_ping">TCP ping</string>
+    <string name="check_real_ping">Proksi üsti bilen hakyky ping</string>
+    <string name="check_handshake">Handshake wagty</string>
+    <string name="latency_kind_handshake">handshake</string>
+    <string name="group_settings">Abuna sazlamalary</string>
+    <string name="fronting">Fronting</string>
+    <string name="front_targets">Maksatlar (her setirde biri)</string>
+    <string name="fronting_hint">Abuna baglanyşygyň öz hostuna däl-de, şu hostlara birigip, TLS handshake-de ýokardaky SNI bilen ýüklenýär. Domeni petiklenen, ýöne CDN-i petiklenmedik paneller üçin.</string>
+    <string name="no_servers_in_group">Bu toparda entek serwer ýok.</string>
 </resources>

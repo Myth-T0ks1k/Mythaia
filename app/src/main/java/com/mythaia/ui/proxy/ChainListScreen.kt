@@ -64,9 +64,13 @@ import com.mythaia.viewmodel.VpnViewModel
 private val ChainRowShape = RoundedCornerShape(14.dp)
 private val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
+/**
+ * @param embedded true when shown as a tab inside the Proxies screen, which
+ *   already has a top bar; the actions then sit in a slim row of their own.
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun ChainListScreen(viewModel: VpnViewModel) {
+fun ChainListScreen(viewModel: VpnViewModel, embedded: Boolean = false) {
     val chains by viewModel.chainRepository.chains.collectAsState()
     val configurations by viewModel.configRepository.configurations.collectAsState()
     val subscriptions by viewModel.subscriptionRepository.subscriptions.collectAsState()
@@ -81,6 +85,39 @@ fun ChainListScreen(viewModel: VpnViewModel) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
+            if (embedded) {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (chains.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.testAllChainLatencies() }) {
+                            Icon(
+                                imageVector = Icons.Default.Speed,
+                                contentDescription = stringResource(R.string.test_all),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    IconButton(onClick = {
+                        if (configurations.count { !it.outboundProtocol.isLayer3 } < 2) {
+                            showingNotEnoughProxiesAlert = true
+                        } else {
+                            showingAddSheet = true
+                        }
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = stringResource(R.string.new_chain),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                return@Scaffold
+            }
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,

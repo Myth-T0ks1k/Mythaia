@@ -139,9 +139,12 @@ class MythaiaVpnService : VpnService() {
                     startVpn(config)
                 } else {
                     currentConfig = config
+                    activeServerName = config.name
+                    activeConfigId = config.id
                     DnsCache.setActiveProxyDomain(config.serverAddress)
                     lwipStack?.switchConfiguration(config)
                     updateNotification(config.name)
+                    MythaiaWidgetProvider.refresh(this)
                 }
             }
             SERVICE_INTERFACE, null -> {
@@ -297,8 +300,10 @@ class MythaiaVpnService : VpnService() {
         // UI going away and rebinding to a tunnel that never stopped.
         sessionStartedAt = android.os.SystemClock.elapsedRealtime()
         activeServerName = effectiveConfig.name
+        activeConfigId = effectiveConfig.id
         setActive(true)
         MythaiaWidgetProvider.refresh(this)
+        AutoSelectEngine.onTunnelUp(this)
 
         // Wire logger sink so logger.info/.warning/.error forward to the
         // user-facing log buffer.
@@ -357,8 +362,12 @@ class MythaiaVpnService : VpnService() {
             stopForeground(true)
         }
         notifyStartFailure(message)
+        AutoSelectEngine.onTunnelFailed(this, null)
         stopSelf()
     }
+
+    /** Set before a stopVpn() that the tunnel itself caused, not the user. */
+    private var failureStop = false
 
     private fun stopVpn() {
         stopNetworkMonitoring()
@@ -380,8 +389,15 @@ class MythaiaVpnService : VpnService() {
         lwipStack = null
         sessionStartedAt = 0L
         activeServerName = null
+        val stoppedConfigId = activeConfigId
+        activeConfigId = null
+        AutoSelectEngine.onTunnelDown()
         setActive(false)
         MythaiaWidgetProvider.refresh(this)
+        if (failureStop) {
+            failureStop = false
+            AutoSelectEngine.onTunnelFailed(this, stoppedConfigId)
+        }
         // Capture the fd now — a subsequent startVpn() assigns a fresh tunFd
         // and the deferred finishStopVpn() must never close that new one.
         val fdToClose = tunFd
@@ -503,6 +519,7 @@ class MythaiaVpnService : VpnService() {
             // Off the tunnel's own thread: stopVpn touches the service state.
             android.os.Handler(mainLooper).post {
                 if (wireGuardTunnel === tunnel) {
+                    failureStop = true
                     stopVpn()
                     notifyStartFailure(getString(R.string.tunnel_error_wireguard_peer, reason))
                 }
@@ -523,6 +540,7 @@ class MythaiaVpnService : VpnService() {
         wireGuardSettings = parsed
         sessionStartedAt = android.os.SystemClock.elapsedRealtime()
         activeServerName = config.name
+        activeConfigId = config.id
         setActive(true)
         MythaiaWidgetProvider.refresh(this)
 
@@ -1074,6 +1092,11 @@ class MythaiaVpnService : VpnService() {
         /** The server the tunnel is on, for the widget. Null when it is down. */
         @Volatile
         var activeServerName: String? = null
+            private set
+
+        /** The id of the server on the wire, for Auto to compare against. */
+        @Volatile
+        var activeConfigId: java.util.UUID? = null
             private set
 
         /** Callbacks fired when [isActive] changes, for the tile and widget. */

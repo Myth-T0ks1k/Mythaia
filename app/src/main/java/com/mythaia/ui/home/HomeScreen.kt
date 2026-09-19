@@ -8,61 +8,87 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.mythaia.ui.theme.LocalMythaiaDarkTheme
 import com.mythaia.R
-import com.mythaia.ui.components.SessionStatsRow
+import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.data.network.LatencyResult
 import com.mythaia.ui.components.LatencyBadge
-import com.mythaia.ui.components.SubscriptionUsageCard
 import com.mythaia.ui.components.PowerButton
-import com.mythaia.ui.components.TrafficStatsRow
+import com.mythaia.ui.components.SessionStatsRow
+import com.mythaia.ui.components.SubscriptionUsageCard
+import com.mythaia.ui.components.WingMark
+import com.mythaia.ui.proxy.AddProxyScreen
+import com.mythaia.ui.proxy.ProxyEditorScreen
 import com.mythaia.ui.theme.GradientConnectedEndDark
 import com.mythaia.ui.theme.GradientConnectedEndLight
 import com.mythaia.ui.theme.GradientConnectedStartDark
@@ -72,19 +98,37 @@ import com.mythaia.ui.theme.GradientDisconnectedEndLight
 import com.mythaia.ui.theme.GradientDisconnectedStartDark
 import com.mythaia.ui.theme.GradientDisconnectedStartLight
 import com.mythaia.ui.theme.LightAzure
-import com.mythaia.ui.proxy.AddProxyScreen
-import com.mythaia.ui.proxy.ProxyEditorScreen
+import com.mythaia.ui.theme.LocalMythaiaDarkTheme
+import com.mythaia.viewmodel.ProxyGroup
 import com.mythaia.viewmodel.VpnStatus
 import com.mythaia.viewmodel.VpnViewModel
+import java.util.UUID
 
+private const val CHAINS_GROUP_ID = "__chains__"
+
+/**
+ * The home screen: the tunnel switch, the live readout, the group the
+ * tunnel draws from, and the way into Settings.
+ *
+ * Everything sits on one gradient. Stickers line the edges while the tunnel
+ * is up — a different set each day, a festive one around a holiday — and a
+ * red cross takes their place for a moment when a connection fails.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingValues()) {
+fun HomeScreen(
+    viewModel: VpnViewModel,
+    contentPadding: PaddingValues = PaddingValues(),
+    onOpenSettings: () -> Unit = {}
+) {
     val vpnStatus by viewModel.vpnStatus.collectAsState()
     val bytesIn by viewModel.bytesIn.collectAsState()
     val bytesOut by viewModel.bytesOut.collectAsState()
     val selectedConfigId by viewModel.selectedConfigId.collectAsState()
     val selectedChainId by viewModel.selectedChainId.collectAsState()
+    val activeGroupId by viewModel.activeGroupId.collectAsState()
+    val pinnedByGroup by viewModel.pinnedByGroup.collectAsState()
+    val autoChoice by viewModel.autoChoice.collectAsState()
     val configurations by viewModel.configRepository.configurations.collectAsState()
     val chains by viewModel.chainRepository.chains.collectAsState()
     val subscriptions by viewModel.subscriptionRepository.subscriptions.collectAsState()
@@ -94,22 +138,26 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
     val uptimeSeconds by viewModel.uptimeSeconds.collectAsState()
     val latencyResults by viewModel.latencyResults.collectAsState()
     val autoSelecting by viewModel.autoSelecting.collectAsState()
+    val isGlobalMode by viewModel.isGlobalMode.collectAsState()
+    val lastConnectFailed by viewModel.lastConnectFailed.collectAsState()
 
     val isConnected = vpnStatus == VpnStatus.CONNECTED
     val isTransitioning = vpnStatus == VpnStatus.CONNECTING ||
-            vpnStatus == VpnStatus.DISCONNECTING ||
-            vpnStatus == VpnStatus.REASSERTING
+        vpnStatus == VpnStatus.DISCONNECTING ||
+        vpnStatus == VpnStatus.REASSERTING
 
-    val selectedItemName = remember(selectedConfigId, selectedChainId, configurations, chains) {
-        when {
-            selectedChainId != null -> chains.find { it.id == selectedChainId }?.name
-            selectedConfigId != null -> configurations.find { it.id == selectedConfigId }?.name
-            else -> null
-        }
+    val groups = remember(configurations, subscriptions) { viewModel.groups() }
+    val activeGroup = groups.firstOrNull { it.id == activeGroupId } ?: groups.firstOrNull()
+    val isChain = selectedChainId != null
+    val activeIsAuto = !isChain && pinnedByGroup[activeGroupId] == null
+
+    val selectedName: String? = when {
+        isChain -> chains.firstOrNull { it.id == selectedChainId }?.name
+        else -> selectedConfigId?.let { id -> configurations.firstOrNull { it.id == id }?.name }
     }
+    val defaultGroupName = stringResource(R.string.group_default)
+    fun groupName(group: ProxyGroup) = if (group.isDefault) defaultGroupName else group.name
 
-    // Only when the selected server belongs to a subscription: a standalone
-    // server has no quota to report.
     val activeSubscription = remember(selectedConfigId, configurations, subscriptions) {
         val subId = selectedConfigId
             ?.let { id -> configurations.find { it.id == id } }
@@ -117,13 +165,9 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
         subId?.let { id -> subscriptions.find { it.id == id } }
     }
 
-    var showingAddSheet by remember { mutableStateOf(false) }
-    var showingManualAddSheet by remember { mutableStateOf(false) }
-    var showingConfigPicker by remember { mutableStateOf(false) }
-    // Shared with the SettingsScreen "Global Mode" toggle through the view
-    // model, so a flip on either screen shows on both; LwipStack observes the
-    // underlying pref to reload routing live.
-    val isGlobalMode by viewModel.isGlobalMode.collectAsState()
+    var showingAddSheet by rememberSaveable { mutableStateOf(false) }
+    var showingManualAddSheet by rememberSaveable { mutableStateOf(false) }
+    var showingPicker by rememberSaveable { mutableStateOf(false) }
 
     val isDark = LocalMythaiaDarkTheme.current
     val gradientStart by animateColorAsState(
@@ -147,101 +191,104 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
         label = "gradientEnd"
     )
 
+    // The failure cross shows for a few seconds, then the edges go quiet.
+    LaunchedEffect(lastConnectFailed) {
+        if (lastConnectFailed) {
+            kotlinx.coroutines.delay(5_000)
+            viewModel.clearLastConnectFailed()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(gradientStart, gradientEnd)
-                )
-            )
+            .background(Brush.linearGradient(colors = listOf(gradientStart, gradientEnd)))
     ) {
+        // A large, faint mark behind everything: the brand as texture.
+        WingMark(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(contentPadding)
+                .offset(x = 40.dp, y = (-10).dp)
+                .size(260.dp)
+                .alpha(if (isConnected) 0.10f else 0.06f),
+            color = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary
+        )
+
+        EdgeStickers(
+            visible = isConnected || lastConnectFailed,
+            failed = lastConnectFailed && !isConnected,
+            contentPadding = contentPadding
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .padding(contentPadding)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Paper segments with an azure-wash active state stay legible on
-            // every gradient (bone-neutral idle and azure connected alike).
-            val segmentColors = SegmentedButtonDefaults.colors(
-                activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                activeBorderColor = MaterialTheme.colorScheme.outline,
-                inactiveContainerColor = MaterialTheme.colorScheme.surface,
-                inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                inactiveBorderColor = MaterialTheme.colorScheme.outline
-            )
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(top = 10.dp)) {
-                SegmentedButton(
-                    selected = !isGlobalMode,
-                    onClick = {
-                        if (isGlobalMode) viewModel.proxyMode = "rule"
-                    },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                    colors = segmentColors
-                ) { Text(stringResource(R.string.proxy_mode_rule)) }
-                SegmentedButton(
-                    selected = isGlobalMode,
-                    onClick = {
-                        if (!isGlobalMode) viewModel.proxyMode = "global"
-                    },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2),
-                    colors = segmentColors
-                ) { Text(stringResource(R.string.proxy_mode_global)) }
+            // Brand line and the rule/global switch.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                WingMark(modifier = Modifier.size(22.dp), color = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isConnected) Color.White.copy(alpha = 0.92f) else MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                ModePill(
+                    global = isGlobalMode,
+                    onGlobal = { viewModel.proxyMode = "global" },
+                    onRule = { viewModel.proxyMode = "rule" },
+                    onDarkGround = isConnected
+                )
             }
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // When there are zero configurations, the power button bootstraps the
-            // user into the Add sheet — mirrors iOS HomeView power-button-as-empty-CTA.
             val hasNoConfigurations = configurations.isEmpty() && chains.isEmpty()
             PowerButton(
                 isConnected = isConnected,
-                isTransitioning = isTransitioning,
+                isTransitioning = isTransitioning || autoSelecting,
                 enabled = hasNoConfigurations || !viewModel.isButtonDisabled,
                 onClick = {
-                    if (hasNoConfigurations) {
-                        showingAddSheet = true
-                    } else {
-                        viewModel.toggleVPN()
-                    }
+                    if (hasNoConfigurations) showingAddSheet = true else viewModel.toggleVPN()
                 }
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            val statusTextRes = when (vpnStatus) {
-                VpnStatus.DISCONNECTED -> R.string.disconnected
-                VpnStatus.CONNECTING -> R.string.connecting
-                VpnStatus.CONNECTED -> R.string.connected
-                VpnStatus.DISCONNECTING -> R.string.disconnecting
-                VpnStatus.REASSERTING -> R.string.reconnecting
+            val statusTextRes = when {
+                autoSelecting && !isConnected -> R.string.measuring
+                else -> when (vpnStatus) {
+                    VpnStatus.DISCONNECTED -> R.string.disconnected
+                    VpnStatus.CONNECTING -> R.string.connecting
+                    VpnStatus.CONNECTED -> R.string.connected
+                    VpnStatus.DISCONNECTING -> R.string.disconnecting
+                    VpnStatus.REASSERTING -> R.string.reconnecting
+                }
             }
-            // Connected status reads azure: LightAzure is the azure token built
-            // for dark grounds, and the connected gradient is a dark azure
-            // ground in both themes. Idle stays slate (onSurfaceVariant) on the
-            // quiet bone / deep-ink gradients.
             Text(
                 text = stringResource(statusTextRes),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
                 color = if (isConnected) LightAzure else MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(if (isConnected) 20.dp else 40.dp))
+            Spacer(modifier = Modifier.height(if (isConnected) 18.dp else 28.dp))
 
             AnimatedVisibility(
                 visible = isConnected,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
-                // TrafficStatsRow draws its own paper tiles (outline border,
-                // slate labels, ink/bone monospaced numerals) — no frosted
-                // wrapper card on the gradient any more.
-                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
                     SessionStatsRow(
                         bytesIn = bytesIn,
                         bytesOut = bytesOut,
@@ -258,223 +305,111 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
                 }
             }
 
-            // Server chooser: a paper compact row (14dp radius, hairline
-            // outline) in both states — ink title, slate chrome, with the
-            // leading glyph turning azure while connected.
-            if (selectedItemName != null) {
-                Card(
-                    onClick = { showingConfigPicker = true },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.weight(1f))
+
+            // What the tunnel draws from: the group, and Auto or the pin.
+            if (hasNoConfigurations) {
+                SelectorCard(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    onClick = { showingAddSheet = true }
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_network_filled),
-                            contentDescription = null,
-                            tint = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = stringResource(R.string.add_a_configuration),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                SelectorCard(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    onClick = { showingPicker = true }
+                ) {
+                    Icon(
+                        imageVector = when {
+                            isChain -> Icons.Default.Link
+                            activeIsAuto -> Icons.Default.Bolt
+                            else -> Icons.Default.PushPin
+                        },
+                        contentDescription = null,
+                        tint = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = selectedItemName,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
+                            text = when {
+                                isChain -> stringResource(R.string.chains)
+                                activeGroup != null -> groupName(activeGroup)
+                                else -> defaultGroupName
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        // The last measurement for this server, when there is
-                        // one. Shown here so the number sits next to the choice
-                        // it describes rather than only on the Proxies list.
+                        Text(
+                            text = when {
+                                isChain -> selectedName ?: ""
+                                activeIsAuto && selectedName != null ->
+                                    stringResource(R.string.auto_prefix, selectedName)
+                                activeIsAuto -> stringResource(R.string.auto_mode)
+                                else -> selectedName ?: ""
+                            },
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (autoSelecting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    } else {
                         selectedConfigId?.let { id ->
                             latencyResults[id]?.let { result ->
                                 LatencyBadge(latency = result)
                                 Spacer(modifier = Modifier.width(8.dp))
                             }
                         }
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
                     }
-                }
-            } else {
-                Card(
-                    onClick = { showingAddSheet = true },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = stringResource(R.string.add_a_configuration),
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            SettingsHill(
+                onOpen = onOpenSettings,
+                lineColor = if (isConnected) Color.White.copy(alpha = 0.55f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                gearColor = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary,
+                labelColor = if (isConnected) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 
-    if (showingConfigPicker) {
-        ModalBottomSheet(
-            onDismissRequest = { showingConfigPicker = false },
-            sheetState = rememberModalBottomSheetState()
-        ) {
-            Column(modifier = Modifier.padding(bottom = 24.dp)) {
-                Text(
-                    text = stringResource(R.string.select_configuration),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                )
-
-                // Subscription-grouped picker \u2014 mirrors iOS HomeView's allPickerItems
-                // structure (standalone configs first, then per-subscription sections).
-                val standaloneConfigs = configurations.filter { it.subscriptionId == null }
-                val configsBySubscription = subscriptions.associateWith { sub ->
-                    configurations.filter { it.subscriptionId == sub.id }
-                }.filterValues { it.isNotEmpty() }
-
-                standaloneConfigs.forEach { config ->
-                    val isSelected = config.id == selectedConfigId && selectedChainId == null
-                    Surface(
-                        onClick = {
-                            viewModel.setSelectedConfiguration(config)
-                            showingConfigPicker = false
-                        },
-                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 24.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = config.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (isSelected) {
-                                Text(
-                                    text = "\u2713",
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-
-                configsBySubscription.forEach { (subscription, subConfigs) ->
-                    Text(
-                        text = subscription.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                    )
-                    subConfigs.forEach { config ->
-                        val isSelected = config.id == selectedConfigId && selectedChainId == null
-                        Surface(
-                            onClick = {
-                                viewModel.setSelectedConfiguration(config)
-                                showingConfigPicker = false
-                            },
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 24.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = config.name,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (isSelected) {
-                                    Text(
-                                        text = "\u2713",
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (chains.isNotEmpty()) {
-                    Text(
-                        text = stringResource(R.string.chains),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                    )
-                }
-                chains.forEach { chain ->
-                    val isSelected = chain.id == selectedChainId
-                    Surface(
-                        onClick = {
-                            viewModel.selectChain(chain)
-                            showingConfigPicker = false
-                        },
-                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 24.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = chain.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (isSelected) {
-                                Text(
-                                    text = "\u2713",
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    if (showingPicker) {
+        GroupPickerSheet(
+            viewModel = viewModel,
+            groups = groups,
+            chainsCount = chains.size,
+            initialGroupId = if (isChain) CHAINS_GROUP_ID else activeGroupId,
+            onDismiss = { showingPicker = false }
+        )
     }
 
     if (showingAddSheet) {
@@ -528,5 +463,425 @@ fun HomeScreen(viewModel: VpnViewModel, contentPadding: PaddingValues = PaddingV
                 }
             }
         )
+    }
+}
+
+/** The paper compact row used for the selector and the empty-state CTA. */
+@Composable
+private fun SelectorCard(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit
+) {
+    Card(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content
+        )
+    }
+}
+
+/** Rule / Global as one small pill, so the switch reads as a mode, not a setting. */
+@Composable
+private fun ModePill(
+    global: Boolean,
+    onGlobal: () -> Unit,
+    onRule: () -> Unit,
+    onDarkGround: Boolean
+) {
+    val container = if (onDarkGround) Color.White.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface
+    val border = if (onDarkGround) Color.White.copy(alpha = 0.25f) else MaterialTheme.colorScheme.outline
+    val active = if (onDarkGround) Color.White.copy(alpha = 0.22f) else MaterialTheme.colorScheme.primaryContainer
+    val activeText = if (onDarkGround) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
+    val idleText = if (onDarkGround) Color.White.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = container,
+        border = BorderStroke(1.dp, border)
+    ) {
+        Row(modifier = Modifier.padding(3.dp)) {
+            @Composable
+            fun segment(label: String, selected: Boolean, onClick: () -> Unit) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (selected) active else Color.Transparent,
+                    modifier = Modifier.clickable(onClick = onClick)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (selected) activeText else idleText,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+            segment(stringResource(R.string.proxy_mode_rule), !global, onRule)
+            segment(stringResource(R.string.proxy_mode_global), global, onGlobal)
+        }
+    }
+}
+
+/**
+ * Two columns of stickers along the edges. They keep to a narrow band so the
+ * middle of the screen stays for the controls, and they never take touches.
+ */
+@Composable
+private fun BoxScope.EdgeStickers(
+    visible: Boolean,
+    failed: Boolean,
+    contentPadding: PaddingValues
+) {
+    val today = remember { StickerCalendar.forDate() }
+    val stickers = if (failed) List(4) { Sticker.RED_X } else today
+    val color = if (failed) MaterialTheme.colorScheme.error else LightAzure.copy(alpha = 0.9f)
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(500)),
+        exit = fadeOut(tween(300)),
+        modifier = Modifier.matchParentSize()
+    ) {
+        Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight(0.7f)
+                    .padding(start = 10.dp),
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
+                stickers.forEachIndexed { index, sticker ->
+                    StickerGlyph(
+                        sticker = sticker,
+                        color = color,
+                        modifier = Modifier
+                            .size(if (index % 2 == 0) 34.dp else 26.dp)
+                            .alpha(if (failed) 0.95f else 0.55f)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight(0.7f)
+                    .padding(end = 10.dp),
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
+                stickers.asReversed().forEachIndexed { index, sticker ->
+                    StickerGlyph(
+                        sticker = sticker,
+                        color = color,
+                        modifier = Modifier
+                            .size(if (index % 2 == 1) 34.dp else 26.dp)
+                            .alpha(if (failed) 0.95f else 0.55f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The way into Settings: a hairline across the bottom rising into a hill,
+ * a gear sitting on its crest, and the word underneath. A tap on the gear or
+ * a swipe up over the line opens the sheet.
+ */
+@Composable
+private fun SettingsHill(
+    onOpen: () -> Unit,
+    lineColor: Color,
+    gearColor: Color,
+    labelColor: Color
+) {
+    val density = LocalDensity.current
+    val threshold = with(density) { 36.dp.toPx() }
+    var dragged by remember { mutableStateOf(0f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(96.dp)
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { dragged = 0f },
+                    onVerticalDrag = { _, amount -> dragged += amount },
+                    onDragEnd = {
+                        if (dragged < -threshold) onOpen()
+                        dragged = 0f
+                    }
+                )
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val base = size.height * 0.62f
+            val crest = size.height * 0.16f
+            val hillHalf = w * 0.16f
+            val cx = w / 2f
+            val path = Path().apply {
+                moveTo(0f, base)
+                lineTo(cx - hillHalf * 1.6f, base)
+                cubicTo(cx - hillHalf * 0.9f, base, cx - hillHalf * 0.55f, crest, cx, crest)
+                cubicTo(cx + hillHalf * 0.55f, crest, cx + hillHalf * 0.9f, base, cx + hillHalf * 1.6f, base)
+                lineTo(w, base)
+            }
+            drawPath(path, lineColor, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+            // A small foot where the gear rests, like the stalk in the sketch.
+            drawLine(
+                lineColor,
+                Offset(cx, crest),
+                Offset(cx, crest - 6.dp.toPx()),
+                strokeWidth = 2.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+        }
+        Icon(
+            imageVector = Icons.Default.Settings,
+            contentDescription = stringResource(R.string.settings),
+            tint = gearColor,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (-6).dp)
+                .size(30.dp)
+                .clickable(onClick = onOpen)
+        )
+        Text(
+            text = stringResource(R.string.settings),
+            style = MaterialTheme.typography.labelMedium,
+            color = labelColor,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 10.dp)
+                .clickable(onClick = onOpen)
+        )
+    }
+}
+
+/**
+ * Hiddify's picker: the groups as chips, then what the chosen group offers —
+ * Auto first, then its servers. A tap on a server pins it; a tap on Auto
+ * lets the group choose again.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GroupPickerSheet(
+    viewModel: VpnViewModel,
+    groups: List<ProxyGroup>,
+    chainsCount: Int,
+    initialGroupId: String,
+    onDismiss: () -> Unit
+) {
+    val pinnedByGroup by viewModel.pinnedByGroup.collectAsState()
+    val autoChoice by viewModel.autoChoice.collectAsState()
+    val latencyResults by viewModel.latencyResults.collectAsState()
+    val activeGroupId by viewModel.activeGroupId.collectAsState()
+    val selectedChainId by viewModel.selectedChainId.collectAsState()
+    val chains by viewModel.chainRepository.chains.collectAsState()
+    val autoSelecting by viewModel.autoSelecting.collectAsState()
+
+    var browsing by rememberSaveable { mutableStateOf(initialGroupId) }
+    val defaultGroupName = stringResource(R.string.group_default)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(modifier = Modifier.fillMaxHeight(0.85f)) {
+            Text(
+                text = stringResource(R.string.select_configuration),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+            )
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(groups, key = { it.id }) { group ->
+                    val isActive = selectedChainId == null && activeGroupId == group.id
+                    FilterChip(
+                        selected = browsing == group.id,
+                        onClick = { browsing = group.id },
+                        label = {
+                            Text(
+                                text = "${if (group.isDefault) defaultGroupName else group.name} · ${group.configs.size}",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        leadingIcon = if (isActive) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
+                if (chainsCount > 0) {
+                    item(key = CHAINS_GROUP_ID) {
+                        FilterChip(
+                            selected = browsing == CHAINS_GROUP_ID,
+                            onClick = { browsing = CHAINS_GROUP_ID },
+                            label = { Text("${stringResource(R.string.chains)} · $chainsCount") },
+                            leadingIcon = if (selectedChainId != null) {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null,
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (browsing == CHAINS_GROUP_ID) {
+                LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                    items(chains, key = { it.id }) { chain ->
+                        val selected = chain.id == selectedChainId
+                        PickerRow(
+                            title = chain.name,
+                            subtitle = null,
+                            selected = selected,
+                            leading = { Icon(Icons.Default.Link, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                            trailing = null,
+                            onClick = {
+                                viewModel.selectChain(chain)
+                                onDismiss()
+                            }
+                        )
+                    }
+                }
+                return@Column
+            }
+
+            val group = groups.firstOrNull { it.id == browsing } ?: return@Column
+            val groupIsActive = selectedChainId == null && activeGroupId == group.id
+            val pinned = pinnedByGroup[group.id]
+            val auto = autoChoice[group.id]
+            val candidates = group.configs
+
+            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                item(key = "auto") {
+                    val autoName = auto?.let { id -> candidates.firstOrNull { it.id == id }?.name }
+                    PickerRow(
+                        title = stringResource(R.string.auto_mode),
+                        subtitle = autoName?.let { stringResource(R.string.auto_prefix, it) }
+                            ?: stringResource(R.string.auto_mode_hint),
+                        selected = groupIsActive && pinned == null,
+                        leading = {
+                            if (autoSelecting && groupIsActive) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                        },
+                        trailing = auto?.let { latencyResults[it] }?.let { { LatencyBadge(latency = it) } },
+                        onClick = {
+                            viewModel.useAuto(group.id)
+                            onDismiss()
+                        }
+                    )
+                }
+                if (candidates.isEmpty()) {
+                    item(key = "empty") {
+                        Text(
+                            text = stringResource(R.string.no_servers_in_group),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+                        )
+                    }
+                }
+                items(candidates, key = { it.id }) { config ->
+                    val isPinned = groupIsActive && pinned == config.id
+                    PickerRow(
+                        title = config.name,
+                        subtitle = config.displayEndpoint,
+                        selected = isPinned,
+                        leading = {
+                            Icon(
+                                imageVector = if (isPinned) Icons.Default.PushPin else Icons.Default.Check,
+                                contentDescription = null,
+                                tint = if (isPinned) MaterialTheme.colorScheme.primary
+                                else if (auto == config.id) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                else Color.Transparent
+                            )
+                        },
+                        trailing = latencyResults[config.id]?.let { { LatencyBadge(latency = it) } },
+                        onClick = {
+                            viewModel.pinConfiguration(config)
+                            onDismiss()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickerRow(
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    leading: @Composable () -> Unit,
+    trailing: (@Composable () -> Unit)?,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) { leading() }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            if (trailing != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                trailing()
+            }
+        }
     }
 }

@@ -25,7 +25,6 @@ import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Flag
@@ -143,7 +142,6 @@ private fun AdvancedSettingsRoot(
     var remnawaveHWIDEnabled by remember { mutableStateOf(viewModel.remnawaveHWIDEnabled) }
     var blockQuicEnabled by remember { mutableStateOf(viewModel.blockQuicEnabled) }
     var refreshHours by remember { mutableStateOf(viewModel.subscriptionRefreshHours) }
-    var autoSelect by remember { mutableStateOf(viewModel.autoSelectEnabled) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -173,27 +171,6 @@ private fun AdvancedSettingsRoot(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            WingSectionLabel(stringResource(R.string.connection))
-            WingGroupCard {
-                WingSwitchRow(
-                    icon = Icons.Filled.Bolt,
-                    label = stringResource(R.string.auto_select),
-                    checked = autoSelect,
-                    onCheckedChange = {
-                        autoSelect = it
-                        viewModel.autoSelectEnabled = it
-                    }
-                )
-            }
-            Text(
-                text = stringResource(R.string.auto_select_footer),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
             WingSectionLabel(stringResource(R.string.network))
             WingGroupCard {
                 WingSwitchRow(

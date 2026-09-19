@@ -33,13 +33,32 @@ object SubscriptionFetcher {
         class NetworkError(message: String) : FetchError("Network error: $message")
     }
 
+    /** Fetches with the subscription's own fronting settings. */
+    suspend fun fetch(
+        subscription: com.mythaia.data.model.Subscription,
+        remnawaveHWID: String? = null
+    ): Result = fetch(
+        urlString = subscription.url,
+        remnawaveHWID = remnawaveHWID,
+        frontSni = subscription.frontSni,
+        frontTargets = subscription.frontTargets
+    )
+
     suspend fun fetch(
         urlString: String,
         allowInsecure: Boolean = CertificatePolicy.allowInsecure,
-        remnawaveHWID: String? = null
+        remnawaveHWID: String? = null,
+        frontSni: String? = null,
+        frontTargets: List<String> = emptyList()
     ): Result = withContext(Dispatchers.IO) {
         val url = runCatching { URL(urlString) }.getOrNull()
             ?: throw FetchError.InvalidUrl()
+
+        val targets = frontTargets.map { it.trim() }.filter { it.isNotEmpty() }
+        if (targets.isNotEmpty() && url.protocol.equals("https", ignoreCase = true)) {
+            return@withContext fetchFronted(url, frontSni?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
+                targets, allowInsecure, remnawaveHWID)
+        }
 
         val connection = url.openConnection() as HttpURLConnection
         try {
@@ -125,6 +144,83 @@ object SubscriptionFetcher {
     /** Panels do not serve lists this large; anything bigger is a misconfiguration, not a subscription. */
     private const val MAX_BODY_BYTES = 16 * 1024 * 1024
 
+    /**
+     * Downloads through each front in turn until one answers.
+     *
+     * The response is parsed exactly as the direct path parses it; only the
+     * transport differs. A target that fails moves on to the next; when all
+     * fail, the error names the last one so the user can see which front is
+     * dead rather than a generic "network error".
+     */
+    private suspend fun fetchFronted(
+        url: URL,
+        sni: String,
+        targets: List<String>,
+        allowInsecure: Boolean,
+        remnawaveHWID: String?
+    ): Result {
+        val extra = buildMap {
+            if (remnawaveHWID != null) put("x-hwid", remnawaveHWID)
+        }
+        var lastError: String? = null
+        for (target in targets) {
+            val response = try {
+                FrontedHttpClient.get(url, sni, target, extra, allowInsecure, MAX_BODY_BYTES)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = FrontedHttpClient.describe(target, e)
+                continue
+            }
+            if (response.status !in 200..299) {
+                lastError = "$target: HTTP ${response.status}"
+                continue
+            }
+            return parseBody(
+                data = response.body,
+                profileTitle = decodeProfileTitle(response.header("profile-title")),
+                userInfo = parseUserInfoValue(response.header("subscription-userinfo"))
+            )
+        }
+        throw FetchError.NetworkError(lastError ?: "No front answered")
+    }
+
+    /** The parsing shared by both transports. */
+    private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo): Result {
+        val bodyString = decodeBody(data)
+
+        if (looksLikeClash(bodyString)) {
+            val result = ClashProxyParser.parse(bodyString)
+            if (result.configurations.isEmpty()) throw FetchError.NoConfigurations()
+            return Result(
+                configurations = result.configurations,
+                name = profileTitle,
+                upload = userInfo.upload,
+                download = userInfo.download,
+                total = userInfo.total,
+                expire = userInfo.expire
+            )
+        }
+
+        val parsablePrefixes = ProxyConfiguration.parsableUrlPrefixes
+        val configurations = bodyString
+            .lines()
+            .map { it.trim() }
+            .filter { line -> parsablePrefixes.any { line.startsWith(it) } }
+            .mapNotNull { runCatching { ProxyConfiguration.fromUrl(it) }.getOrNull() }
+
+        if (configurations.isEmpty()) throw FetchError.NoConfigurations()
+
+        return Result(
+            configurations = configurations,
+            name = profileTitle,
+            upload = userInfo.upload,
+            download = userInfo.download,
+            total = userInfo.total,
+            expire = userInfo.expire
+        )
+    }
+
     private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(16 * 1024)
@@ -163,8 +259,11 @@ object SubscriptionFetcher {
             t.startsWith("proxies:") || t.startsWith("proxy-providers:")
         }
 
-    private fun parseProfileTitle(connection: HttpURLConnection): String? {
-        val value = connection.getHeaderField("profile-title") ?: return null
+    private fun parseProfileTitle(connection: HttpURLConnection): String? =
+        decodeProfileTitle(connection.getHeaderField("profile-title"))
+
+    private fun decodeProfileTitle(value: String?): String? {
+        if (value == null) return null
         val decoded = if (value.startsWith("base64:")) {
             val encoded = value.removePrefix("base64:")
             runCatching {
@@ -186,8 +285,11 @@ object SubscriptionFetcher {
         val expire: Long? = null
     )
 
-    private fun parseSubscriptionUserInfo(connection: HttpURLConnection): UserInfo {
-        val value = connection.getHeaderField("subscription-userinfo") ?: return UserInfo()
+    private fun parseSubscriptionUserInfo(connection: HttpURLConnection): UserInfo =
+        parseUserInfoValue(connection.getHeaderField("subscription-userinfo"))
+
+    private fun parseUserInfoValue(value: String?): UserInfo {
+        if (value == null) return UserInfo()
 
         var upload: Long? = null
         var download: Long? = null

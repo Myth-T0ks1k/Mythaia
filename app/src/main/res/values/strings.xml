@@ -59,7 +59,6 @@
     <string name="proxy_mode_rule">Rule</string>
     <string name="proxy_mode_global">Global</string>
     <string name="rename">Rename</string>
-    <string name="rename_subscription">Rename Subscription</string>
     <string name="save">Save</string>
     <string name="scan_your_qr_code">Scan your QR code</string>
     <string name="security">Security</string>
@@ -278,11 +277,8 @@
     <string name="mitm_delete_rule_set_message">Remove “%1$s”? This cannot be undone.</string>
 
     <!-- Auto-select -->
-    <string name="auto_select">Auto-select fastest</string>
     <string name="auto_select_now">Auto-select</string>
     <string name="auto_select_none">No server answered.</string>
-    <string name="auto_select_footer">Measures every server and connects to the fastest one. Adds a few seconds to each connection, and contacts every server you have.</string>
-    <string name="connection">Connection</string>
 
     <!-- Session readout -->
     <string name="connected_for">Connected for</string>
@@ -372,4 +368,26 @@
     <string name="dns_server_invalid">Not a valid server for the selected protocol.</string>
     <string name="fingerprint_already_trusted">This fingerprint is already trusted.</string>
     <string name="no_server_selected">No server is selected.</string>
+
+    <!-- Groups, Auto mode, checks, fronting -->
+    <string name="proxy_chain">Proxy chain</string>
+    <string name="group_default">Default</string>
+    <string name="auto_mode">Auto · fastest handshake</string>
+    <string name="auto_mode_hint">Measures the group and follows the fastest server; rechecks every 2 minutes while connected.</string>
+    <string name="auto_prefix">Auto · %1$s</string>
+    <string name="pinned">Pinned</string>
+    <string name="auto_picked">Chosen by Auto</string>
+    <string name="measuring">Measuring…</string>
+    <string name="check_tcp_ping">TCP ping</string>
+    <string name="check_real_ping">Real ping through proxy</string>
+    <string name="check_handshake">Handshake time</string>
+    <string name="latency_kind_tcp" translatable="false">TCP</string>
+    <string name="latency_kind_http" translatable="false">HTTP</string>
+    <string name="latency_kind_handshake">handshake</string>
+    <string name="group_settings">Subscription settings</string>
+    <string name="fronting">Fronting</string>
+    <string name="front_sni" translatable="false">SNI</string>
+    <string name="front_targets">Targets (one per line)</string>
+    <string name="fronting_hint">The subscription is downloaded by connecting to these hosts instead of the link\'s own, with the SNI above in the TLS handshake. For panels whose domain is blocked but whose CDN is not.</string>
+    <string name="no_servers_in_group">No servers in this group yet.</string>
 </resources>

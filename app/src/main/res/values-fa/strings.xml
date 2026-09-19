@@ -212,11 +212,8 @@
     <string name="mitm_delete_rule_set_message">«%1$s» حذف شود؟ این کار برگشت‌ناپذیر است.</string>
 
     <!-- Auto-select -->
-    <string name="auto_select">گزینش خودکار سریع‌ترین</string>
     <string name="auto_select_now">گزینش سریع‌ترین</string>
     <string name="auto_select_none">هیچ سروری پاسخ نداد.</string>
-    <string name="auto_select_footer">همهٔ سرورها را می‌سنجد و به سریع‌ترین وصل می‌شود. چند ثانیه به هر اتصال می‌افزاید و با همهٔ سرورهای شما تماس می‌گیرد.</string>
-    <string name="connection">اتصال</string>
 
     <!-- Session readout -->
     <string name="connected_for">مدت اتصال</string>
@@ -282,7 +279,6 @@
     <string name="remnawave_hwid_prompt">برای ادامه Remnawave HWID را فعال کنید.</string>
     <string name="rename">تغییر نام</string>
     <string name="rename_rule_set">تغییر نام مجموعه‌قواعد</string>
-    <string name="rename_subscription">تغییر نام اشتراک</string>
     <string name="reset">بازنشانی</string>
     <string name="route_to">مسیردهی به</string>
     <string name="routing_rules_updated_message">پراکسی مورد استفادهٔ قواعد مسیریابی زیر حذف شد. آن‌ها به پیش‌فرض بازنشانی شدند: %1$s</string>
@@ -350,4 +346,22 @@
     <string name="dns_server_invalid">برای پروتکل انتخاب‌شده سرور معتبری نیست.</string>
     <string name="fingerprint_already_trusted">این اثر انگشت از قبل مورد اعتماد است.</string>
     <string name="no_server_selected">هیچ سروری انتخاب نشده است.</string>
+
+    <string name="proxy_chain">زنجیره پراکسی</string>
+    <string name="group_default">پیش‌فرض</string>
+    <string name="auto_mode">خودکار · سریع‌ترین هندشیک</string>
+    <string name="auto_mode_hint">گروه را می‌سنجد و سریع‌ترین سرور را دنبال می‌کند؛ هنگام اتصال هر ۲ دقیقه دوباره بررسی می‌کند.</string>
+    <string name="auto_prefix">خودکار · %1$s</string>
+    <string name="pinned">سنجاق‌شده</string>
+    <string name="auto_picked">انتخاب خودکار</string>
+    <string name="measuring">در حال سنجش…</string>
+    <string name="check_tcp_ping">پینگ TCP</string>
+    <string name="check_real_ping">پینگ واقعی از طریق پراکسی</string>
+    <string name="check_handshake">زمان هندشیک</string>
+    <string name="latency_kind_handshake">هندشیک</string>
+    <string name="group_settings">تنظیمات اشتراک</string>
+    <string name="fronting">فرانتینگ</string>
+    <string name="front_targets">اهداف (هر خط یکی)</string>
+    <string name="fronting_hint">اشتراک با اتصال به این میزبان‌ها به جای میزبان لینک دانلود می‌شود و SNI بالا در هندشیک TLS استفاده می‌شود. برای پنل‌هایی که دامنه‌شان مسدود است اما CDN آن‌ها نه.</string>
+    <string name="no_servers_in_group">هنوز سروری در این گروه نیست.</string>
 </resources>

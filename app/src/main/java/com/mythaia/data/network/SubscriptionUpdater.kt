@@ -26,7 +26,7 @@ object SubscriptionUpdater {
         configRepository: ConfigRepository,
         remnawaveHWID: String?
     ): Subscription {
-        val result = SubscriptionFetcher.fetch(subscription.url, remnawaveHWID = remnawaveHWID)
+        val result = SubscriptionFetcher.fetch(subscription, remnawaveHWID = remnawaveHWID)
 
         // The fetch can take a while; re-read the record so a rename, a
         // collapse or a deletion made meanwhile is not overwritten with the

@@ -275,7 +275,8 @@ class RuleSetRepository(private val context: Context) {
             // Country-bypass domain rules, loaded before user rules so user rules win on conflict.
             val bypassCode = prefs.getString("bypassCountryCode", "") ?: ""
             if (bypassCode.isNotEmpty()) {
-                val bypassRules = countryCatalog.rules(bypassCode)
+                val bypassRules = countryCatalog.rules(bypassCode) +
+                    com.mythaia.data.rules.CountryBypassExtras.rulesFor(bypassCode)
                 if (bypassRules.isNotEmpty()) {
                     val arr = JSONArray()
                     for (rule in bypassRules) {

@@ -212,11 +212,8 @@
     <string name="mitm_delete_rule_set_message">¿Quitar «%1$s»? Esto no se puede deshacer.</string>
 
     <!-- Auto-select -->
-    <string name="auto_select">Elegir el más rápido</string>
     <string name="auto_select_now">Elegir el más rápido</string>
     <string name="auto_select_none">Ningún servidor respondió.</string>
-    <string name="auto_select_footer">Mide todos los servidores y se conecta al más rápido. Añade unos segundos a cada conexión y contacta con todos tus servidores.</string>
-    <string name="connection">Conexión</string>
 
     <!-- Session readout -->
     <string name="connected_for">Conectado desde hace</string>
@@ -282,7 +279,6 @@
     <string name="remnawave_hwid_prompt">Activa Remnawave HWID para continuar.</string>
     <string name="rename">Renombrar</string>
     <string name="rename_rule_set">Renombrar conjunto de reglas</string>
-    <string name="rename_subscription">Renombrar suscripción</string>
     <string name="reset">Restablecer</string>
     <string name="route_to">Enrutar a</string>
     <string name="routing_rules_updated_message">El proxy que usaban estas reglas de enrutamiento se eliminó. Se han restablecido a Predeterminado: %1$s</string>
@@ -354,4 +350,22 @@
     <string name="dns_server_invalid">No es un servidor válido para el protocolo seleccionado.</string>
     <string name="fingerprint_already_trusted">Esta huella ya es de confianza.</string>
     <string name="no_server_selected">No hay ningún servidor seleccionado.</string>
+
+    <string name="proxy_chain">Cadena de proxies</string>
+    <string name="group_default">Predeterminado</string>
+    <string name="auto_mode">Auto · handshake más rápido</string>
+    <string name="auto_mode_hint">Mide el grupo y sigue al servidor más rápido; vuelve a comprobar cada 2 minutos mientras está conectado.</string>
+    <string name="auto_prefix">Auto · %1$s</string>
+    <string name="pinned">Fijado</string>
+    <string name="auto_picked">Elegido por Auto</string>
+    <string name="measuring">Midiendo…</string>
+    <string name="check_tcp_ping">Ping TCP</string>
+    <string name="check_real_ping">Ping real a través del proxy</string>
+    <string name="check_handshake">Tiempo de handshake</string>
+    <string name="latency_kind_handshake">handshake</string>
+    <string name="group_settings">Ajustes de la suscripción</string>
+    <string name="fronting">Fronting</string>
+    <string name="front_targets">Destinos (uno por línea)</string>
+    <string name="fronting_hint">La suscripción se descarga conectando a estos hosts en lugar del de la URL, con el SNI indicado en el handshake TLS. Para paneles cuyo dominio está bloqueado pero su CDN no.</string>
+    <string name="no_servers_in_group">Aún no hay servidores en este grupo.</string>
 </resources>

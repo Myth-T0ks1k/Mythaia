@@ -27,6 +27,24 @@ sealed class LatencyResult {
 }
 
 /**
+ * What a measurement times.
+ *
+ * TCP is the cheapest and says only that the port answers; HANDSHAKE proves
+ * the credentials and the protocol work and is what auto-select ranks by;
+ * HTTP goes all the way through the proxy to the internet.
+ */
+enum class LatencyKind {
+    /** Time to complete the TCP connect to the server. */
+    TCP,
+
+    /** Time to a finished proxy handshake (TCP + TLS/Reality + protocol). */
+    HANDSHAKE,
+
+    /** Time for an HTTP round trip through the proxy — the "real" ping. */
+    HTTP
+}
+
+/**
  * Tests full proxy round-trip latency by establishing a proxy connection
  * and sending a plain HTTP request through the proxy chain.
  *
@@ -48,7 +66,10 @@ object LatencyTester {
     /** How long to wait for a peer to answer a handshake initiation. */
     private const val HANDSHAKE_PROBE_MS = 5_000
 
-    suspend fun test(config: ProxyConfiguration): LatencyResult = withContext(Dispatchers.IO) {
+    suspend fun test(
+        config: ProxyConfiguration,
+        kind: LatencyKind = LatencyKind.HTTP
+    ): LatencyResult = withContext(Dispatchers.IO) {
         // A layer-3 interface has no per-flow dial to time. Sending it through
         // the proxy factory would report Failed for a peer that is perfectly
         // reachable, so it gets the probe that actually applies to it.
@@ -67,7 +88,11 @@ object LatencyTester {
 
         withTimeoutOrNull(TIMEOUT_MS) {
             try {
-                performTest(resolveConfig(config))
+                when (kind) {
+                    LatencyKind.TCP -> performTcpTest(resolveConfig(config))
+                    LatencyKind.HANDSHAKE -> performHandshakeTest(resolveConfig(config))
+                    LatencyKind.HTTP -> performTest(resolveConfig(config))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: com.mythaia.vpn.protocol.tls.TlsError.CertificateValidationFailed) {
@@ -138,23 +163,74 @@ object LatencyTester {
         }
     }
 
-    fun testAll(configurations: List<ProxyConfiguration>): Flow<Pair<UUID, LatencyResult>> = channelFlow {
-        // Pre-warm DNS cache for all hosts (including chain proxies)
-        configurations.forEach { config ->
-            DnsCache.prewarm(config.serverAddress)
-            config.chain?.forEach { DnsCache.prewarm(it.serverAddress) }
-        }
-
-        // Cap concurrent tests to avoid overwhelming network/proxy.
+    fun testAll(
+        configurations: List<ProxyConfiguration>,
+        kind: LatencyKind = LatencyKind.HTTP
+    ): Flow<Pair<UUID, LatencyResult>> = channelFlow {
+        // Cap concurrent tests to avoid overwhelming network/proxy. Each test
+        // resolves its own names under its own timeout, so a slow resolver
+        // delays one result rather than all of them.
         val semaphore = Semaphore(MAX_CONCURRENT_TESTS)
         for (config in configurations) {
             launch(Dispatchers.IO) {
                 semaphore.withPermit {
-                    send(config.id to test(config))
+                    send(config.id to test(config, kind))
                 }
             }
         }
     }.flowOn(Dispatchers.IO)
+
+    /** Times the TCP connect alone, to the first hop of a chain or the server itself. */
+    private suspend fun performTcpTest(config: ProxyConfiguration): LatencyResult {
+        val first = config.chain?.firstOrNull() ?: config
+        val socket = com.mythaia.vpn.util.NioSocket()
+        val started = System.nanoTime()
+        try {
+            socket.connect(first.connectAddress, first.serverPort.toInt())
+        } finally {
+            runCatching { socket.forceCancel() }
+        }
+        val elapsed = ((System.nanoTime() - started) / 1_000_000L).toInt()
+        return LatencyResult.Success(elapsed.coerceAtLeast(1))
+    }
+
+    /**
+     * Times the whole dial: TCP, TLS or Reality, and the protocol's own
+     * request, through every hop of a chain. Nothing is sent to the internet.
+     */
+    private suspend fun performHandshakeTest(config: ProxyConfiguration): LatencyResult = coroutineScope {
+        val connections = mutableListOf<ProxyConnection>()
+        val watcher = launch {
+            try { awaitCancellation() } finally { connections.forEach { it.cancel() } }
+        }
+        try {
+            val started = System.nanoTime()
+            var tunnelConnection: ProxyConnection? = null
+            val chain = config.chain
+            if (!chain.isNullOrEmpty()) {
+                for (i in chain.indices) {
+                    val hopConfig = chain[i]
+                    val nextConfig = if (i + 1 < chain.size) chain[i + 1] else config
+                    tunnelConnection = ProxyClientFactory.connect(
+                        hopConfig,
+                        nextConfig.connectAddress,
+                        nextConfig.serverPort.toInt(),
+                        tunnel = tunnelConnection
+                    )
+                    connections.add(tunnelConnection)
+                }
+            }
+            val proxyConnection = ProxyClientFactory.connect(
+                config, LATENCY_HOST, LATENCY_PORT, tunnel = tunnelConnection
+            )
+            connections.add(proxyConnection)
+            val elapsed = ((System.nanoTime() - started) / 1_000_000L).toInt()
+            LatencyResult.Success(elapsed.coerceAtLeast(1))
+        } finally {
+            watcher.cancel()
+            connections.forEach { runCatching { it.cancel() } }
+        }
+    }
 
     /**
      * Resolve DNS before connecting to avoid DNS-over-tunnel loop when VPN is active.

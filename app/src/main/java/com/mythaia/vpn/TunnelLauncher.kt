@@ -91,6 +91,26 @@ object TunnelLauncher {
         return start(context, config)
     }
 
+    /** Moves a running tunnel to [config] without tearing it down. */
+    fun switchTo(context: Context, config: ProxyConfiguration) {
+        val app = context.applicationContext
+        val prepared = resolveServerAddress(applyGlobalAllowInsecure(app, config))
+        DnsCache.setActiveProxyDomain(prepared.serverAddress)
+        try {
+            app.startService(
+                Intent(app, MythaiaVpnService::class.java).apply {
+                    action = MythaiaVpnService.ACTION_SWITCH_CONFIG
+                    putExtra(
+                        MythaiaVpnService.EXTRA_CONFIG,
+                        json.encodeToString(ProxyConfiguration.serializer(), prepared)
+                    )
+                }
+            )
+        } catch (e: Exception) {
+            logger.warning("Could not switch the tunnel: ${e.message ?: e}")
+        }
+    }
+
     fun stop(context: Context) {
         val app = context.applicationContext
         try {

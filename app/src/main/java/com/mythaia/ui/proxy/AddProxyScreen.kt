@@ -25,6 +25,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -115,6 +117,14 @@ fun AddProxyScreen(
     var showRemnawaveHWIDAlert by remember { mutableStateOf(false) }
     var pendingSubscriptionURL by remember { mutableStateOf("") }
 
+    // Fronting for the subscription download: shown only for an http(s)
+    // link imported as a subscription, folded away until wanted.
+    var frontingExpanded by remember { mutableStateOf(false) }
+    var frontSni by remember { mutableStateOf("") }
+    var frontTargetsText by remember { mutableStateOf("") }
+    fun frontTargets(): List<String> =
+        frontTargetsText.split('\n', ',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+
     val isContinueDisabled = when (selectedMethod) {
         ImportMethod.LINK -> linkURL.isBlank() || isLoading
         null -> true
@@ -138,7 +148,11 @@ fun AddProxyScreen(
         scope.launch {
             try {
                 val hwid = if (withRemnawaveHWID) viewModel.deviceIdentifier else null
-                val result = SubscriptionFetcher.fetch(url, remnawaveHWID = hwid)
+                val sni = frontSni.trim().takeIf { it.isNotEmpty() }
+                val targets = frontTargets()
+                val result = SubscriptionFetcher.fetch(
+                    url, remnawaveHWID = hwid, frontSni = sni, frontTargets = targets
+                )
                 val name = result.name
                     ?: runCatching { URL(url).host }.getOrNull()
                     ?: context.getString(R.string.subscription)
@@ -149,7 +163,9 @@ fun AddProxyScreen(
                     upload = result.upload,
                     download = result.download,
                     total = result.total,
-                    expire = result.expire
+                    expire = result.expire,
+                    frontSni = sni,
+                    frontTargets = targets
                 )
                 onSubscriptionImport(result.configurations, subscription)
             } catch (e: Exception) {
@@ -349,6 +365,61 @@ fun AddProxyScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp, start = 4.dp)
             )
+
+            if ((trimmedUrl.startsWith("http://") || trimmedUrl.startsWith("https://")) &&
+                linkType == LinkType.SUBSCRIPTION
+            ) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { frontingExpanded = !frontingExpanded }
+                        .padding(vertical = 6.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.fronting),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = if (frontingExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (frontingExpanded) {
+                    Text(
+                        text = stringResource(R.string.fronting_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                    )
+                    OutlinedTextField(
+                        value = frontSni,
+                        onValueChange = { frontSni = it },
+                        label = { Text(stringResource(R.string.front_sni)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        colors = wingTextFieldColors()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = frontTargetsText,
+                        onValueChange = { frontTargetsText = it },
+                        label = { Text(stringResource(R.string.front_targets)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 5,
+                        shape = RoundedCornerShape(14.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        colors = wingTextFieldColors()
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))

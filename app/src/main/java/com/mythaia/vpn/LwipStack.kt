@@ -975,8 +975,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
 
         when (val resolution = resolveFakeIp(dstIpString, dstPort, "TCP")) {
             FakeIpResolution.Passthrough -> {
-                // In global mode, skip IP routing rules — all traffic goes through proxy
-                if (proxyMode != "global") {
+                // In global mode, skip IP routing rules — all traffic goes
+                // through the proxy, except the home country's own ranges.
+                if (proxyMode == "global") {
+                    if (domainRouter.isBypassIp(dstIpString)) forceBypass = true
+                } else {
                     domainRouter.matchIP(dstIpString)?.let { action ->
                         when (action) {
                             RouteAction.Direct -> forceBypass = true
@@ -1089,8 +1092,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
 
         when (val resolution = resolveFakeIp(dstIpString, dstPort, "UDP")) {
             FakeIpResolution.Passthrough -> {
-                // In global mode, skip IP routing rules — all traffic goes through proxy
-                if (proxyMode != "global") {
+                // In global mode, skip IP routing rules — all traffic goes
+                // through the proxy, except the home country's own ranges.
+                if (proxyMode == "global") {
+                    if (domainRouter.isBypassIp(dstIpString)) forceBypass = true
+                } else {
                     domainRouter.matchIP(dstIpString)?.let { action ->
                         when (action) {
                             RouteAction.Direct -> forceBypass = true
@@ -1152,9 +1158,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         if (!FakeIpPool.isFakeIp(ip)) return FakeIpResolution.Passthrough
 
         val entry = fakeIpPool.lookup(ip) ?: return FakeIpResolution.Unreachable
-        // In global mode, skip routing rules — all traffic goes through proxy
+        // In global mode, skip routing rules — all traffic goes through the
+        // proxy, except the home country's own services, which a foreign exit
+        // could not reach anyway.
         if (proxyMode == "global") {
-            return FakeIpResolution.Resolved(entry.domain, null, false)
+            return FakeIpResolution.Resolved(entry.domain, null, domainRouter.isBypassDomain(entry.domain))
         }
 
         return when (val action = domainRouter.matchDomain(entry.domain)) {
