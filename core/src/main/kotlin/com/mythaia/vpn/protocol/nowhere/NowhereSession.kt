@@ -290,7 +290,9 @@ class NowhereSession(val configuration: NowhereConfiguration) {
             serverPort = configuration.proxyPort,
             alpn = listOf(configuration.alpn),
             tuning = QuicTuning.NOWHERE,
-            fingerprint = configuration.tls.fingerprint
+            fingerprint = configuration.tls.fingerprint,
+            tlsServerName = configuration.tls.serverName.takeIf { it.isNotBlank() } ?: configuration.proxyHost,
+            allowInsecure = configuration.tls.allowInsecure
         )
         if (!connection.connect()) {
             connection.close()

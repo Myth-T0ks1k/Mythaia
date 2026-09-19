@@ -73,6 +73,30 @@ cd mythaia-android
 
 Open the project in Android Studio, sync Gradle, select the `app` configuration, choose your device, and hit Run. Building a release requires a signing keystore configured via `local.properties` (`KEYSTORE_FILE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).
 
+### Mythaia Pro for Windows
+
+The same protocol stack runs as a Windows desktop app (`desktop/`, Compose for
+Desktop) on top of the shared `core` module. It works in system-proxy mode:
+a local SOCKS5 and HTTP proxy (both ports accept either protocol; SOCKS5 UDP
+ASSOCIATE included) is routed by rule or global mode and dialled through the
+selected server; while connected, the Windows system proxy points at it and
+is put back on disconnect. Auto picks the fastest server by real ping and
+keeps rechecking, as on Android.
+
+Build steps, on a machine with Visual Studio 2022 (MSVC, CMake, Ninja) and a
+JDK 21 that ships `jmods` (the path goes in `local.properties` as `desktop.jdk`):
+
+```bash
+desktop
+ativeuild.cmd
+./gradlew :desktop:createDistributable
+```
+
+The app image lands in `desktop/build/compose/binaries/main/app/Mythaia Pro/`;
+run `Mythaia Pro.exe` from there. `./gradlew :desktop:run` starts it from
+sources. Data lives in `%APPDATA%\Mythaia`. Not yet on Windows: a TUN (VPN)
+mode, WireGuard, chains and the field-by-field server editor.
+
 ## License
 
 Mythaia is distributed under the **GNU General Public License v3.0** — see

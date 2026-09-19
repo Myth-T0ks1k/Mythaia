@@ -82,17 +82,56 @@ object QuicTransportParameters {
             if (length.value == 0L) {
                 out.add(QuicTuning.TransportParameter(id.value.toInt(), null))
             } else {
-                val value = QuicVarInt.decode(bytes, at) ?: return null
-                // A parameter whose body is longer than the varint inside it is
-                // malformed; the length must frame the value exactly.
-                if (value.size != length.value.toInt()) return null
-                out.add(QuicTuning.TransportParameter(id.value.toInt(), value.value))
+                val value = QuicVarInt.decode(bytes, at)
+                val framed = value != null && value.size == length.value.toInt()
+                when {
+                    // An integer parameter whose length does not frame its
+                    // varint exactly is malformed.
+                    id.value in INTEGER_IDS -> {
+                        if (!framed) return null
+                        out.add(QuicTuning.TransportParameter(id.value.toInt(), value!!.value))
+                    }
+                    // Connection ids, the stateless reset token,
+                    // preferred_address and version_information are opaque
+                    // bytes, listed without a value; ngtcp2 decodes the same
+                    // bytes itself and enforces the rules for them.
+                    id.value in OPAQUE_IDS -> out.add(QuicTuning.TransportParameter(id.value.toInt(), null))
+                    // An unknown parameter is kept (RFC 9000 §18.1), with its
+                    // value when it happens to be a varint.
+                    else -> out.add(QuicTuning.TransportParameter(id.value.toInt(), if (framed) value!!.value else null))
+                }
             }
             at = end
         }
 
         return out
     }
+
+    /** RFC 9000 §18.2 and RFC 9368 parameters whose value is opaque bytes. */
+    private val OPAQUE_IDS: Set<Long> = setOf(
+        0x00L, // original_destination_connection_id
+        0x02L, // stateless_reset_token
+        0x0dL, // preferred_address
+        0x0fL, // initial_source_connection_id
+        0x10L, // retry_source_connection_id
+        0x11L  // version_information
+    )
+
+    /** RFC 9000 §18.2 and RFC 9221 parameters whose value is a varint. */
+    private val INTEGER_IDS: Set<Long> = setOf(
+        0x01L, // max_idle_timeout
+        0x03L, // max_udp_payload_size
+        0x04L, // initial_max_data
+        0x05L, // initial_max_stream_data_bidi_local
+        0x06L, // initial_max_stream_data_bidi_remote
+        0x07L, // initial_max_stream_data_uni
+        0x08L, // initial_max_streams_bidi
+        0x09L, // initial_max_streams_uni
+        0x0aL, // ack_delay_exponent
+        0x0bL, // max_ack_delay
+        0x0eL, // active_connection_id_limit
+        0x20L  // max_datagram_frame_size
+    )
 
     /** Wraps an encoded body as a TLS extension: type, length, body. */
     fun asExtension(body: ByteArray): ByteArray {

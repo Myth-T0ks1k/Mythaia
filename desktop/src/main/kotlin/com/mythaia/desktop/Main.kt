@@ -29,6 +29,7 @@ import kotlin.system.exitProcess
 const val APP_VERSION = "1.9.0"
 
 fun main(args: Array<String>) {
+    ensureAsciiSocketTempDir()
     val logger = installLogging()
     val lock = acquireInstanceLock()
     if (lock == null) {
@@ -91,6 +92,28 @@ fun main(args: Array<String>) {
             }
         }
     }
+}
+
+/**
+ * JDK 21 on Windows builds every NIO selector's wake-up pipe from an AF_UNIX
+ * socket whose path lives under the temp directory, and that fails when the
+ * path has non-ASCII characters (a Cyrillic user name, say). The socket
+ * layer opens a selector, so the path is pointed at an ASCII directory
+ * before anything touches NIO.
+ */
+private fun ensureAsciiSocketTempDir() {
+    if (System.getProperty("jdk.net.unixdomain.tmpdir") != null) return
+    val temp = System.getProperty("java.io.tmpdir").orEmpty()
+    if (temp.all { it.code < 128 }) return
+    val candidates = listOf(
+        File(System.getenv("ProgramData") ?: "C:/ProgramData", "Mythaia/tmp"),
+        File(System.getenv("SystemRoot") ?: "C:/Windows", "Temp"),
+        File("C:/gtmp")
+    )
+    val dir = candidates.firstOrNull { d ->
+        d.absolutePath.all { it.code < 128 } && (d.isDirectory || d.mkdirs()) && d.canWrite()
+    } ?: return
+    System.setProperty("jdk.net.unixdomain.tmpdir", dir.absolutePath)
 }
 
 /** Logs to `%APPDATA%\Mythaia\logs\mythaia.log`, rotating at two megabytes. */

@@ -9,11 +9,25 @@ package com.mythaia.vpn
  */
 object NativeBridge {
 
+    /** Why the library did not load, or null when it did. */
+    @Volatile
+    var loadFailure: Throwable? = null
+        private set
+
+    val isLoaded: Boolean get() = loadFailure == null
+
     init {
         // The desktop app names the library by full path (it lives next to
         // the executable, not on java.library.path); Android finds it by name.
-        val explicit = System.getProperty("mythaia.native.library")
-        if (explicit != null) System.load(explicit) else System.loadLibrary("mythaia_native")
+        // A failure is remembered rather than thrown: the Kotlin members here
+        // (X25519, the TLS 1.3 schedule) work without the library, and each
+        // native entry point throws UnsatisfiedLinkError on its own if called.
+        try {
+            val explicit = System.getProperty("mythaia.native.library")
+            if (explicit != null) System.load(explicit) else System.loadLibrary("mythaia_native")
+        } catch (e: UnsatisfiedLinkError) {
+            loadFailure = e
+        }
     }
 
     // Callback interface — implemented by LwipStack to receive lwIP events.
@@ -307,6 +321,10 @@ object NativeBridge {
      */
     @JvmStatic
     external fun nativeQuicSetRemoteParams(handle: Long, params: ByteArray): Int
+
+    /** The local transport parameters, encoded by ngtcp2 for the ClientHello. */
+    @JvmStatic
+    external fun nativeQuicLocalTransportParams(handle: Long): ByteArray?
 
     /**
      * Tells ngtcp2 the TLS handshake finished.

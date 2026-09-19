@@ -95,11 +95,22 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         // NAIVE grants the unidirectional stream credit HTTP/3 needs for the
         // server's control stream, which is what the authentication rides on.
         val tuning = QuicTuning.NAIVE
+        // The link's obfs/obfs-password; a type this build does not speak is
+        // refused here rather than dialled in the clear.
+        val obfuscation = HysteriaObfuscation.make(configuration.obfuscation, configuration.obfuscationPassword)
+        if (obfuscation == null && !configuration.obfuscation.isNullOrEmpty()) {
+            throw ProxyError.ProtocolError("Hysteria: unsupported obfuscation ${configuration.obfuscation}")
+        }
+        val tls = configuration.tls
         val connection = QuicConnection(
             serverName = configuration.serverAddress,
             serverPort = configuration.serverPort.toInt(),
             alpn = listOf(ALPN),
-            tuning = tuning
+            tuning = tuning,
+            fingerprint = tls?.fingerprint ?: com.mythaia.data.model.TlsFingerprint.CHROME_133,
+            tlsServerName = tls?.serverName?.takeIf { it.isNotBlank() } ?: configuration.serverAddress,
+            allowInsecure = tls?.allowInsecure == true,
+            obfuscator = obfuscation?.let { HysteriaObfuscator.of(it) }
         )
         if (!connection.connect()) {
             connection.close()

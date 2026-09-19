@@ -33,14 +33,24 @@ private val logger = MythaiaLogger("Quic")
  * Copyright (C) 2026 NodePassProject.
  */
 class QuicConnection(
+    /** Where the datagrams go: a host name to resolve or an address. */
     private val serverName: String,
     private val serverPort: Int,
     private val alpn: List<String>,
     private val tuning: QuicTuning = QuicTuning.NAIVE,
-    fingerprint: TlsFingerprint = TlsFingerprint.CHROME_133
+    fingerprint: TlsFingerprint = TlsFingerprint.CHROME_133,
+    /** The name in the TLS handshake and on the certificate; the link's `sni`, else [serverName]. */
+    tlsServerName: String = serverName,
+    /** The link's `insecure` flag. */
+    allowInsecure: Boolean = false,
+    /**
+     * Hysteria's packet obfuscation, applied to every datagram in both
+     * directions; null sends QUIC packets as they are.
+     */
+    private val obfuscator: com.mythaia.vpn.protocol.hysteria.HysteriaObfuscator? = null
 ) : NativeBridge.QuicCallback {
 
-    private val tls = QuicTlsHandler(serverName, alpn, tuning, fingerprint)
+    private val tls = QuicTlsHandler(tlsServerName, alpn, tuning, fingerprint, allowInsecure)
 
     /** ngtcp2's handle. Zero before [connect] and after [close]. */
     @Volatile
@@ -126,6 +136,9 @@ class QuicConnection(
             logger.warning("[QUIC] ngtcp2 refused to create the connection")
             return false
         }
+
+        // The hello advertises what ngtcp2 was created with, connection id included.
+        tls.localTransportParameters = NativeBridge.nativeQuicLocalTransportParams(handle)
 
         spawn("quic-read", ::runReader)
         spawn("quic-timer", ::runTimer)
@@ -287,12 +300,13 @@ class QuicConnection(
         }
     }
 
-    /** Puts one datagram on the wire. False when the socket has gone. */
+    /** Puts one datagram on the wire, obfuscated when configured. False when the socket has gone. */
     private fun send(datagram: ByteArray): Boolean {
         val target = endpoint ?: return false
         val current = socket ?: return false
         return try {
-            current.send(DatagramPacket(datagram, datagram.size, target))
+            val wire = obfuscator?.seal(datagram) ?: listOf(datagram)
+            for (piece in wire) current.send(DatagramPacket(piece, piece.size, target))
             true
         } catch (e: Exception) {
             if (running.get()) logger.warning("[QUIC] Send failed: ${e.message}")
@@ -316,7 +330,10 @@ class QuicConnection(
                 break
             }
 
-            val received = buffer.copyOf(packet.length)
+            val raw = buffer.copyOf(packet.length)
+            // An obfuscated datagram that does not open is not ours: noise on
+            // the port, or a piece the obfuscator is still reassembling.
+            val received = if (obfuscator != null) (obfuscator.open(raw) ?: continue) else raw
             val rv = synchronized(engineLock) {
                 if (handle == 0L) return@synchronized 0
                 NativeBridge.nativeQuicConnRead(handle, received, received.size)

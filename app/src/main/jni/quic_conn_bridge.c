@@ -602,8 +602,52 @@ JNIEXPORT jint JNICALL Java_com_mythaia_vpn_NativeBridge_nativeQuicConnRead(
   int rv = ngtcp2_conn_read_pkt(qc->conn, &path, &pi, (const uint8_t *)bytes,
                                 (size_t)length, timestamp_ns());
 
+  if (rv < 0 && rv != NGTCP2_ERR_RETRY && rv != NGTCP2_ERR_DROP_CONN) {
+    /* The peer's CONNECTION_CLOSE, or our own reason for giving up: without
+       this a failed handshake is just "draining" with nothing to go on. */
+    const ngtcp2_ccerr *ce = ngtcp2_conn_get_ccerr(qc->conn);
+    if (ce != NULL) {
+      LOGW("read_pkt %d: close type=%d code=0x%llx frame=0x%llx reason=%.*s", rv,
+           (int)ce->type, (unsigned long long)ce->error_code,
+           (unsigned long long)ce->frame_type, (int)(ce->reasonlen > 200 ? 200 : ce->reasonlen),
+           ce->reason == NULL ? "" : (const char *)ce->reason);
+    } else {
+      LOGW("read_pkt failed: %d", rv);
+    }
+  }
+
   (*env)->ReleaseByteArrayElements(env, packet, bytes, JNI_ABORT);
   return rv;
+}
+
+/*
+ * The local transport parameters as the ClientHello must carry them.
+ *
+ * Encoded by ngtcp2 rather than by Kotlin so the list matches what the
+ * connection was created with and carries what only ngtcp2 knows: the
+ * initial_source_connection_id, which every peer requires (RFC 9000 18.2)
+ * and which a hand-built list left out.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicLocalTransportParams(JNIEnv *env, jclass clazz,
+                                                                 jlong handle) {
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return NULL;
+  }
+  uint8_t buf[1024];
+  ngtcp2_ssize n = ngtcp2_conn_encode_local_transport_params2(qc->conn, buf, sizeof(buf));
+  if (n < 0) {
+    LOGW("encode_local_transport_params failed: %s", ngtcp2_strerror((int)n));
+    return NULL;
+  }
+  jbyteArray out = (*env)->NewByteArray(env, (jsize)n);
+  if (out == NULL) {
+    return NULL;
+  }
+  (*env)->SetByteArrayRegion(env, out, 0, (jsize)n, (const jbyte *)buf);
+  return out;
 }
 
 /*

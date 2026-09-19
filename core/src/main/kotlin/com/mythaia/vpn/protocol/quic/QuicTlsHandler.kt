@@ -36,7 +36,9 @@ class QuicTlsHandler(
     private val serverName: String,
     private val alpn: List<String>,
     private val tuning: QuicTuning,
-    private val fingerprint: TlsFingerprint = TlsFingerprint.CHROME_133
+    private val fingerprint: TlsFingerprint = TlsFingerprint.CHROME_133,
+    /** The link's own `insecure` flag; the global policy is honoured as well. */
+    private val allowInsecure: Boolean = false
 ) {
 
     /** How far the handshake has got. */
@@ -60,6 +62,14 @@ class QuicTlsHandler(
     /** What the server advertised, available after EncryptedExtensions. */
     var peerTransportParameters: List<QuicTuning.TransportParameter> = emptyList()
         private set
+
+    /**
+     * The local transport parameters in wire form, as ngtcp2 encodes them for
+     * the connection. Set before the hello is built; the tuning's own list is
+     * the fallback and lacks the connection id a server insists on.
+     */
+    @Volatile
+    var localTransportParameters: ByteArray? = null
 
     /** The certificate chain the server presented, in wire order. */
     val serverCertificates = ArrayList<ByteArray>()
@@ -113,25 +123,90 @@ class QuicTlsHandler(
         clientHello?.let { return it }
         if (phase != Phase.INITIAL) return null
 
-        val parameters = QuicTransportParameters.encode(tuning.advertisedParameters)
-        val hello = TlsClientHelloBuilder.buildRawClientHello(
-            fingerprint = fingerprint,
-            random = clientRandom,
-            sessionId = sessionId,
-            serverName = serverName,
-            publicKey = publicKey,
-            alpn = alpn,
-            // QUIC has no room for a post-quantum key share in the first
-            // datagram, and the extra flight it would cost is the opposite of
-            // what a low-latency transport is for.
-            omitPQKeyShares = true,
-            extraExtensions = QuicTransportParameters.asExtension(parameters)
+        val parameters = localTransportParameters
+            ?: QuicTransportParameters.encode(tuning.advertisedParameters)
+        val hello = restrictToTls13(
+            TlsClientHelloBuilder.buildRawClientHello(
+                fingerprint = fingerprint,
+                random = clientRandom,
+                sessionId = sessionId,
+                serverName = serverName,
+                publicKey = publicKey,
+                alpn = alpn,
+                // QUIC has no room for a post-quantum key share in the first
+                // datagram, and the extra flight it would cost is the opposite of
+                // what a low-latency transport is for.
+                omitPQKeyShares = true,
+                extraExtensions = QuicTransportParameters.asExtension(parameters)
+            )
         )
 
         transcript += hello
         clientHello = hello
         phase = Phase.HELLO_SENT
         return hello
+    }
+
+    /**
+     * Drops every version but TLS 1.3 (and a GREASE value) from the hello's
+     * `supported_versions`. RFC 9001 §4.2 forbids offering older versions
+     * over QUIC, and Go's TLS (every Hysteria and TUIC server) answers a
+     * browser-shaped list with a `protocol_version` alert. The handshake
+     * header and extensions length are rewritten; a padding extension, if the
+     * fingerprint carries one, is left as it was.
+     */
+    private fun restrictToTls13(hello: ByteArray): ByteArray {
+        fun u16(at: Int) = ((hello[at].toInt() and 0xFF) shl 8) or (hello[at + 1].toInt() and 0xFF)
+        if (hello.size < 4 + 2 + 32 + 1 || hello[0].toInt() != 0x01) return hello
+        var at = 4 + 2 + 32
+        at += 1 + (hello[at].toInt() and 0xFF)            // legacy_session_id
+        if (at + 2 > hello.size) return hello
+        at += 2 + u16(at)                                  // cipher_suites
+        if (at + 1 > hello.size) return hello
+        at += 1 + (hello[at].toInt() and 0xFF)            // legacy_compression_methods
+        if (at + 2 > hello.size) return hello
+        val extensionsLengthAt = at
+        val extensionsEnd = at + 2 + u16(at)
+        if (extensionsEnd > hello.size) return hello
+
+        val out = java.io.ByteArrayOutputStream(hello.size)
+        out.write(hello, 0, extensionsLengthAt + 2)
+        var p = extensionsLengthAt + 2
+        while (p + 4 <= extensionsEnd) {
+            val type = u16(p)
+            val length = u16(p + 2)
+            val bodyStart = p + 4
+            val bodyEnd = bodyStart + length
+            if (bodyEnd > extensionsEnd) return hello
+            if (type == 0x002b && length >= 1) {
+                val versions = ArrayList<Int>()
+                var v = bodyStart + 1
+                while (v + 2 <= bodyEnd) {
+                    val version = u16(v)
+                    val grease = (version and 0x0f0f) == 0x0a0a && (version shr 8) == (version and 0xFF)
+                    if (version == 0x0304 || grease) versions += version
+                    v += 2
+                }
+                if (0x0304 !in versions) versions += 0x0304
+                val newLength = 1 + 2 * versions.size
+                out.write(0x00); out.write(0x2b)
+                out.write(newLength shr 8); out.write(newLength and 0xFF)
+                out.write(2 * versions.size)
+                versions.forEach { out.write(it shr 8); out.write(it and 0xFF) }
+            } else {
+                out.write(hello, p, 4 + length)
+            }
+            p = bodyEnd
+        }
+        val result = out.toByteArray()
+        val newExtensionsLength = result.size - (extensionsLengthAt + 2)
+        result[extensionsLengthAt] = (newExtensionsLength shr 8).toByte()
+        result[extensionsLengthAt + 1] = newExtensionsLength.toByte()
+        val bodyLength = result.size - 4
+        result[1] = (bodyLength shr 16).toByte()
+        result[2] = (bodyLength shr 8).toByte()
+        result[3] = bodyLength.toByte()
+        return result
     }
 
     // MARK: - Inbound
@@ -335,7 +410,7 @@ class QuicTlsHandler(
      * name, the third says the peer actually holds its private key.
      */
     private fun validateCertificate(): Outcome {
-        if (CertificatePolicy.allowInsecure) return Outcome.OK
+        if (allowInsecure || CertificatePolicy.allowInsecure) return Outcome.OK
 
         val chain = try {
             TlsPeerVerifier.parseChain(serverCertificates)

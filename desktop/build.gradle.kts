@@ -54,6 +54,13 @@ tasks.configureEach {
     }
 }
 
+// Tests load the JNI library from the native build output when it is there.
+tasks.withType<Test>().configureEach {
+    val dll = layout.projectDirectory.file("native/out/mythaia_native.dll").asFile
+    if (dll.isFile) systemProperty("mythaia.native.library", dll.absolutePath)
+    testLogging { showStandardStreams = false }
+}
+
 compose.desktop {
     application {
         mainClass = "com.mythaia.desktop.MainKt"
@@ -68,7 +75,8 @@ compose.desktop {
             description = "Mythaia Pro proxy client"
             vendor = "Mythaia"
             copyright = "Mythaia"
-            includeAllModules = true
+            // What jdeps finds plus the JSSE curves for DoH/DoT and JNA's needs.
+            modules("java.instrument", "java.naming", "java.sql", "jdk.unsupported", "jdk.crypto.ec", "java.management")
             appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
 
             windows {

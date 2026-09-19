@@ -71,11 +71,15 @@ class TuicClient(private val configuration: ProxyConfiguration) {
 
         close()
 
+        val tls = configuration.tls
         val connection = QuicConnection(
             serverName = configuration.serverAddress,
             serverPort = configuration.serverPort.toInt(),
             alpn = listOf(ALPN),
-            tuning = QuicTuning.NAIVE
+            tuning = QuicTuning.NAIVE,
+            fingerprint = tls?.fingerprint ?: com.mythaia.data.model.TlsFingerprint.CHROME_133,
+            tlsServerName = tls?.serverName?.takeIf { it.isNotBlank() } ?: configuration.serverAddress,
+            allowInsecure = tls?.allowInsecure == true
         )
         if (!connection.connect()) {
             connection.close()

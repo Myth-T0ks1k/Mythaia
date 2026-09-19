@@ -511,8 +511,21 @@ class TlsRecordConnection private constructor(
         val innerContentType = unwrapped[0].toInt() and 0xFF
         val content = unwrapped.copyOfRange(1, unwrapped.size)
 
-        if (innerContentType == 0x16) return ByteArray(0)
-        return content
+        when (innerContentType) {
+            // Post-handshake messages (tickets, key updates) carry no data.
+            0x16 -> return ByteArray(0)
+            // An alert is never data. close_notify and user_canceled end the
+            // stream quietly (the transport EOF follows); a fatal one is an error.
+            0x15 -> {
+                val level = content.getOrNull(0)?.toInt()?.and(0xFF) ?: 2
+                val description = content.getOrNull(1)?.toInt()?.and(0xFF) ?: 0
+                if (level == 2 && description != 0) {
+                    throw RealityError.HandshakeFailed("TLS alert $description from peer")
+                }
+                return ByteArray(0)
+            }
+            else -> return content
+        }
     }
 
     private fun encryptTls13Record(plaintext: ByteArray, seqNum: Long): ByteArray {
