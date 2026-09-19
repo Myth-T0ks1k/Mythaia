@@ -45,6 +45,15 @@ internal fun percentDecode(s: String): String =
 internal fun parseAlpn(raw: String?): List<String>? =
     raw?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }
 
+/**
+ * The ClientHello fragmentation a link asks for, in either spelling:
+ * `fragment=`/`frg=` (`length,interval,packets[,maxSplit]`) or the FinalMask
+ * document in `fm=`, which says the same per piece.
+ */
+internal fun parseFragmentParams(params: Map<String, String>): FragmentSettings? =
+    (params["fragment"] ?: params["frg"])?.let(FragmentSettings::fromShareLink)
+        ?: params["fm"]?.let(FragmentSettings::fromFinalMask)
+
 /** The spellings of "yes" that share links use for boolean flags. */
 internal fun isTruthy(raw: String?): Boolean =
     raw == "1" || raw.equals("true", ignoreCase = true) || raw.equals("yes", ignoreCase = true)
@@ -96,7 +105,24 @@ enum class TlsFingerprint(val raw: String) {
 
     companion object {
         fun fromRaw(value: String): TlsFingerprint =
-            entries.find { it.raw == value } ?: CHROME_133
+            entries.find { it.raw == value } ?: fromGenericName(value) ?: CHROME_133
+
+        /**
+         * uTLS family names, which is what panels put in `fp=`: `chrome`,
+         * `safari`, `edge`... Each maps to the newest profile of that family.
+         */
+        private fun fromGenericName(value: String): TlsFingerprint? = when (value.trim().lowercase()) {
+            "chrome" -> CHROME_133
+            "firefox" -> FIREFOX_148
+            "safari" -> SAFARI_26
+            "ios" -> IOS_14
+            "edge" -> EDGE_85
+            "android" -> ANDROID_11
+            "qq" -> QQ_11
+            "360" -> BROWSER_360
+            "random", "randomized" -> RANDOM
+            else -> null
+        }
 
         /**
          * Pool used when the user picks "Random". Android-only fingerprints
@@ -177,9 +203,7 @@ data class TlsConfiguration(
             val fp = params["fp"] ?: "chrome_133"
             val minVersion = parseTlsVersion(params["minVersion"])
             val maxVersion = parseTlsVersion(params["maxVersion"])
-            // Hiddify writes `fragment=size,sleep,hellotls`; some generators
-            // shorten the key to `frg`. Both name the same three fields.
-            val fragment = (params["fragment"] ?: params["frg"])?.let(FragmentSettings::fromShareLink)
+            val fragment = parseFragmentParams(params)
             return TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
@@ -465,38 +489,16 @@ data class XHttpConfiguration(
             return try {
                 val json = org.json.JSONObject(extraJson)
 
-                // scMaxEachPostBytes: can be int or {"from":N,"to":N}
-                val scMaxEachPostBytes = json.opt("scMaxEachPostBytes").let { v ->
-                    when (v) {
-                        is org.json.JSONObject -> v.optInt("to", 1_000_000)
-                        is Number -> v.toInt()
-                        else -> 1_000_000
-                    }
-                }
+                // Panels write these as numbers, as "500000", as "100-1000",
+                // or as {"from":N,"to":N}; all four are the same statement.
+                val scMaxEachPostBytes = xrayRange(json.opt("scMaxEachPostBytes"))?.second ?: 1_000_000
+                val scMinPostsIntervalMs = xrayRange(json.opt("scMinPostsIntervalMs"))?.second ?: 30
 
-                // scMinPostsIntervalMs: can be int or {"from":N,"to":N}
-                val scMinPostsIntervalMs = json.opt("scMinPostsIntervalMs").let { v ->
-                    when (v) {
-                        is org.json.JSONObject -> v.optInt("to", 30)
-                        is Number -> v.toInt()
-                        else -> 30
-                    }
-                }
-
-                // xPaddingBytes: can be int or {"from":N,"to":N}
                 var xPaddingFrom = 100
                 var xPaddingTo = 1000
-                json.opt("xPaddingBytes")?.let { v ->
-                    when (v) {
-                        is org.json.JSONObject -> {
-                            xPaddingFrom = v.optInt("from", 100)
-                            xPaddingTo = v.optInt("to", 1000)
-                        }
-                        is Number -> {
-                            xPaddingFrom = v.toInt()
-                            xPaddingTo = v.toInt()
-                        }
-                    }
+                xrayRange(json.opt("xPaddingBytes"))?.let { (from, to) ->
+                    xPaddingFrom = from
+                    xPaddingTo = to
                 }
                 // Also accept flat xPaddingBytesFrom/xPaddingBytesTo keys
                 if (!json.has("xPaddingBytes")) {
@@ -543,6 +545,33 @@ data class XHttpConfiguration(
             } catch (_: Exception) {
                 XHttpConfiguration(host = host, path = path, mode = mode)
             }
+        }
+
+        /**
+         * An Xray Int32Range in any of its spellings — `500`, `"500"`,
+         * `"100-1000"`, `{"from":100,"to":1000}` — as (from, to). Null when
+         * absent or unreadable.
+         */
+        private fun xrayRange(value: Any?): Pair<Int, Int>? = when (value) {
+            null -> null
+            is org.json.JSONObject -> {
+                val to = value.optInt("to", Int.MIN_VALUE)
+                val from = value.optInt("from", to)
+                if (to == Int.MIN_VALUE) null else from to to
+            }
+            is Number -> value.toInt().let { it to it }
+            is String -> {
+                val t = value.trim()
+                val dash = t.indexOf('-', startIndex = 1)
+                if (dash > 0) {
+                    val from = t.substring(0, dash).trim().toIntOrNull()
+                    val to = t.substring(dash + 1).trim().toIntOrNull()
+                    if (from != null && to != null) from to to else null
+                } else {
+                    t.toIntOrNull()?.let { it to it }
+                }
+            }
+            else -> null
         }
 
         private val tokenishChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -1592,7 +1621,8 @@ data class ProxyConfiguration(
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 allowInsecure = isTruthy(params["allowInsecure"]) || isTruthy(params["insecure"]),
-                fingerprint = TlsFingerprint.fromRaw(fp)
+                fingerprint = TlsFingerprint.fromRaw(fp),
+                fragment = parseFragmentParams(params)
             )
 
             return ProxyConfiguration(
@@ -1826,9 +1856,30 @@ data class ProxyConfiguration(
                 // Brutal over BBR, so no default is filled in here.
                 hysteriaUpMbps = params["upmbps"]?.toIntOrNull(),
                 hysteriaDownMbps = params["downmbps"]?.toIntOrNull(),
-                obfuscation = params["obfs"]?.takeIf { it.isNotEmpty() }?.lowercase(),
+                obfuscation = params["obfs"]?.takeIf { it.isNotEmpty() }?.lowercase()
+                    ?: finalMaskSalamander(params["fm"])?.first,
                 obfuscationPassword = params["obfs-password"]?.takeIf { it.isNotEmpty() }
+                    ?: finalMaskSalamander(params["fm"])?.second
             )
+        }
+
+        /**
+         * The Salamander obfuscation a FinalMask `fm=` document carries under
+         * `udp`: `{"udp":[{"type":"salamander","settings":{"password":"…"}}]}`.
+         * Type and password, or null.
+         */
+        private fun finalMaskSalamander(fm: String?): Pair<String, String>? {
+            if (fm.isNullOrBlank()) return null
+            val root = runCatching { org.json.JSONObject(fm) }.getOrNull() ?: return null
+            val udp = root.optJSONArray("udp") ?: return null
+            for (i in 0 until udp.length()) {
+                val mask = udp.optJSONObject(i) ?: continue
+                if (mask.optString("type") != "salamander") continue
+                val password = mask.optJSONObject("settings")?.optString("password")?.takeIf { it.isNotEmpty() }
+                    ?: continue
+                return "salamander" to password
+            }
+            return null
         }
 
         /** `anytls://password@host:port?sni=…&alpn=…&fp=…#name`. TLS is mandatory. */

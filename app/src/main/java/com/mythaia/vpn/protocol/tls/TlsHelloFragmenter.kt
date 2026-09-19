@@ -56,16 +56,34 @@ object TlsHelloFragmenter {
     }
 
     /** The same, with each length drawn from [lengthRange]. */
-    fun split(record: ByteArray, lengthRange: IntRange, random: SecureRandom): List<ByteArray> {
+    fun split(record: ByteArray, lengthRange: IntRange, random: SecureRandom): List<ByteArray> =
+        split(record, listOf(lengthRange), 0, random)
+
+    /**
+     * FinalMask's shape: the n-th piece is drawn from the n-th of
+     * [lengthRanges], the last range serving every piece after it, and with
+     * [maxSplit] > 0 the piece that would be the last allowed takes whatever
+     * remains. `lengths ["3"], maxSplit 2` is therefore "3 bytes, then the
+     * rest" — the classic split — and not a hello cut into 3-byte slivers.
+     */
+    fun split(record: ByteArray, lengthRanges: List<IntRange>, maxSplit: Int, random: SecureRandom): List<ByteArray> {
+        if (lengthRanges.isEmpty()) return listOf(record)
         val payloadCount = maxOf(0, record.size - HEADER_LENGTH)
         val lengths = ArrayList<Int>()
         var covered = 0
+        var index = 0
         while (covered < payloadCount) {
-            val length = nextInRange(random, lengthRange)
+            if (maxSplit > 0 && lengths.size == maxSplit - 1) {
+                lengths.add(payloadCount - covered)
+                break
+            }
+            val range = lengthRanges[minOf(index, lengthRanges.size - 1)]
+            val length = maxOf(1, nextInRange(random, range))
             lengths.add(length)
             covered += length
+            index++
         }
-        return split(record, if (lengths.isEmpty()) listOf(lengthRange.last) else lengths)
+        return split(record, if (lengths.isEmpty()) listOf(lengthRanges.last().last) else lengths)
     }
 
     /**

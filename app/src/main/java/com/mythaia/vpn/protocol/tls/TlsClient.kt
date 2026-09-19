@@ -99,7 +99,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
         // overload) there is no path to hide it from.
         val fragment = configuration.fragment ?: FragmentPolicy.settings
         val pieces = if (fragment.isEnabled) {
-            TlsHelloFragmenter.split(clientHello, fragment.lengthRange, handshakeRandom)
+            TlsHelloFragmenter.split(clientHello, fragment.lengthRanges, fragment.maxSplit, handshakeRandom)
         } else {
             listOf(clientHello)
         }
@@ -119,7 +119,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
         // it and its file descriptor strongly for the life of the process.
         try {
             if (pieces.size > 1) {
-                sendRemainingHelloPieces(socket, pieces, fragment.intervalRange)
+                sendRemainingHelloPieces(socket, pieces, fragment.delayRanges)
             }
             return receiveServerResponse()
         } catch (e: Throwable) {
@@ -138,10 +138,13 @@ class TlsClient(private val configuration: TlsConfiguration) {
     private suspend fun sendRemainingHelloPieces(
         socket: NioSocket,
         pieces: List<ByteArray>,
-        intervalRange: IntRange
+        delayRanges: List<IntRange>
     ) {
         for (index in 1 until pieces.size) {
-            val pause = TlsHelloFragmenter.nextInRange(handshakeRandom, intervalRange)
+            // The pause after piece n comes from the n-th delay range; the
+            // last range serves every later gap, as FinalMask defines it.
+            val range = delayRanges[minOf(index - 1, delayRanges.size - 1)]
+            val pause = TlsHelloFragmenter.nextInRange(handshakeRandom, range)
             if (pause > 0) kotlinx.coroutines.delay(pause.toLong())
             socket.send(pieces[index])
         }
