@@ -208,14 +208,24 @@ fun AppNavigation(viewModel: VpnViewModel) {
     // with its own drill-down, lives inside the sheet; the sub-screens' own
     // back handling takes precedence until they are back at the root.
     if (showSettings) {
-        // Opened by a swipe up, closed only by the arrow or the back gesture:
-        // the sheet refuses to be dragged away so a scroll cannot dismiss it.
+        // A swipe closes the sheet only once it has been dragged past 65% of
+        // the screen; released earlier, it springs back. A scroll inside the
+        // settings can therefore not throw the user out, while a deliberate
+        // pull down still works. The arrow and the back gesture close it too.
+        val screenHeight = LocalWindowInfo.current.containerSize.height.toFloat()
+        var farEnough by androidx.compose.runtime.remember { mutableStateOf(false) }
+        val sheetState = rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            confirmValueChange = { target -> target != SheetValue.Hidden || farEnough }
+        )
+        LaunchedEffect(sheetState) {
+            androidx.compose.runtime.snapshotFlow {
+                runCatching { sheetState.requireOffset() }.getOrDefault(0f)
+            }.collect { offset -> farEnough = screenHeight > 0f && offset > screenHeight * 0.65f }
+        }
         ModalBottomSheet(
             onDismissRequest = { showSettings = false },
-            sheetState = rememberModalBottomSheetState(
-                skipPartiallyExpanded = true,
-                confirmValueChange = { it != SheetValue.Hidden }
-            ),
+            sheetState = sheetState,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.background,
             dragHandle = null

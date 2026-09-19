@@ -679,29 +679,42 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val results = HashMap<UUID, Int>()
-            var liveFailed = false
-            var switchedEarly = false
+            // The server on the wire, and what we know about it so far. Kept
+            // here rather than read back from the service on every result,
+            // because a switch we just asked for takes a moment to land.
+            var liveId: UUID? = MythaiaVpnService.activeConfigId
+            var liveMs: Int? = null
+            var liveFailed = _connectivityOk.value == false
             LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) }, LatencyKind.HTTP)
                 .collect { (id, result) ->
                     _latencyResults.value = _latencyResults.value + (id to result)
                     if (result is LatencyResult.Success) results[id] = result.ms
 
-                    // The server on the wire is dead and this one answers:
-                    // move now rather than after every other server has been
-                    // timed. The end of the round still settles on the best.
-                    val live = MythaiaVpnService.activeConfigId
-                    if (id == live && result !is LatencyResult.Success && result !is LatencyResult.Testing) {
-                        liveFailed = true
+                    if (id == liveId) {
+                        if (result is LatencyResult.Success) { liveMs = result.ms; liveFailed = false }
+                        else if (result !is LatencyResult.Testing) liveFailed = true
                     }
+
+                    // Real-time: as soon as a server proves faster than the one
+                    // on the wire (by the margin), or the wire is dead, move to
+                    // it. Each move raises the bar for the next, so the tunnel
+                    // only ever steps to something better, never sideways.
                     val canSwitch = groupId == _activeGroupId.value && activeIsAuto &&
                         _vpnStatus.value == VpnStatus.CONNECTED
-                    if (canSwitch && !switchedEarly && result is LatencyResult.Success && id != live &&
-                        (liveFailed || live == null || _connectivityOk.value == false)
-                    ) {
-                        configRepository.get(id)?.let { early ->
-                            switchedEarly = true
-                            logger.info("[AutoSelect] Live server is down; moving to ${early.name} early")
-                            switchConfig(early)
+                    if (canSwitch && result is LatencyResult.Success && id != liveId) {
+                        val currentMs = liveMs
+                        val better = liveFailed || liveId == null ||
+                            (currentMs != null && currentMs - result.ms >= AUTO_SWITCH_MARGIN_MS)
+                        if (better) {
+                            configRepository.get(id)?.let { next ->
+                                logger.info("[AutoSelect] ${next.name} at ${result.ms}ms beats the live server; switching")
+                                switchConfig(next)
+                                _autoChoice.value = _autoChoice.value + (groupId to next.id)
+                                recomputeSelection()
+                                liveId = next.id
+                                liveMs = result.ms
+                                liveFailed = false
+                            }
                         }
                     }
                 }
@@ -719,12 +732,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             if (groupId == _activeGroupId.value && activeIsAuto) {
                 recomputeSelection()
                 if (_vpnStatus.value == VpnStatus.CONNECTED) {
-                    // Compared with the server actually on the wire, not with
-                    // the selection: the two differ right after a pin is lifted.
-                    val live = MythaiaVpnService.activeConfigId
-                    val liveMs = live?.let { results[it] }
+                    // Settle on the round's best, compared with whatever ended
+                    // up on the wire (real-time moves included).
+                    val live = liveId ?: MythaiaVpnService.activeConfigId
+                    val liveNow = live?.let { results[it] }
                     val worthIt = live != winner.id &&
-                        (liveMs == null || liveMs - bestEntry.value >= AUTO_SWITCH_MARGIN_MS)
+                        (liveNow == null || liveNow - bestEntry.value >= AUTO_SWITCH_MARGIN_MS)
                     if (worthIt) switchConfig(winner)
                 }
             }

@@ -177,7 +177,9 @@ data class TlsConfiguration(
             val fp = params["fp"] ?: "chrome_133"
             val minVersion = parseTlsVersion(params["minVersion"])
             val maxVersion = parseTlsVersion(params["maxVersion"])
-            val fragment = params["fragment"]?.let(FragmentSettings::fromShareLink)
+            // Hiddify writes `fragment=size,sleep,hellotls`; some generators
+            // shorten the key to `frg`. Both name the same three fields.
+            val fragment = (params["fragment"] ?: params["frg"])?.let(FragmentSettings::fromShareLink)
             return TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
@@ -446,7 +448,11 @@ data class XHttpConfiguration(
             val host = params["host"]?.takeIf { it.isNotEmpty() } ?: serverAddress
             val path = params["path"]?.takeIf { it.isNotEmpty() } ?: "/"
             val mode = XHttpMode.fromRaw(params["mode"] ?: "auto")
-            val extra = params["extra"] ?: ""
+            // Panels differ on how many times they percent-encode the JSON;
+            // parseQueryParams decoded once, so a value still starting with
+            // "%7B" was encoded twice.
+            var extra = params["extra"] ?: ""
+            if (extra.startsWith("%7B", ignoreCase = true)) extra = percentDecode(extra)
             return if (extra.isNotBlank()) {
                 fromExtraJson(host, path, mode, extra)
             } else {

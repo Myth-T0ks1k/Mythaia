@@ -623,7 +623,7 @@ private fun SettingsHill(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(104.dp)
+            .height(112.dp)
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragStart = { dragged = 0f },
@@ -638,7 +638,7 @@ private fun SettingsHill(
         // Geometry in dp so the gear can be placed exactly on the crest:
         // the line runs low across the screen and rises to a crest at 44dp.
         val crestDp = 44.dp
-        val baseDp = 78.dp
+        val baseDp = 66.dp
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val base = baseDp.toPx()
@@ -662,7 +662,7 @@ private fun SettingsHill(
             shadowElevation = 2.dp,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = crestDp - 40.dp)
+                .offset(y = crestDp - 42.dp)
                 .size(40.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -674,13 +674,25 @@ private fun SettingsHill(
                 )
             }
         }
+        // The word fills the band under the wave. Sized in dp, not sp: it is
+        // part of the drawing, so the phone's font-size setting must not
+        // reflow it against the line above.
+        val labelSize = with(density) { 26.dp.toSp() }
         Text(
             text = stringResource(R.string.settings),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = labelSize,
+                lineHeight = labelSize,
+                letterSpacing = with(density) { 0.6.dp.toSp() }
+            ),
             color = labelColor,
+            maxLines = 1,
+            softWrap = false,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = baseDp + 6.dp)
+                .fillMaxWidth()
+                .offset(y = baseDp + 8.dp)
                 .clickable(onClick = onOpen)
         )
     }
