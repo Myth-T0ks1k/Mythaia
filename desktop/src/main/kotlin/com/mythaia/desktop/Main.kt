@@ -4,6 +4,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -38,7 +41,8 @@ fun main(args: Array<String>) {
     val logger = installLogging()
     InstanceLock.lock = acquireInstanceLock()
     if (InstanceLock.lock == null) {
-        // Ask the running instance to show itself, then leave.
+        // Ask the running instance to show itself (and import a link we were given), then leave.
+        args.firstOrNull { DeepLinks.isLink(it) }?.let { runCatching { AppPaths.importRequest.writeText(DeepLinks.extract(it)) } }
         runCatching { AppPaths.showRequest.writeText(System.currentTimeMillis().toString()) }
         logger.info("Another instance is running; asked it to show its window")
         exitProcess(0)
@@ -53,6 +57,8 @@ fun main(args: Array<String>) {
     val startHidden = args.contains("--minimized") || state.settings.value.startMinimized
     state.windowVisible.value = !startHidden
     if (state.settings.value.autoConnect) state.connect()
+    DeepLinks.register()
+    args.firstOrNull { DeepLinks.isLink(it) }?.let { state.addText(DeepLinks.extract(it)) }
 
     application {
         val settings by state.settings.collectAsState()
@@ -99,7 +105,15 @@ fun main(args: Array<String>) {
             visible = visible,
             title = tr("app_name"),
             icon = appIcon,
-            state = windowState
+            state = windowState,
+            onKeyEvent = { event ->
+                if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@Window false
+                when {
+                    event.isCtrlPressed && event.key == androidx.compose.ui.input.key.Key.V && !com.mythaia.desktop.ui.UiFocus.textField.value -> { state.importFromClipboard(); true }
+                    event.key == androidx.compose.ui.input.key.Key.F5 -> { state.pingGroup(state.activeGroupId, com.mythaia.data.network.LatencyKind.HTTP); true }
+                    else -> false
+                }
+            }
         ) {
             androidx.compose.runtime.LaunchedEffect(front, visible) {
                 if (visible && front != 0L) {
@@ -197,6 +211,12 @@ private fun watchShowRequests(state: AppState) {
                     last = file.lastModified()
                     state.windowVisible.value = true
                     state.bringToFront.value = System.currentTimeMillis()
+                    val request = AppPaths.importRequest
+                    if (request.isFile) {
+                        val text = runCatching { request.readText() }.getOrNull()
+                        request.delete()
+                        if (!text.isNullOrBlank()) state.addText(text)
+                    }
                 }
             } catch (_: InterruptedException) {
                 return@Thread
@@ -206,6 +226,42 @@ private fun watchShowRequests(state: AppState) {
     }, "show-request-watch")
     thread.isDaemon = true
     thread.start()
+}
+
+/**
+ * `mythaia://add-proxy?link=…` and bare proxy schemes (`vless://` …), as the
+ * Android app and iOS handle them. Registered per user, pointing at the
+ * installed launcher; a running instance receives the link through the
+ * import request file.
+ */
+private object DeepLinks {
+    private val schemes = listOf("mythaia", "vless", "vmess", "trojan", "ss", "socks5", "hysteria2", "hy2", "anytls", "tuic")
+
+    fun isLink(arg: String): Boolean = schemes.any { arg.startsWith("$it://", ignoreCase = true) }
+
+    /** The proxy link inside a `mythaia://add-proxy?link=` URL, or the argument itself. */
+    fun extract(arg: String): String {
+        if (!arg.startsWith("mythaia://", ignoreCase = true)) return arg
+        val query = arg.substringAfter('?', "")
+        val link = query.split('&').map { it.substringBefore('=') to it.substringAfter('=', "") }
+            .firstOrNull { it.first == "link" || it.first == "url" }?.second
+        return link?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) } ?: arg
+    }
+
+    fun register() {
+        if (!com.mythaia.desktop.engine.SystemProxy.isWindows) return
+        val exe = AppPaths.launcherExe() ?: return
+        runCatching {
+            val key = "Software\\Classes\\mythaia"
+            com.sun.jna.platform.win32.Advapi32Util.registryCreateKey(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key)
+            com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key, "", "URL:Mythaia")
+            com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key, "URL Protocol", "")
+            com.sun.jna.platform.win32.Advapi32Util.registryCreateKey(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, "$key\\shell\\open\\command")
+            com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(
+                com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, "$key\\shell\\open\\command", "", "\"${exe.absolutePath}\" \"%1\""
+            )
+        }
+    }
 }
 
 private fun acquireInstanceLock(): FileLock? = try {

@@ -45,6 +45,12 @@ class DesktopStore {
     fun saveSubscriptions(subscriptions: List<Subscription>) =
         write(AppPaths.subscriptions, json.encodeToString(ListSerializer(Subscription.serializer()), subscriptions))
 
+    fun loadChains(): List<com.mythaia.data.model.ProxyChain> =
+        read(AppPaths.chains, ListSerializer(com.mythaia.data.model.ProxyChain.serializer())) ?: emptyList()
+
+    fun saveChains(chains: List<com.mythaia.data.model.ProxyChain>) =
+        write(AppPaths.chains, json.encodeToString(ListSerializer(com.mythaia.data.model.ProxyChain.serializer()), chains))
+
     fun loadRules(): List<RouteRule> =
         read(AppPaths.rules, ListSerializer(RouteRule.serializer())) ?: emptyList()
 

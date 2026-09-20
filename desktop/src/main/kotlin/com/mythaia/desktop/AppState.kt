@@ -94,6 +94,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private val _rules = MutableStateFlow(store.loadRules())
     val rules: StateFlow<List<RouteRule>> = _rules.asStateFlow()
 
+    private val _chains = MutableStateFlow(store.loadChains())
+    val chains: StateFlow<List<com.mythaia.data.model.ProxyChain>> = _chains.asStateFlow()
+
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
 
@@ -121,6 +124,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     private val _speed = MutableStateFlow(Speed(0, 0))
     val speed: StateFlow<Speed> = _speed.asStateFlow()
+
+    /** True while a text field has focus, so window shortcuts leave typing alone. */
+    val textFieldFocused = MutableStateFlow(false)
 
     /** Set when the window should come to the front (tray "show", second instance). */
     val windowVisible = MutableStateFlow(true)
@@ -182,8 +188,24 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         return _configurations.value.firstOrNull { it.id.toString() == id && groupIdOf(it) == groupId }
     }
 
-    /** The server the group would connect with right now. */
+    /** The chain chosen as outbound, resolved to its exit with the hops before it; null when none or broken. */
+    fun selectedChain(): ProxyConfiguration? {
+        val id = _settings.value.selectedChainId ?: return null
+        val chain = _chains.value.firstOrNull { it.id.toString() == id } ?: return null
+        return resolveChain(chain)
+    }
+
+    fun resolveChain(chain: com.mythaia.data.model.ProxyChain): ProxyConfiguration? {
+        val byId = _configurations.value.associateBy { it.id }
+        val hops = chain.proxyIds.mapNotNull { byId[it] }
+        if (hops.size != chain.proxyIds.size || hops.size < 2) return null
+        if (!nativeAvailable && hops.any { it.outboundProtocol.needsNative() }) return null
+        return hops.last().copy(name = chain.name, chain = hops.dropLast(1))
+    }
+
+    /** The server the group would connect with right now (a selected chain wins). */
     fun effectiveConfig(groupId: String): ProxyConfiguration? {
+        selectedChain()?.let { return it }
         pinned(groupId)?.let { return it }
         val configs = dialable(groupConfigs(groupId))
         if (configs.isEmpty()) return null
@@ -202,22 +224,80 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     fun selectGroup(groupId: String) {
-        if (groupId == activeGroupId) return
-        mutateSettings { it.copy(activeGroupId = groupId) }
+        if (groupId == activeGroupId && _settings.value.selectedChainId == null) return
+        mutateSettings { it.copy(activeGroupId = groupId, selectedChainId = null) }
         reconnectIfNeeded()
     }
 
-    /** Pins one server for its group and makes that group active. */
+    /** Pins one server for its group and makes that group active; a chosen chain is dropped. */
     fun pin(config: ProxyConfiguration) {
         val gid = groupIdOf(config)
-        mutateSettings { it.copy(activeGroupId = gid, groupPins = it.groupPins + (gid to config.id.toString())) }
+        mutateSettings { it.copy(activeGroupId = gid, groupPins = it.groupPins + (gid to config.id.toString()), selectedChainId = null) }
         reconnectIfNeeded()
     }
 
     fun useAuto(groupId: String) {
-        mutateSettings { it.copy(activeGroupId = groupId, groupPins = it.groupPins - groupId) }
+        mutateSettings { it.copy(activeGroupId = groupId, groupPins = it.groupPins - groupId, selectedChainId = null) }
         reconnectIfNeeded()
     }
+
+    // -------------------------------------------------------------- chains
+
+    fun selectChain(chain: com.mythaia.data.model.ProxyChain?) {
+        mutateSettings { it.copy(selectedChainId = chain?.id?.toString()) }
+        reconnectIfNeeded()
+    }
+
+    fun saveChain(chain: com.mythaia.data.model.ProxyChain) {
+        mutateChains { list -> if (list.any { it.id == chain.id }) list.map { if (it.id == chain.id) chain else it } else list + chain }
+        if (_settings.value.selectedChainId == chain.id.toString()) reconnectIfNeeded()
+    }
+
+    fun deleteChain(id: UUID) {
+        mutateChains { list -> list.filterNot { it.id == id } }
+        if (_settings.value.selectedChainId == id.toString()) {
+            mutateSettings { it.copy(selectedChainId = null) }
+            reconnectIfNeeded()
+        }
+    }
+
+    private fun mutateChains(transform: (List<com.mythaia.data.model.ProxyChain>) -> List<com.mythaia.data.model.ProxyChain>) {
+        synchronized(stateLock) {
+            val next = transform(_chains.value)
+            _chains.value = next
+            store.saveChains(next)
+        }
+    }
+
+    // ----------------------------------------------------------- clipboard
+
+    /** Imports whatever the clipboard holds: links, JSON or a subscription URL. */
+    fun importFromClipboard() {
+        val text = runCatching {
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor) as? String
+        }.getOrNull()
+        if (text.isNullOrBlank()) { notify(tr("clipboard_empty")); return }
+        addText(text)
+    }
+
+    /** Reads every QR code on the screens and imports what they say. */
+    fun importFromScreen() {
+        scope.launch {
+            val codes = runCatching { com.mythaia.desktop.util.Qr.scanScreens() }.getOrDefault(emptyList())
+            if (codes.isEmpty()) notify(tr("no_qr_found")) else addText(codes.joinToString("\n"))
+        }
+    }
+
+    fun copyToClipboard(text: String) {
+        runCatching {
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(text), null)
+        }
+        notify(tr("copied"))
+    }
+
+    /** Links of [configs], one per line, for a subscription-style share. */
+    fun linksOf(configs: List<ProxyConfiguration>): String =
+        configs.mapNotNull { runCatching { it.toUrl() }.getOrNull() }.joinToString("\n")
 
     private fun reconnectIfNeeded() {
         if (!engine.isRunning) return
@@ -227,12 +307,14 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private fun pruneSelection() {
         val ids = _configurations.value.map { it.id.toString() }.toSet()
         val groupIds = groups().map { it.id }.toSet()
+        val chainIds = _chains.value.map { it.id.toString() }.toSet()
         mutateSettings { s ->
             val pins = s.groupPins.filterValues { it in ids }
             val choices = s.autoChoices.filterValues { it in ids }
             val active = if (s.activeGroupId in groupIds) s.activeGroupId else DEFAULT_GROUP
-            if (pins == s.groupPins && choices == s.autoChoices && active == s.activeGroupId) s
-            else s.copy(groupPins = pins, autoChoices = choices, activeGroupId = active)
+            val chain = s.selectedChainId?.takeIf { it in chainIds }
+            if (pins == s.groupPins && choices == s.autoChoices && active == s.activeGroupId && chain == s.selectedChainId) s
+            else s.copy(groupPins = pins, autoChoices = choices, activeGroupId = active, selectedChainId = chain)
         }
     }
 
@@ -316,7 +398,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private fun restartBackgroundJobs(groupId: String) {
         autoJob?.cancel()
         probeJob?.cancel()
-        autoJob = if (isAuto(groupId)) scope.launch { autoLoop(groupId) } else null
+        autoJob = if (isAuto(groupId) && _settings.value.selectedChainId == null) scope.launch { autoLoop(groupId) } else null
         probeJob = scope.launch { probeLoop() }
     }
 

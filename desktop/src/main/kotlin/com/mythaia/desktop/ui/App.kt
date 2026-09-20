@@ -58,16 +58,19 @@ fun App(state: AppState) {
     val message by state.message.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            NavRail(state, screen) { screen = it }
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                when (screen) {
-                    Screen.HOME -> HomeScreen(state, onOpenProxies = { screen = Screen.PROXIES })
-                    Screen.PROXIES -> ProxiesScreen(state)
-                    Screen.SETTINGS -> SettingsScreen(state)
-                    Screen.LOGS -> LogsScreen(state)
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                NavRail(state, screen) { screen = it }
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    when (screen) {
+                        Screen.HOME -> HomeScreen(state, onOpenProxies = { screen = Screen.PROXIES })
+                        Screen.PROXIES -> ProxiesScreen(state)
+                        Screen.SETTINGS -> SettingsScreen(state)
+                        Screen.LOGS -> LogsScreen(state)
+                    }
                 }
             }
+            StatusBar(state)
         }
         AnimatedVisibility(
             visible = message != null,
@@ -88,6 +91,51 @@ fun App(state: AppState) {
                 )
             }
         }
+    }
+}
+
+/** The v2rayN-style strip along the bottom: state, live server, speed, ports. */
+@Composable
+private fun StatusBar(state: AppState) {
+    val connection by state.connection.collectAsState()
+    val speed by state.speed.collectAsState()
+    val settings by state.settings.collectAsState()
+    val connectivityOk by state.connectivityOk.collectAsState()
+    val live = connection.configuration
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val dotColor = when {
+            connection is ConnectionState.Connected && connectivityOk -> Azure
+            connection is ConnectionState.Connected -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.outline
+        }
+        Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(dotColor))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            live?.let { "${it.name} · ${it.outboundProtocol.displayName}" } ?: tr("disconnected"),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            "↑ ${formatBytes(speed.up)}/s   ↓ ${formatBytes(speed.down)}/s",
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(18.dp))
+        Text(
+            (if (settings.tunnelMode == "tun") tr("status_mode_tun") else tr("status_mode_proxy")) +
+                "  ·  " + tr("local_ports", settings.socksPort, settings.httpPort) +
+                "  ·  " + (if (settings.isGlobal) tr("mode_global") else tr("mode_rule")),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

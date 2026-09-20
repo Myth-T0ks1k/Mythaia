@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -188,6 +189,11 @@ fun wingTextFieldColors(): TextFieldColors = OutlinedTextFieldDefaults.colors(
 
 val FieldShape = RoundedCornerShape(16.dp)
 
+/** Whether a text field has keyboard focus, so window-level shortcuts stay out of the way of typing. */
+object UiFocus {
+    val textField = kotlinx.coroutines.flow.MutableStateFlow(false)
+}
+
 /** A single-line field in the Wing shape. */
 @Composable
 fun WingField(
@@ -205,7 +211,7 @@ fun WingField(
         onValueChange = onValueChange,
         label = { Text(label) },
         placeholder = placeholder?.let { { Text(it) } },
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { UiFocus.textField.value = it.isFocused },
         singleLine = singleLine,
         minLines = minLines,
         enabled = enabled,
@@ -261,6 +267,11 @@ fun formatDuration(ms: Long): String {
     val m = (total % 3600) / 60
     val s = total % 60
     return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
+}
+
+fun formatDateTime(epochMillis: Long): String {
+    val date = java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault())
+    return date.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"))
 }
 
 fun formatDate(epochMillis: Long): String {

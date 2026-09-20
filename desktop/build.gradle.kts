@@ -35,6 +35,8 @@ dependencies {
     implementation(libs.json)
     implementation(libs.jna)
     implementation(libs.jna.platform)
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.javase)
 
     testImplementation(libs.junit)
 }
