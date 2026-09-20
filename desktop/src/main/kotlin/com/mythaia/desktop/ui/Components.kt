@@ -263,7 +263,7 @@ fun formatDuration(ms: Long): String {
     return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
 }
 
-fun formatDate(epochSeconds: Long): String {
-    val date = java.time.Instant.ofEpochSecond(epochSeconds).atZone(java.time.ZoneId.systemDefault())
+fun formatDate(epochMillis: Long): String {
+    val date = java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault())
     return date.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy"))
 }

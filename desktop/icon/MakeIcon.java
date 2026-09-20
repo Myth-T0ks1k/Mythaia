@@ -57,9 +57,24 @@ public class MakeIcon {
         }
         Files.write(new File(res, "mythaia_256.png").toPath(), render(256, true));
         Files.write(new File(res, "mythaia_tray.png").toPath(), render(64, true));
+        Files.write(new File(res, "mythaia_tray_off.png").toPath(), renderTile(64, new Color(0x4E5568), new Color(0x2F3646)));
         Files.write(new File(res, "mythaia_mark_paper.png").toPath(), renderMark(256, PAPER));
         Files.write(new File(res, "mythaia_mark_azure.png").toPath(), renderMark(256, AZURE));
         System.out.println("icons written");
+    }
+
+    /** The mark on a tile of the given colours (the tray's "off" state is slate). */
+    static byte[] renderTile(int size, Color from, Color to) throws Exception {
+        BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        float radius = size * 0.22f;
+        g.setPaint(new java.awt.GradientPaint(0, 0, from, size, size, to));
+        g.fill(new RoundRectangle2D.Float(0, 0, size, size, radius, radius));
+        drawMark(g, size, size * 0.14f, PAPER);
+        g.dispose();
+        return png(img);
     }
 
     /** The mark on a rounded azure tile. */

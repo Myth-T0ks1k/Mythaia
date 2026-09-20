@@ -3,13 +3,10 @@ package com.mythaia.vpn.protocol.trojan
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.ProxyError
 import com.mythaia.data.model.TlsConfiguration
-import com.mythaia.vpn.protocol.TunneledTransport
-import com.mythaia.vpn.protocol.tls.TlsClient
+import com.mythaia.vpn.protocol.StreamTransports
 import com.mythaia.vpn.protocol.tls.TlsError
-import com.mythaia.vpn.protocol.tls.TlsRecordConnection
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.util.MythaiaLogger
-import com.mythaia.vpn.util.NioSocket
 import kotlinx.coroutines.delay
 
 private val logger = MythaiaLogger("TrojanClient")
@@ -41,8 +38,8 @@ class TrojanClient(
         val password = requirePassword()
         val tlsConfig = requireTls()
 
-        val tlsConn = connectTls(tlsConfig)
-        val trojan = TrojanConnection(tlsConn, password, destinationHost, destinationPort)
+        val opened = connectTransport(tlsConfig)
+        val trojan = TrojanConnection(opened.transport, opened.tlsVersion, password, destinationHost, destinationPort)
         if (initialData != null && initialData.isNotEmpty()) {
             trojan.send(initialData)
         }
@@ -56,8 +53,8 @@ class TrojanClient(
         val password = requirePassword()
         val tlsConfig = requireTls()
 
-        val tlsConn = connectTls(tlsConfig)
-        return TrojanUdpConnection(tlsConn, password, destinationHost, destinationPort)
+        val opened = connectTransport(tlsConfig)
+        return TrojanUdpConnection(opened.transport, opened.tlsVersion, password, destinationHost, destinationPort)
     }
 
     private fun requirePassword(): String {
@@ -78,21 +75,16 @@ class TrojanClient(
      * chained dials bubble the first failure up so the enclosing chain driver
      * can rebuild the upstream tunnel.
      */
-    private suspend fun connectTls(tlsConfig: TlsConfiguration): TlsRecordConnection {
+    private suspend fun connectTransport(tlsConfig: TlsConfiguration): StreamTransports.Opened {
         if (tunnel != null) {
-            val tlsClient = TlsClient(tlsConfig)
-            return tlsClient.connect(TunneledTransport(tunnel))
+            return StreamTransports.open(configuration, tlsConfig, tunnel)
         }
 
         var lastError: Exception? = null
         for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
             if (attempt > 0) delay(RETRY_BASE_DELAY_MS * attempt)
             try {
-                val tlsClient = TlsClient(tlsConfig)
-                return tlsClient.connect(
-                    configuration.serverAddress,
-                    configuration.serverPort.toInt()
-                )
+                return StreamTransports.open(configuration, tlsConfig, null)
             } catch (e: Exception) {
                 if (e is TlsError.CertificateValidationFailed) throw e
                 logger.debug("Trojan TLS attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")

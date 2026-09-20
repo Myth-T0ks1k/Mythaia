@@ -2,7 +2,7 @@ package com.mythaia.vpn.protocol.trojan
 
 import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
-import com.mythaia.vpn.protocol.tls.TlsRecordConnection
+import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.MythaiaLogger
 
 private val logger = MythaiaLogger("Trojan-UDP")
@@ -16,7 +16,8 @@ private val logger = MythaiaLogger("Trojan-UDP")
  * silently dropping the per-packet header.
  */
 class TrojanUdpConnection(
-    private val tlsConnection: TlsRecordConnection,
+    private val tlsConnection: Transport,
+    private val tlsVersion: TlsVersion?,
     password: String,
     private val dstHost: String,
     private val dstPort: Int
@@ -30,7 +31,7 @@ class TrojanUdpConnection(
 
     override val isConnected: Boolean get() = true
     override val outerTlsVersion: TlsVersion?
-        get() = if (tlsConnection.isTls13) TlsVersion.TLS13 else TlsVersion.TLS12
+        get() = tlsVersion
 
     override suspend fun sendRaw(data: ByteArray) {
         tlsConnection.send(frame(data))
@@ -48,7 +49,7 @@ class TrojanUdpConnection(
 
     override fun cancel() {
         synchronized(lock) { receiveBuffer = ByteArray(0) }
-        tlsConnection.cancel()
+        tlsConnection.forceCancel()
     }
 
     /** Prepends the one-shot request header (first call only) to a framed UDP packet. */

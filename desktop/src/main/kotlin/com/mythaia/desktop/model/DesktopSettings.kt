@@ -44,6 +44,9 @@ data class DesktopSettings(
     /** `system`, `light` or `dark`. */
     val theme: String = "system",
 
+    /** Hours between automatic subscription refreshes; 0 turns them off. */
+    val subscriptionUpdateHours: Int = 12,
+
     val windowWidth: Int = 1120,
     val windowHeight: Int = 740
 ) {

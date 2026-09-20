@@ -5,7 +5,7 @@ import com.mythaia.data.model.ProxyError
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.protocol.TunneledTransport
-import com.mythaia.vpn.protocol.tls.TlsClient
+import com.mythaia.vpn.protocol.StreamTransports
 import com.mythaia.vpn.protocol.tls.TlsError
 import com.mythaia.vpn.protocol.tls.TlsRecordTransport
 import com.mythaia.vpn.protocol.websocket.WebSocketConnection
@@ -92,58 +92,7 @@ class VmessClient(
 
     /** The byte pipe the VMess stream runs on, per the configured transport. */
     private suspend fun openTransport(): Transport {
-        val useTls = configuration.security == "tls" && configuration.tls != null
-
-        return when (configuration.transport) {
-            "ws" -> {
-                val wsConfig = configuration.websocket
-                    ?: throw ProxyError.ConnectionFailed("VMess: ws transport with no WebSocket configuration")
-                val inner = openByteStream(useTls)
-                try {
-                    val ws = WebSocketConnection(transport = inner, configuration = wsConfig)
-                    ws.performUpgrade()
-                    WebSocketTransport(ws)
-                } catch (e: Exception) {
-                    // The upgrade can fail after the socket is connected — a 503
-                    // from a CDN, say — and the caller never sees this inner
-                    // stream, so nothing else would close it.
-                    runCatching { inner.forceCancel() }
-                    throw e
-                }
-            }
-            "tcp" -> openByteStream(useTls)
-            else -> throw ProxyError.ConnectionFailed(
-                "VMess: ${configuration.transport} transport is not supported yet"
-            )
-        }
+        val tls = if (configuration.security == "tls") configuration.tls else null
+        return StreamTransports.open(configuration, tls, tunnel).transport
     }
-
-    /** A plain or TLS-wrapped stream to the server. */
-    private suspend fun openByteStream(useTls: Boolean): Transport {
-        if (useTls) {
-            val tlsConfig = configuration.tls
-                ?: throw ProxyError.ConnectionFailed("VMess: TLS selected with no TLS configuration")
-            val client = TlsClient(tlsConfig)
-            val tls = if (tunnel != null) {
-                client.connect(TunneledTransport(tunnel))
-            } else {
-                client.connect(configuration.serverAddress, configuration.serverPort.toInt())
-            }
-            return TlsRecordTransport(tls)
-        }
-
-        if (tunnel != null) return TunneledTransport(tunnel)
-
-        val socket = NioSocket()
-        socket.connect(configuration.serverAddress, configuration.serverPort.toInt())
-        return socket
-    }
-}
-
-/** Adapts a [WebSocketConnection] to [Transport]. */
-private class WebSocketTransport(private val ws: WebSocketConnection) : Transport {
-    override suspend fun send(data: ByteArray) = ws.send(data)
-    override fun sendAsync(data: ByteArray) = ws.sendAsync(data)
-    override suspend fun receive(): ByteArray? = ws.receive()
-    override fun forceCancel() = ws.cancel()
 }

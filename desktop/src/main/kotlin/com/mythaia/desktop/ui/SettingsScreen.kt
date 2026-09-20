@@ -71,6 +71,13 @@ fun SettingsScreen(state: AppState) {
                 }
                 SwitchRow(tr("allow_lan"), settings.allowLan) { v -> state.updateSettings { it.copy(allowLan = v) } }
                 SwitchRow(tr("auto_connect"), settings.autoConnect) { v -> state.updateSettings { it.copy(autoConnect = v) } }
+                var hours by remember(settings.subscriptionUpdateHours) { mutableStateOf(settings.subscriptionUpdateHours.toString()) }
+                Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    WingField(hours, { hours = it }, tr("subscription_update_hours"), modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        hours.toIntOrNull()?.takeIf { it in 0..720 }?.let { h -> state.updateSettings { it.copy(subscriptionUpdateHours = h) } }
+                    }) { Text(tr("save")) }
+                }
             }
 
             Section(tr("settings_system")) {
@@ -104,7 +111,7 @@ fun SettingsScreen(state: AppState) {
                         dialog.isVisible = true
                         val file = dialog.file?.let { File(dialog.directory, it) }
                         if (file != null && file.isFile) {
-                            geoLoaded = state.importGeoIp(file)
+                            state.importGeoIp(file) { geoLoaded = it }
                         }
                     }) { Text(tr("geoip_import")) }
                     if (geoLoaded) TextButton(onClick = { state.clearGeoIp(); geoLoaded = false }) { Text(tr("geoip_clear")) }
@@ -121,9 +128,9 @@ fun SettingsScreen(state: AppState) {
                 var maxI by remember(settings.fragmentMaxInterval) { mutableStateOf(settings.fragmentMaxInterval.toString()) }
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     WingField(minL, { minL = it }, tr("fragment_length"), modifier = Modifier.weight(1f))
-                    WingField(maxL, { maxL = it }, "max", modifier = Modifier.weight(1f))
+                    WingField(maxL, { maxL = it }, tr("max"), modifier = Modifier.weight(1f))
                     WingField(minI, { minI = it }, tr("fragment_interval"), modifier = Modifier.weight(1f))
-                    WingField(maxI, { maxI = it }, "max", modifier = Modifier.weight(1f))
+                    WingField(maxI, { maxI = it }, tr("max"), modifier = Modifier.weight(1f))
                     TextButton(onClick = {
                         val a = minL.toIntOrNull(); val b = maxL.toIntOrNull(); val c = minI.toIntOrNull(); val d = maxI.toIntOrNull()
                         if (a != null && b != null && c != null && d != null && a >= 1 && b >= a && c >= 0 && d >= c) {

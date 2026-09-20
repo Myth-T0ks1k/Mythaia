@@ -28,12 +28,19 @@ import kotlin.system.exitProcess
 
 const val APP_VERSION = "1.9.0"
 
+/** Held for the life of the process; a local would be collected and the lock released. */
+private object InstanceLock {
+    var lock: FileLock? = null
+}
+
 fun main(args: Array<String>) {
     ensureAsciiSocketTempDir()
     val logger = installLogging()
-    val lock = acquireInstanceLock()
-    if (lock == null) {
-        logger.info("Another instance is running; exiting")
+    InstanceLock.lock = acquireInstanceLock()
+    if (InstanceLock.lock == null) {
+        // Ask the running instance to show itself, then leave.
+        runCatching { AppPaths.showRequest.writeText(System.currentTimeMillis().toString()) }
+        logger.info("Another instance is running; asked it to show its window")
         exitProcess(0)
     }
 
@@ -42,6 +49,7 @@ fun main(args: Array<String>) {
 
     val state = AppState(DesktopStore(), nativeAvailable)
     Runtime.getRuntime().addShutdownHook(Thread { runCatching { state.shutdown() } })
+    watchShowRequests(state)
     val startHidden = args.contains("--minimized") || state.settings.value.startMinimized
     state.windowVisible.value = !startHidden
     if (state.settings.value.autoConnect) state.connect()
@@ -58,7 +66,10 @@ fun main(args: Array<String>) {
         S.lang
         val windowState = rememberWindowState(size = DpSize(settings.windowWidth.dp, settings.windowHeight.dp))
         val appIcon = painterResource("icon/mythaia_256.png")
-        val trayIcon = painterResource("icon/mythaia_tray.png")
+        val trayOn = painterResource("icon/mythaia_tray.png")
+        val trayOff = painterResource("icon/mythaia_tray_off.png")
+        val trayIcon = if (connection is ConnectionState.Connected) trayOn else trayOff
+        val front by state.bringToFront.collectAsState()
 
         val exit = {
             state.shutdown()
@@ -81,12 +92,21 @@ fun main(args: Array<String>) {
         )
 
         Window(
-            onCloseRequest = { if (settings.closeToTray) state.windowVisible.value = false else exit() },
+            onCloseRequest = {
+                state.rememberWindowSize(windowState.size.width.value.toInt(), windowState.size.height.value.toInt())
+                if (settings.closeToTray) state.windowVisible.value = false else exit()
+            },
             visible = visible,
             title = tr("app_name"),
             icon = appIcon,
             state = windowState
         ) {
+            androidx.compose.runtime.LaunchedEffect(front, visible) {
+                if (visible && front != 0L) {
+                    window.toFront()
+                    window.requestFocus()
+                }
+            }
             MythaiaTheme(dark = dark) {
                 App(state)
             }
@@ -163,6 +183,29 @@ private fun loadNativeLibrary(logger: MythaiaLogger): Boolean {
         logger.error("Native library failed to load: ${e.message}")
         false
     }
+}
+
+/** A second instance writes a file; the running one shows its window. */
+private fun watchShowRequests(state: AppState) {
+    val thread = Thread({
+        var last = AppPaths.showRequest.takeIf { it.isFile }?.lastModified() ?: 0L
+        while (true) {
+            try {
+                Thread.sleep(1000)
+                val file = AppPaths.showRequest
+                if (file.isFile && file.lastModified() > last) {
+                    last = file.lastModified()
+                    state.windowVisible.value = true
+                    state.bringToFront.value = System.currentTimeMillis()
+                }
+            } catch (_: InterruptedException) {
+                return@Thread
+            } catch (_: Exception) {
+            }
+        }
+    }, "show-request-watch")
+    thread.isDaemon = true
+    thread.start()
 }
 
 private fun acquireInstanceLock(): FileLock? = try {

@@ -2,7 +2,7 @@ package com.mythaia.vpn.protocol.trojan
 
 import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
-import com.mythaia.vpn.protocol.tls.TlsRecordConnection
+import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.MythaiaLogger
 
 private val logger = MythaiaLogger("Trojan")
@@ -16,7 +16,8 @@ private val logger = MythaiaLogger("Trojan")
  * without any framing of their own.
  */
 class TrojanConnection(
-    private val tlsConnection: TlsRecordConnection,
+    private val tlsConnection: Transport,
+    private val tlsVersion: TlsVersion?,
     password: String,
     destinationHost: String,
     destinationPort: Int
@@ -32,7 +33,7 @@ class TrojanConnection(
 
     override val isConnected: Boolean get() = true
     override val outerTlsVersion: TlsVersion?
-        get() = if (tlsConnection.isTls13) TlsVersion.TLS13 else TlsVersion.TLS12
+        get() = tlsVersion
 
     override suspend fun sendRaw(data: ByteArray) {
         val payload = consumeHeader()?.let { it + data } ?: data
@@ -50,7 +51,7 @@ class TrojanConnection(
 
     override suspend fun receiveRaw(): ByteArray? = tlsConnection.receive()
 
-    override fun cancel() = tlsConnection.cancel()
+    override fun cancel() = tlsConnection.forceCancel()
 
     /** Returns the request header on the first call and `null` thereafter. */
     private fun consumeHeader(): ByteArray? = synchronized(headerLock) {

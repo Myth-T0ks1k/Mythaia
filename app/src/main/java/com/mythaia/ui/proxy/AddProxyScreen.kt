@@ -179,6 +179,18 @@ fun AddProxyScreen(
     fun importFromString(string: String, fromQr: Boolean) {
         val trimmed = string.trim()
 
+        // Xray / v2ray JSON: a whole config or one outbound. Every proxy
+        // outbound in it is imported.
+        if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(trimmed)) {
+            try {
+                com.mythaia.data.network.XrayJsonImporter.parse(trimmed).forEach { onImport(it) }
+            } catch (e: Exception) {
+                linkErrorMessage = e.message ?: context.getString(R.string.invalid_url)
+                showLinkError = true
+            }
+            return
+        }
+
         // A WireGuard peer hands out a wg-quick INI, not a link, so a paste is
         // recognised by its shape before any scheme matching happens.
         if (ProxyConfiguration.looksLikeWireGuardConfig(trimmed)) {

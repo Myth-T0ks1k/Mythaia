@@ -972,10 +972,25 @@ data class ProxyConfiguration(
         json.put("aid", "0")
         json.put("scy", vmessSecurity ?: "auto")
         json.put("net", transport)
-        json.put("type", "none")
+        json.put("type", if (grpc?.multiMode == true) "multi" else "none")
         websocket?.let {
             json.put("path", it.path)
             json.put("host", it.host)
+        }
+        httpUpgrade?.let {
+            json.put("path", it.path)
+            json.put("host", it.host)
+        }
+        grpc?.let {
+            json.put("path", it.serviceName)
+            if (it.authority.isNotEmpty()) json.put("authority", it.authority)
+        }
+        xhttp?.let {
+            json.put("path", it.path)
+            json.put("host", it.host)
+            json.put("mode", it.mode.raw)
+            val extra = it.toExtraJson()
+            if (extra.isNotBlank()) json.put("extra", extra)
         }
         tls?.let {
             json.put("tls", "tls")
@@ -1164,6 +1179,11 @@ data class ProxyConfiguration(
             }
             if (tls.allowInsecure) params.add("allowInsecure=1")
             tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
+            tls.fragment?.let { params.add("fragment=${urlEncode(it.toShareLinkValue())}") }
+        }
+        if (transport != "tcp") {
+            params.add("type=$transport")
+            appendTransportParams(params)
         }
         val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
         val fragment = urlEncode(name)
@@ -1607,11 +1627,11 @@ data class ProxyConfiguration(
                 ?: params["peer"]?.takeIf { it.isNotEmpty() }
                 ?: host
 
-            // Only plain TCP is dialled; importing a ws/grpc Trojan as TCP
-            // would produce a server that can never connect.
             val type = params["type"]?.takeIf { it.isNotEmpty() } ?: "tcp"
-            if (type != "tcp") {
-                throw ProxyError.InvalidUrl("trojan: $type transport is not supported")
+            val transport = when (type) {
+                "tcp", "ws", "httpupgrade", "grpc", "xhttp" -> type
+                "splithttp" -> "xhttp"
+                else -> throw ProxyError.InvalidUrl("trojan: $type transport is not supported")
             }
 
             val alpn = parseAlpn(params["alpn"])
@@ -1631,9 +1651,13 @@ data class ProxyConfiguration(
                 serverPort = port,
                 uuid = UUID.randomUUID(), // placeholder, not used for Trojan
                 encryption = "none",
-                transport = "tcp",
+                transport = transport,
                 security = "tls",
                 tls = tls,
+                websocket = if (transport == "ws") WebSocketConfiguration.parse(params, host) else null,
+                httpUpgrade = if (transport == "httpupgrade") HttpUpgradeConfiguration.parse(params, host) else null,
+                xhttp = if (transport == "xhttp") XHttpConfiguration.parse(params + ("host" to (params["host"] ?: sni)), host) else null,
+                grpc = if (transport == "grpc") com.mythaia.vpn.protocol.grpc.GrpcConfiguration.parse(params) else null,
                 outboundProtocol = OutboundProtocol.TROJAN,
                 trojanPassword = password,
                 trojanTls = tls
@@ -1744,6 +1768,9 @@ data class ProxyConfiguration(
             val transport = when (network) {
                 "ws" -> "ws"
                 "tcp" -> "tcp"
+                "httpupgrade" -> "httpupgrade"
+                "grpc", "gun" -> "grpc"
+                "xhttp", "splithttp" -> "xhttp"
                 else -> throw ProxyError.InvalidUrl("vmess: $network transport is not supported yet")
             }
             // "type" is the header obfuscation (http camouflage etc.). Nothing
@@ -1785,6 +1812,28 @@ data class ProxyConfiguration(
             } else {
                 null
             }
+            val httpUpgrade = if (transport == "httpupgrade") {
+                HttpUpgradeConfiguration(
+                    host = json.optString("host").takeIf { it.isNotEmpty() } ?: host,
+                    path = json.optString("path").ifEmpty { "/" }
+                )
+            } else null
+            // v2rayN puts the service name in `path` and the mode in `type`.
+            val grpc = if (transport == "grpc") {
+                com.mythaia.vpn.protocol.grpc.GrpcConfiguration(
+                    serviceName = json.optString("path"),
+                    authority = json.optString("authority"),
+                    multiMode = json.optString("type") == "multi" || json.optString("mode") == "multi"
+                )
+            } else null
+            val xhttp = if (transport == "xhttp") {
+                XHttpConfiguration.fromExtraJson(
+                    host = json.optString("host").takeIf { it.isNotEmpty() } ?: sni,
+                    path = json.optString("path").ifEmpty { "/" },
+                    mode = XHttpMode.fromRaw(json.optString("mode").ifEmpty { "auto" }),
+                    extraJson = json.optString("extra")
+                )
+            } else null
 
             return ProxyConfiguration(
                 name = json.optString("ps").takeIf { it.isNotEmpty() } ?: host,
@@ -1796,6 +1845,9 @@ data class ProxyConfiguration(
                 security = if (useTls) "tls" else "none",
                 tls = tls,
                 websocket = websocket,
+                httpUpgrade = httpUpgrade,
+                grpc = grpc,
+                xhttp = xhttp,
                 outboundProtocol = OutboundProtocol.VMESS,
                 vmessSecurity = json.optString("scy").takeIf { it.isNotEmpty() && it != "auto" }
             )

@@ -1,6 +1,7 @@
 package com.mythaia.desktop
 
 import com.mythaia.data.model.FragmentSettings
+import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.network.LatencyKind
@@ -9,7 +10,6 @@ import com.mythaia.data.network.LatencyTester
 import com.mythaia.data.network.SubscriptionFetcher
 import com.mythaia.desktop.engine.LaunchAtLogin
 import com.mythaia.desktop.engine.ProxyEngine
-import com.mythaia.desktop.engine.SystemProxy
 import com.mythaia.desktop.engine.TrafficStats
 import com.mythaia.desktop.model.DesktopSettings
 import com.mythaia.desktop.model.RouteRule
@@ -32,8 +32,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
 
@@ -60,9 +62,16 @@ data class LogLine(val time: Long, val level: MythaiaLogger.Level, val text: Str
 /** A server list: the manual servers, or one subscription. */
 data class ServerGroup(val id: String, val name: String, val subscription: Subscription?)
 
+/** Bytes per second in each direction, sampled once a second. */
+data class Speed(val up: Long, val down: Long)
+
 /**
  * The application state: the lists, the settings, the connection and Auto.
  * Compose reads the flows; every mutation goes through here and is saved.
+ *
+ * The persisted lists are changed only under [stateLock] with a
+ * read-modify-write, so two subscription refreshes, or a refresh and a
+ * delete, cannot lose each other's work.
  */
 class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private val logger = MythaiaLogger("App")
@@ -70,6 +79,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     val stats = TrafficStats()
     val engine = ProxyEngine(stats)
+
+    private val stateLock = Any()
 
     private val _settings = MutableStateFlow(store.loadSettings())
     val settings: StateFlow<DesktopSettings> = _settings.asStateFlow()
@@ -86,8 +97,12 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
 
+    /** What the list shows: the last measurement of any kind. */
     private val _latencies = MutableStateFlow<Map<UUID, LatencyResult>>(emptyMap())
     val latencies: StateFlow<Map<UUID, LatencyResult>> = _latencies.asStateFlow()
+
+    /** What Auto ranks by: real (HTTP) pings only, never a TCP number. */
+    private val httpLatencies = MutableStateFlow<Map<UUID, LatencyResult>>(emptyMap())
 
     private val _connectivityOk = MutableStateFlow(true)
     val connectivityOk: StateFlow<Boolean> = _connectivityOk.asStateFlow()
@@ -104,14 +119,26 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList())
     val logs: StateFlow<List<LogLine>> = _logs.asStateFlow()
 
-    /** Set when the window should come to the front (tray "show"). */
+    private val _speed = MutableStateFlow(Speed(0, 0))
+    val speed: StateFlow<Speed> = _speed.asStateFlow()
+
+    /** Set when the window should come to the front (tray "show", second instance). */
     val windowVisible = MutableStateFlow(true)
+    val bringToFront = MutableStateFlow(0L)
 
     private var autoJob: Job? = null
     private var probeJob: Job? = null
     private var pingJob: Job? = null
     private val connectLock = Mutex()
+    private val autoRoundLock = Mutex()
     private var messageJob: Job? = null
+
+    /** Set once Auto has measured the group at least once since the last connect. */
+    @Volatile
+    private var autoMeasuredOnce = false
+
+    @Volatile
+    private var probeFailures = 0
 
     init {
         MythaiaLogger.logSink = { text, level ->
@@ -125,6 +152,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         S.apply(_settings.value.language)
         // Sanity: a pin or an Auto choice may point at a server that is gone.
         pruneSelection()
+        scope.launch { speedLoop() }
+        scope.launch { subscriptionRefreshLoop() }
     }
 
     // ------------------------------------------------------------- groups
@@ -156,75 +185,86 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     /** The server the group would connect with right now. */
     fun effectiveConfig(groupId: String): ProxyConfiguration? {
         pinned(groupId)?.let { return it }
-        val configs = groupConfigs(groupId)
+        val configs = dialable(groupConfigs(groupId))
         if (configs.isEmpty()) return null
-        autoChoice(groupId)?.let { return it }
+        autoChoice(groupId)?.takeIf { it in configs }?.let { return it }
         return bestKnown(configs) ?: configs.first()
     }
 
+    /** Without the native library the QUIC protocols cannot be dialled at all. */
+    private fun dialable(configs: List<ProxyConfiguration>): List<ProxyConfiguration> =
+        if (nativeAvailable) configs else configs.filterNot { it.outboundProtocol.needsNative() }
+
     private fun bestKnown(configs: List<ProxyConfiguration>): ProxyConfiguration? {
-        val known = _latencies.value
+        val known = httpLatencies.value
         return configs.mapNotNull { c -> (known[c.id] as? LatencyResult.Success)?.let { c to it.ms } }
             .minByOrNull { it.second }?.first
     }
 
     fun selectGroup(groupId: String) {
         if (groupId == activeGroupId) return
-        saveSettings(_settings.value.copy(activeGroupId = groupId))
+        mutateSettings { it.copy(activeGroupId = groupId) }
         reconnectIfNeeded()
     }
 
     /** Pins one server for its group and makes that group active. */
     fun pin(config: ProxyConfiguration) {
         val gid = groupIdOf(config)
-        val s = _settings.value
-        saveSettings(s.copy(activeGroupId = gid, groupPins = s.groupPins + (gid to config.id.toString())))
+        mutateSettings { it.copy(activeGroupId = gid, groupPins = it.groupPins + (gid to config.id.toString())) }
         reconnectIfNeeded()
     }
 
     fun useAuto(groupId: String) {
-        val s = _settings.value
-        saveSettings(s.copy(activeGroupId = groupId, groupPins = s.groupPins - groupId))
+        mutateSettings { it.copy(activeGroupId = groupId, groupPins = it.groupPins - groupId) }
         reconnectIfNeeded()
     }
 
     private fun reconnectIfNeeded() {
-        if (_connection.value is ConnectionState.Disconnected || _connection.value is ConnectionState.Failed) return
+        if (!engine.isRunning) return
         scope.launch { startConnection() }
     }
 
     private fun pruneSelection() {
         val ids = _configurations.value.map { it.id.toString() }.toSet()
-        val s = _settings.value
-        val pins = s.groupPins.filterValues { it in ids }
-        val choices = s.autoChoices.filterValues { it in ids }
         val groupIds = groups().map { it.id }.toSet()
-        val active = if (s.activeGroupId in groupIds) s.activeGroupId else DEFAULT_GROUP
-        if (pins != s.groupPins || choices != s.autoChoices || active != s.activeGroupId) {
-            saveSettings(s.copy(groupPins = pins, autoChoices = choices, activeGroupId = active))
+        mutateSettings { s ->
+            val pins = s.groupPins.filterValues { it in ids }
+            val choices = s.autoChoices.filterValues { it in ids }
+            val active = if (s.activeGroupId in groupIds) s.activeGroupId else DEFAULT_GROUP
+            if (pins == s.groupPins && choices == s.autoChoices && active == s.activeGroupId) s
+            else s.copy(groupPins = pins, autoChoices = choices, activeGroupId = active)
         }
     }
 
     // --------------------------------------------------------- connection
 
     fun toggle() {
-        when (_connection.value) {
-            is ConnectionState.Disconnected, is ConnectionState.Failed -> scope.launch { startConnection() }
-            else -> disconnect()
-        }
+        if (engine.isRunning || _connection.value is ConnectionState.Connecting) disconnect()
+        else scope.launch { startConnection() }
     }
 
     fun connect() = scope.launch { startConnection() }
 
     private suspend fun startConnection() = connectLock.withLock {
         val gid = activeGroupId
+        val previous = _connection.value
         val config = effectiveConfig(gid)
         if (config == null) {
+            val reason = if (!nativeAvailable && groupConfigs(gid).isNotEmpty()) tr("native_missing") else tr("no_servers_hint")
+            // A live connection is kept rather than replaced by nothing.
+            if (engine.isRunning && previous is ConnectionState.Connected) {
+                notify(reason)
+                return@withLock
+            }
             _connection.value = ConnectionState.Failed(tr("no_server"))
-            notify(tr("no_servers_hint"))
+            notify(reason)
             return@withLock
         }
         if (!nativeAvailable && config.outboundProtocol.needsNative()) {
+            if (engine.isRunning && previous is ConnectionState.Connected) {
+                notify(tr("no_native_for", config.name))
+                return@withLock
+            }
             _connection.value = ConnectionState.Failed(tr("native_missing"))
             return@withLock
         }
@@ -245,10 +285,16 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         if (!wasRunning) _connectedSince.value = System.currentTimeMillis()
         _connection.value = ConnectionState.Connected(config)
         _connectivityOk.value = true
+        autoMeasuredOnce = false
         restartBackgroundJobs(gid)
     }
 
+    /** Stops under the connect lock so a connect in flight cannot resurrect the listeners. */
     fun disconnect() {
+        scope.launch { connectLock.withLock { disconnectLocked() } }
+    }
+
+    private fun disconnectLocked() {
         autoJob?.cancel(); autoJob = null
         probeJob?.cancel(); probeJob = null
         engine.stop()
@@ -259,7 +305,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /** Called from the exit path: puts the system back the way it was. */
     fun shutdown() {
-        runCatching { disconnect() }
+        runCatching {
+            runBlocking {
+                withTimeoutOrNull(5_000) { connectLock.withLock { disconnectLocked() } } ?: disconnectLocked()
+            }
+        }
         scope.cancel()
     }
 
@@ -272,8 +322,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /**
      * Auto: measure the group now and every two minutes, moving to the best
-     * server as results come in, so the first good one is used within
-     * seconds rather than after the whole round.
+     * server as results come in on the first round, so the first good one is
+     * used within seconds; later rounds only move away from a server that is
+     * measured slower or failed.
      */
     private suspend fun autoLoop(groupId: String) {
         delay(AUTO_FIRST_ROUND_DELAY_MS)
@@ -284,44 +335,60 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     private suspend fun runAutoRound(groupId: String) {
-        val configs = groupConfigs(groupId)
-        if (configs.isEmpty()) return
-        _latencies.update { m -> m + configs.associate { it.id to LatencyResult.Testing } }
-        var bestId: UUID? = null
-        var bestMs = Int.MAX_VALUE
-        val current = engine.configuration?.id
-        var currentMs: Int? = null
-        LatencyTester.testAll(configs, LatencyKind.HTTP).collect { (id, result) ->
-            _latencies.update { it + (id to result) }
-            if (result is LatencyResult.Success) {
-                if (id == current) currentMs = result.ms
-                if (result.ms < bestMs) {
-                    bestMs = result.ms
-                    bestId = id
-                    val config = configs.firstOrNull { it.id == id }
-                    val currentKnown = currentMs
-                    // Switch live when the current one is unmeasured-failed or
-                    // clearly slower; a tie is not worth a new connection.
-                    val currentFailed = _latencies.value[current] is LatencyResult.Failed
-                    if (config != null && id != current &&
-                        (currentFailed || currentKnown == null || result.ms + AUTO_SWITCH_MARGIN_MS < currentKnown)
-                    ) {
-                        switchAuto(groupId, config)
+        if (!autoRoundLock.tryLock()) return
+        try {
+            val configs = dialable(groupConfigs(groupId))
+            if (configs.isEmpty()) return
+            val firstRound = !autoMeasuredOnce
+            _latencies.update { m -> m + configs.associate { it.id to LatencyResult.Testing } }
+            var bestId: UUID? = null
+            var bestMs = Int.MAX_VALUE
+            val current = engine.configuration?.id
+            var currentMs: Int? = null
+            var currentFailed = false
+            try {
+                LatencyTester.testAll(configs, LatencyKind.HTTP).collect { (id, result) ->
+                    _latencies.update { it + (id to result) }
+                    httpLatencies.update { it + (id to result) }
+                    if (id == current) {
+                        currentMs = (result as? LatencyResult.Success)?.ms
+                        currentFailed = result !is LatencyResult.Success
+                    }
+                    if (result is LatencyResult.Success && result.ms < bestMs) {
+                        bestMs = result.ms
+                        bestId = id
+                    }
+                    // Live switching: on the first round the current server is a
+                    // guess, so the first good answer is worth moving to; later,
+                    // only a current server known to have failed is left mid-round.
+                    val best = bestId?.let { b -> configs.firstOrNull { it.id == b } }
+                    if (best != null && best.id != engine.configuration?.id) {
+                        val currentKnown = currentMs
+                        val move = when {
+                            currentFailed -> true
+                            firstRound && currentKnown == null -> true
+                            currentKnown != null -> bestMs + AUTO_SWITCH_MARGIN_MS < currentKnown
+                            else -> false
+                        }
+                        if (move) switchAuto(groupId, best)
                     }
                 }
-            } else if (id == current && result is LatencyResult.Failed) {
-                bestId?.let { b -> configs.firstOrNull { it.id == b }?.let { switchAuto(groupId, it) } }
+            } catch (e: Throwable) {
+                logger.warning("Auto round failed: ${e.message ?: e}")
+                _latencies.update { m -> m + configs.filter { m[it.id] is LatencyResult.Testing }.associate { it.id to LatencyResult.Failed } }
             }
-        }
-        val best = bestId?.let { b -> configs.firstOrNull { it.id == b } }
-        if (best != null && engine.configuration?.id != best.id) {
-            val curr = engine.configuration?.id?.let { _latencies.value[it] }
-            val currMs = (curr as? LatencyResult.Success)?.ms
-            if (currMs == null || bestMs + AUTO_SWITCH_MARGIN_MS < currMs) switchAuto(groupId, best)
-        }
-        if (best == null) {
-            _connectivityOk.value = false
-            logger.warning("Auto: no server in the group answered")
+            autoMeasuredOnce = true
+            val best = bestId?.let { b -> configs.firstOrNull { it.id == b } }
+            if (best != null && engine.configuration?.id != best.id) {
+                val currMs = (httpLatencies.value[engine.configuration?.id] as? LatencyResult.Success)?.ms
+                if (currMs == null || bestMs + AUTO_SWITCH_MARGIN_MS < currMs) switchAuto(groupId, best)
+            }
+            if (best == null) {
+                _connectivityOk.value = false
+                logger.warning("Auto: no server in the group answered")
+            }
+        } finally {
+            autoRoundLock.unlock()
         }
     }
 
@@ -330,36 +397,44 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         engine.switchTo(config)
         _connection.value = ConnectionState.Connected(config)
         _connectivityOk.value = true
-        val s = _settings.value
-        saveSettings(s.copy(autoChoices = s.autoChoices + (groupId to config.id.toString())))
+        probeFailures = 0
+        mutateSettings { it.copy(autoChoices = it.autoChoices + (groupId to config.id.toString())) }
         notify(tr("auto_switching", config.name))
     }
 
     /** Checks the live server reaches the internet; failing that, Auto rechecks the group. */
     private suspend fun probeLoop() {
         delay(PROBE_FIRST_DELAY_MS)
-        var failures = 0
+        probeFailures = 0
         while (scope.isActive) {
             val config = engine.configuration
             if (config != null) {
-                val result = LatencyTester.test(config, LatencyKind.HTTP)
+                val result = safeTest(config, LatencyKind.HTTP)
                 _latencies.update { it + (config.id to result) }
+                httpLatencies.update { it + (config.id to result) }
                 val ok = result is LatencyResult.Success
-                _connectivityOk.value = ok
+                if (engine.configuration?.id == config.id) _connectivityOk.value = ok
                 if (!ok) {
-                    failures++
-                    logger.warning("Probe failed for ${config.name} ($failures)")
-                    val gid = activeGroupId
-                    if (isAuto(gid) && failures <= MAX_AUTO_RECOVERIES) {
-                        runAutoRound(gid)
-                    }
+                    probeFailures++
+                    logger.warning("Probe failed for ${config.name} ($probeFailures)")
+                    if (isAuto(activeGroupId)) runAutoRound(activeGroupId)
                 } else {
-                    failures = 0
+                    probeFailures = 0
                 }
             }
             delay(PROBE_INTERVAL_MS)
         }
     }
+
+    /** A test that cannot throw: a missing native library reports Failed, not an Error. */
+    private suspend fun safeTest(config: ProxyConfiguration, kind: LatencyKind): LatencyResult =
+        try {
+            if (!nativeAvailable && config.outboundProtocol.needsNative()) LatencyResult.Failed
+            else LatencyTester.test(config, kind)
+        } catch (e: Throwable) {
+            logger.warning("Test of ${config.name} failed: ${e.message ?: e}")
+            LatencyResult.Failed
+        }
 
     // ---------------------------------------------------------- latency
 
@@ -369,8 +444,17 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         pingJob?.cancel()
         pingJob = scope.launch {
             _latencies.update { m -> m + configs.associate { it.id to LatencyResult.Testing } }
-            LatencyTester.testAll(configs, kind).collect { (id, result) ->
-                _latencies.update { it + (id to result) }
+            val (testable, skipped) = configs.partition { nativeAvailable || !it.outboundProtocol.needsNative() }
+            _latencies.update { m -> m + skipped.associate { it.id to LatencyResult.Failed } }
+            if (testable.isEmpty()) return@launch
+            try {
+                LatencyTester.testAll(testable, kind).collect { (id, result) ->
+                    _latencies.update { it + (id to result) }
+                    if (kind == LatencyKind.HTTP) httpLatencies.update { it + (id to result) }
+                }
+            } catch (e: Throwable) {
+                logger.warning("Ping round failed: ${e.message ?: e}")
+                _latencies.update { m -> m + testable.filter { m[it.id] is LatencyResult.Testing }.associate { it.id to LatencyResult.Failed } }
             }
         }
     }
@@ -378,15 +462,26 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     fun pingOne(config: ProxyConfiguration, kind: LatencyKind = LatencyKind.HTTP) {
         scope.launch {
             _latencies.update { it + (config.id to LatencyResult.Testing) }
-            val result = LatencyTester.test(config, kind)
+            val result = safeTest(config, kind)
             _latencies.update { it + (config.id to result) }
+            if (kind == LatencyKind.HTTP) httpLatencies.update { it + (config.id to result) }
         }
     }
 
     // ------------------------------------------------------------ servers
 
-    /** Adds every link in [text]; an https:// line without credentials is a subscription. */
+    /** Adds every link in [text]; an https:// line without credentials is a subscription; Xray JSON imports whole. */
     fun addText(text: String, subscriptionName: String? = null, frontSni: String? = null, frontTargets: List<String> = emptyList()) {
+        if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(text)) {
+            try {
+                val imported = com.mythaia.data.network.XrayJsonImporter.parse(text).map { it.copy(subscriptionId = null) }
+                mutateConfigurations { it + imported }
+                notify(tr("added_n", imported.size))
+            } catch (e: Exception) {
+                notify(e.message ?: tr("nothing_parsed"))
+            }
+            return
+        }
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val added = mutableListOf<ProxyConfiguration>()
         val subscriptionUrls = mutableListOf<String>()
@@ -404,21 +499,61 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 .onFailure { logger.warning("Link rejected: ${it.message}") }
         }
         if (added.isNotEmpty()) {
-            saveConfigurations(_configurations.value + added)
+            mutateConfigurations { it + added }
             notify(tr("added_n", added.size))
         }
         subscriptionUrls.forEach { addSubscription(it, subscriptionName, frontSni, frontTargets) }
         if (added.isEmpty() && subscriptionUrls.isEmpty()) notify(tr("nothing_parsed"))
     }
 
+    /** Saves an edited or new server; a new one goes to the manual group. */
+    fun saveConfiguration(config: ProxyConfiguration) {
+        mutateConfigurations { list ->
+            if (list.any { it.id == config.id }) list.map { if (it.id == config.id) config.copy(subscriptionId = it.subscriptionId) else it }
+            else list + config.copy(subscriptionId = null)
+        }
+        if (engine.configuration?.id == config.id) reconnectIfNeeded()
+    }
+
     fun deleteConfiguration(config: ProxyConfiguration) {
-        saveConfigurations(_configurations.value.filterNot { it.id == config.id })
+        mutateConfigurations { list -> list.filterNot { it.id == config.id } }
         pruneSelection()
         if (engine.configuration?.id == config.id) reconnectIfNeeded()
     }
 
+    fun deleteConfigurations(ids: Set<UUID>) {
+        mutateConfigurations { list -> list.filterNot { it.id in ids } }
+        pruneSelection()
+        if (engine.configuration?.id in ids) reconnectIfNeeded()
+    }
+
     fun renameConfiguration(config: ProxyConfiguration, name: String) {
-        saveConfigurations(_configurations.value.map { if (it.id == config.id) it.copy(name = name.trim()) else it })
+        mutateConfigurations { list -> list.map { if (it.id == config.id) it.copy(name = name.trim()) else it } }
+    }
+
+    /** Drops servers in [groupId] whose link repeats an earlier one. Returns how many went. */
+    fun removeDuplicates(groupId: String): Int {
+        var removed = 0
+        mutateConfigurations { list ->
+            val seen = HashSet<String>()
+            list.filter { c ->
+                if (groupIdOf(c) != groupId) true
+                else {
+                    val key = runCatching { c.toUrl().substringBefore('#') }.getOrDefault(c.id.toString())
+                    if (seen.add(key)) true else { removed++; false }
+                }
+            }
+        }
+        pruneSelection()
+        return removed
+    }
+
+    /** Drops servers in [groupId] whose last measurement failed. Returns how many went. */
+    fun removeFailed(groupId: String): Int {
+        val failed = groupConfigs(groupId).filter { _latencies.value[it.id] is LatencyResult.Failed }.map { it.id }.toSet()
+        if (failed.isEmpty()) return 0
+        deleteConfigurations(failed)
+        return failed.size
     }
 
     fun addSubscription(url: String, name: String?, frontSni: String?, frontTargets: List<String>) {
@@ -429,19 +564,21 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             frontSni = frontSni?.trim()?.takeIf { it.isNotEmpty() },
             frontTargets = frontTargets.map { it.trim() }.filter { it.isNotEmpty() }
         )
-        saveSubscriptions(_subscriptions.value + subscription)
+        mutateSubscriptions { it + subscription }
         updateSubscription(subscription.id, announceAdded = true)
     }
 
     fun updateSubscriptionSettings(id: UUID, name: String, frontSni: String?, frontTargets: List<String>) {
-        saveSubscriptions(_subscriptions.value.map {
-            if (it.id == id) it.copy(
-                name = name.trim().ifEmpty { it.name },
-                isNameCustomized = name.trim().isNotEmpty(),
-                frontSni = frontSni?.trim()?.takeIf { s -> s.isNotEmpty() },
-                frontTargets = frontTargets.map { t -> t.trim() }.filter { t -> t.isNotEmpty() }
-            ) else it
-        })
+        mutateSubscriptions { list ->
+            list.map {
+                if (it.id == id) it.copy(
+                    name = name.trim().ifEmpty { it.name },
+                    isNameCustomized = name.trim().isNotEmpty(),
+                    frontSni = frontSni?.trim()?.takeIf { s -> s.isNotEmpty() },
+                    frontTargets = frontTargets.map { t -> t.trim() }.filter { t -> t.isNotEmpty() }
+                ) else it
+            }
+        }
     }
 
     fun updateAllSubscriptions() {
@@ -455,28 +592,34 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         scope.launch {
             try {
                 val result = SubscriptionFetcher.fetch(subscription)
-                val previous = _configurations.value.filter { it.subscriptionId == id }
-                val byLink = previous.associateBy { runCatching { it.toUrl() }.getOrNull() }
-                val fresh = result.configurations.map { c ->
-                    val link = runCatching { c.toUrl() }.getOrNull()
-                    val old = link?.let { byLink[it] }
-                    c.copy(id = old?.id ?: c.id, subscriptionId = id)
+                // The same link twice in a feed is one server; ids of servers
+                // that stayed are kept so pins and Auto choices survive.
+                val fresh = result.configurations.distinctBy { runCatching { it.toUrl() }.getOrDefault(it.id.toString()) }
+                mutateConfigurations { list ->
+                    val previous = list.filter { it.subscriptionId == id }
+                    val byLink = previous.associateBy { runCatching { it.toUrl() }.getOrNull() }.toMutableMap()
+                    val merged = fresh.map { c ->
+                        val link = runCatching { c.toUrl() }.getOrNull()
+                        val old = link?.let { byLink.remove(it) }
+                        c.copy(id = old?.id ?: c.id, subscriptionId = id)
+                    }
+                    list.filterNot { it.subscriptionId == id } + merged
                 }
-                saveConfigurations(_configurations.value.filterNot { it.subscriptionId == id } + fresh)
-                saveSubscriptions(_subscriptions.value.map {
-                    if (it.id == id) it.copy(
-                        name = result.name.takeIf { n -> !it.isNameCustomized && !n.isNullOrBlank() } ?: it.name,
-                        lastUpdate = System.currentTimeMillis(),
-                        upload = result.upload, download = result.download,
-                        total = result.total, expire = result.expire
-                    ) else it
-                })
+                mutateSubscriptions { list ->
+                    list.map {
+                        if (it.id == id) it.copy(
+                            name = result.name.takeIf { n -> !it.isNameCustomized && !n.isNullOrBlank() } ?: it.name,
+                            lastUpdate = System.currentTimeMillis(),
+                            upload = result.upload, download = result.download,
+                            total = result.total, expire = result.expire
+                        ) else it
+                    }
+                }
                 pruneSelection()
-                val name = _subscriptions.value.first { it.id == id }.name
+                val name = _subscriptions.value.firstOrNull { it.id == id }?.name ?: subscription.name
                 notify(if (announceAdded) tr("subscription_added", name) else tr("subscription_updated", name, fresh.size))
-                if (engine.configuration?.subscriptionId == id && engine.configuration?.let { c -> fresh.none { it.id == c.id } } == true) {
-                    reconnectIfNeeded()
-                }
+                val live = engine.configuration
+                if (live?.subscriptionId == id && _configurations.value.none { it.id == live.id }) reconnectIfNeeded()
             } catch (e: Exception) {
                 logger.error("Subscription ${subscription.name}: ${e.message}")
                 notify(tr("subscription_failed", e.message ?: e.javaClass.simpleName))
@@ -487,40 +630,57 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     fun deleteSubscription(id: UUID) {
-        saveSubscriptions(_subscriptions.value.filterNot { it.id == id })
-        saveConfigurations(_configurations.value.filterNot { it.subscriptionId == id })
+        mutateSubscriptions { list -> list.filterNot { it.id == id } }
+        mutateConfigurations { list -> list.filterNot { it.subscriptionId == id } }
         pruneSelection()
         if (engine.configuration?.subscriptionId == id) reconnectIfNeeded()
+    }
+
+    /** Refreshes every subscription on the configured interval, and once on start when stale. */
+    private suspend fun subscriptionRefreshLoop() {
+        delay(20_000)
+        while (scope.isActive) {
+            val hours = _settings.value.subscriptionUpdateHours
+            if (hours > 0) {
+                val stale = System.currentTimeMillis() - hours * 3_600_000L
+                _subscriptions.value.filter { (it.lastUpdate ?: 0L) < stale }.forEach { updateSubscription(it.id) }
+            }
+            delay(10 * 60_000L)
+        }
     }
 
     // ------------------------------------------------------------ settings
 
     fun updateSettings(transform: (DesktopSettings) -> DesktopSettings) {
-        val before = _settings.value
-        val after = transform(before)
-        if (after == before) return
-        saveSettings(after)
+        var before: DesktopSettings? = null
+        val after = mutateSettings { current -> before = current; transform(current) }
+        val old = before ?: return
+        if (after == old) return
         applyPolicies(after)
         engine.updateRouting(_rules.value, after)
-        if (after.language != before.language) S.apply(after.language)
-        if (after.launchAtLogin != before.launchAtLogin) {
+        if (after.language != old.language) S.apply(after.language)
+        if (after.launchAtLogin != old.launchAtLogin) {
             if (!LaunchAtLogin.set(after.launchAtLogin) && after.launchAtLogin) {
-                saveSettings(after.copy(launchAtLogin = false))
+                mutateSettings { it.copy(launchAtLogin = false) }
             }
         }
-        val portsChanged = after.socksPort != before.socksPort || after.httpPort != before.httpPort ||
-            after.allowLan != before.allowLan || after.socksUdp != before.socksUdp
+        val portsChanged = after.socksPort != old.socksPort || after.httpPort != old.httpPort ||
+            after.allowLan != old.allowLan || after.socksUdp != old.socksUdp
         if (engine.isRunning) {
             if (portsChanged) {
                 scope.launch {
-                    engine.stop()
+                    connectLock.withLock { engine.stop() }
                     startConnection()
                 }
-            } else if (after.setSystemProxy != before.setSystemProxy || after.proxyBypass != before.proxyBypass) {
-                if (after.setSystemProxy) SystemProxy.enable("127.0.0.1:${after.httpPort}", after.proxyBypass)
-                else SystemProxy.restore()
+            } else if (after.setSystemProxy != old.setSystemProxy || after.proxyBypass != old.proxyBypass) {
+                engine.setSystemProxy(after.setSystemProxy, after)
             }
         }
+    }
+
+    fun rememberWindowSize(width: Int, height: Int) {
+        if (width < 600 || height < 400) return
+        mutateSettings { if (it.windowWidth == width && it.windowHeight == height) it else it.copy(windowWidth = width, windowHeight = height) }
     }
 
     fun updateRules(rules: List<RouteRule>) {
@@ -529,9 +689,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         engine.updateRouting(rules, _settings.value)
     }
 
-    fun importGeoIp(file: java.io.File): Boolean {
-        val ok = file.inputStream().use { GeoIpDatabase.importInto(AppPaths.geoIp, it) }
-        return ok
+    fun importGeoIp(file: java.io.File, onDone: (Boolean) -> Unit) {
+        scope.launch {
+            val ok = runCatching { file.inputStream().use { GeoIpDatabase.importInto(AppPaths.geoIp, it) } }.getOrDefault(false)
+            onDone(ok)
+        }
     }
 
     fun clearGeoIp() = GeoIpDatabase.clear(AppPaths.geoIp)
@@ -552,19 +714,45 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     // ------------------------------------------------------------- persist
 
-    private fun saveSettings(settings: DesktopSettings) {
-        _settings.value = settings
-        store.saveSettings(settings)
+    private fun mutateSettings(transform: (DesktopSettings) -> DesktopSettings): DesktopSettings =
+        synchronized(stateLock) {
+            val next = transform(_settings.value)
+            if (next != _settings.value) {
+                _settings.value = next
+                store.saveSettings(next)
+            }
+            next
+        }
+
+    private fun mutateConfigurations(transform: (List<ProxyConfiguration>) -> List<ProxyConfiguration>) {
+        synchronized(stateLock) {
+            val next = transform(_configurations.value)
+            _configurations.value = next
+            store.saveConfigurations(next)
+        }
     }
 
-    private fun saveConfigurations(configs: List<ProxyConfiguration>) {
-        _configurations.value = configs
-        store.saveConfigurations(configs)
+    private fun mutateSubscriptions(transform: (List<Subscription>) -> List<Subscription>) {
+        synchronized(stateLock) {
+            val next = transform(_subscriptions.value)
+            _subscriptions.value = next
+            store.saveSubscriptions(next)
+        }
     }
 
-    private fun saveSubscriptions(subs: List<Subscription>) {
-        _subscriptions.value = subs
-        store.saveSubscriptions(subs)
+    // --------------------------------------------------------------- misc
+
+    private suspend fun speedLoop() {
+        var lastUp = stats.up.get()
+        var lastDown = stats.down.get()
+        while (scope.isActive) {
+            delay(1000)
+            val up = stats.up.get()
+            val down = stats.down.get()
+            _speed.value = Speed((up - lastUp).coerceAtLeast(0), (down - lastDown).coerceAtLeast(0))
+            lastUp = up
+            lastDown = down
+        }
     }
 
     fun notify(text: String) {
@@ -588,14 +776,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         private const val AUTO_SWITCH_MARGIN_MS = 50
         private const val PROBE_FIRST_DELAY_MS = 2_500L
         private const val PROBE_INTERVAL_MS = 60_000L
-        private const val MAX_AUTO_RECOVERIES = 4
     }
 }
 
 /** The protocols whose transport lives in the native library. */
-private fun com.mythaia.data.model.OutboundProtocol.needsNative(): Boolean = when (this) {
-    com.mythaia.data.model.OutboundProtocol.HYSTERIA2,
-    com.mythaia.data.model.OutboundProtocol.TUIC,
-    com.mythaia.data.model.OutboundProtocol.NOWHERE -> true
+internal fun OutboundProtocol.needsNative(): Boolean = when (this) {
+    OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC, OutboundProtocol.NOWHERE -> true
     else -> false
 }

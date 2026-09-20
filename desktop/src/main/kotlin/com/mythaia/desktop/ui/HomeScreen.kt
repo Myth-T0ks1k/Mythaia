@@ -58,6 +58,7 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
     val connectedSince by state.connectedSince.collectAsState()
     val configurations by state.configurations.collectAsState()
     val subscriptions by state.subscriptions.collectAsState()
+    val speed by state.speed.collectAsState()
 
     // A one-second tick for the counters.
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -216,6 +217,7 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
         // Counters.
         Row(modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatTile(tr("uptime"), connectedSince?.let { formatDuration(now - it) } ?: "—", Modifier.weight(1f))
+            StatTile(tr("speed"), "↑ ${formatBytes(speed.up)}/s\n↓ ${formatBytes(speed.down)}/s", Modifier.weight(1.3f))
             StatTile(tr("upload"), formatBytes(up), Modifier.weight(1f))
             StatTile(tr("download"), formatBytes(down), Modifier.weight(1f))
         }

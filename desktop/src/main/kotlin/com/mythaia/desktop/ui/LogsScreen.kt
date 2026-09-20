@@ -34,7 +34,7 @@ private val timeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
 fun LogsScreen(state: AppState) {
     val logs by state.logs.collectAsState()
     val listState = rememberLazyListState()
-    LaunchedEffect(logs.size) {
+    LaunchedEffect(logs.lastOrNull()?.time, logs.size) {
         if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
     }
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 18.dp)) {

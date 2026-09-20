@@ -71,6 +71,11 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
 
     private var scope: CoroutineScope? = null
     private val listeners = mutableListOf<ServerSocket>()
+
+    // Every accepted socket and UDP relay, so stop() can end them: a blocking
+    // read on a pool thread does not notice a cancelled coroutine.
+    private val clients: MutableSet<Socket> = ConcurrentHashMap.newKeySet()
+    private val relays: MutableSet<DatagramSocket> = ConcurrentHashMap.newKeySet()
     private val running = AtomicBoolean(false)
     @Volatile private var udpEnabled = true
     @Volatile private var bindAddress: InetAddress = InetAddress.getLoopbackAddress()
@@ -110,6 +115,10 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         if (!running.getAndSet(false)) return
         listeners.forEach { runCatching { it.close() } }
         listeners.clear()
+        clients.forEach { runCatching { it.close() } }
+        clients.clear()
+        relays.forEach { runCatching { it.close() } }
+        relays.clear()
         scope?.cancel()
         scope = null
         logger.info("Stopped")
@@ -124,6 +133,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 if (running.get()) logger.debug("accept: ${e.message}")
                 break
             }
+            clients += client
             current.launch {
                 stats.connections.incrementAndGet()
                 try {
@@ -134,6 +144,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                     logger.debug("connection: ${e.message ?: e}")
                 } finally {
                     stats.connections.decrementAndGet()
+                    clients -= client
                     runCatching { client.close() }
                 }
             }
@@ -199,6 +210,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
 
     private suspend fun udpAssociate(client: Socket, input: InputStream, output: OutputStream) {
         val relaySocket = DatagramSocket(InetSocketAddress(bindAddress, 0))
+        relays += relaySocket
         try {
             val bound = relaySocket.localAddress.let { if (it.isAnyLocalAddress) client.localAddress else it }
             val reply = ByteArrayOutputStream().apply {
@@ -215,15 +227,22 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
             coroutineScope {
                 val relayJob = launch { udpRelayLoop(relaySocket) }
                 // The association lives as long as the TCP control connection.
-                withContext(io) {
-                    try {
-                        while (input.read() >= 0) { /* clients send nothing here */ }
-                    } catch (_: IOException) {
+                try {
+                    withContext(io) {
+                        try {
+                            while (input.read() >= 0) { /* clients send nothing here */ }
+                        } catch (_: IOException) {
+                        }
                     }
+                } finally {
+                    // Closing the socket is what ends the blocking receive;
+                    // cancelling alone would wait for a datagram that never comes.
+                    runCatching { relaySocket.close() }
+                    relayJob.cancel()
                 }
-                relayJob.cancel()
             }
         } finally {
+            relays -= relaySocket
             runCatching { relaySocket.close() }
         }
     }
@@ -239,8 +258,8 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 withContext(io) { relaySocket.receive(packet) }
                 if (clientAddress == null) clientAddress = packet.socketAddress
                 val data = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
-                if (data.size < 4 || data[2] != 0.toByte()) continue // fragments unsupported
-                val parsed = parseUdpHeader(data) ?: continue
+                if (data.size < 5 || data[2] != 0.toByte()) continue // fragments unsupported
+                val parsed = runCatching { parseUdpHeader(data) }.getOrNull() ?: continue
                 val (host, port, headerLength) = parsed
                 val key = "$host:$port"
                 val payload = data.copyOfRange(headerLength, data.size)
@@ -515,21 +534,28 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                     } catch (_: Exception) {
                     }
                 }
-                // Whichever direction finishes first ends the connection: the
-                // proxy protocols carry no half-close, so waiting for the other
-                // side would only hold the socket open.
-                val first = kotlinx.coroutines.selects.select<Unit> {
-                    uplink.onJoin { }
-                    downlink.onJoin { }
+                // The proxy protocols carry no half-close, so the connection
+                // ends when either direction does — except that a client which
+                // finished sending may still be waiting for the answer, so a
+                // finished uplink gives the downlink a grace period first.
+                try {
+                    val uplinkFirst = kotlinx.coroutines.selects.select<Boolean> {
+                        uplink.onJoin { true }
+                        downlink.onJoin { false }
+                    }
+                    if (uplinkFirst) {
+                        kotlinx.coroutines.withTimeoutOrNull(HALF_CLOSE_GRACE_MS) { downlink.join() }
+                    }
+                } finally {
+                    runCatching { upstream.close() }
+                    runCatching { client.close() }
+                    uplink.cancel()
+                    downlink.cancel()
                 }
-                runCatching { upstream.close() }
-                runCatching { client.close() }
-                uplink.cancel()
-                downlink.cancel()
-                first
             }
         } finally {
             runCatching { upstream.close() }
+            runCatching { client.close() }
         }
     }
 
@@ -559,6 +585,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
 
     companion object {
         private const val HANDSHAKE_TIMEOUT_MS = 15_000
+        private const val HALF_CLOSE_GRACE_MS = 30_000L
         private const val MAX_HEAD = 64 * 1024
         private const val CMD_CONNECT = 1
         private const val CMD_UDP_ASSOCIATE = 3

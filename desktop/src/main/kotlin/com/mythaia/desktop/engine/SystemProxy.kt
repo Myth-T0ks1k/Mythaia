@@ -80,12 +80,14 @@ object SystemProxy {
         try {
             val snapshot = AppPaths.proxySnapshot.takeIf { it.isFile }
                 ?.let { runCatching { json.decodeFromString(Snapshot.serializer(), it.readText()) }.getOrNull() }
-            if (snapshot != null && snapshot.enable == 1 && !snapshot.server.isNullOrBlank()) {
-                Advapi32Util.registrySetIntValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyEnable", 1)
-                Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyServer", snapshot.server)
-                if (snapshot.override != null) {
-                    Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyOverride", snapshot.override)
-                }
+            // The user's own server and exception strings go back whether or
+            // not their proxy was switched on: a disabled corporate proxy is
+            // still theirs to keep.
+            if (snapshot != null) {
+                snapshot.server?.let { Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyServer", it) }
+                snapshot.override?.let { Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyOverride", it) }
+                val enable = if (snapshot.enable == 1 && !snapshot.server.isNullOrBlank()) 1 else 0
+                Advapi32Util.registrySetIntValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyEnable", enable)
             } else {
                 Advapi32Util.registrySetIntValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyEnable", 0)
             }

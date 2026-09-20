@@ -18,6 +18,7 @@ object AppPaths {
     val geoIp: File get() = File(dataDir, "geoip.mmdb")
     val logDir: File get() = File(dataDir, "logs").apply { mkdirs() }
     val instanceLock: File get() = File(dataDir, "instance.lock")
+    val showRequest: File get() = File(dataDir, "show.request")
 
     /**
      * The packaged app's resources directory (the Compose plugin puts

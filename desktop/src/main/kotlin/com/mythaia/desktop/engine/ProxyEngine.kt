@@ -51,10 +51,7 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
             stats.reset()
             server.start(settings.socksPort, settings.httpPort, settings.allowLan, settings.socksUdp)
         }
-        if (settings.setSystemProxy && !systemProxySet) {
-            SystemProxy.enable("127.0.0.1:${settings.httpPort}", settings.proxyBypass)
-            systemProxySet = true
-        }
+        if (settings.setSystemProxy && !systemProxySet) setSystemProxy(true, settings)
         logger.info("Outbound: ${configuration.name} (${configuration.outboundProtocol.displayName})")
     }
 
@@ -68,7 +65,18 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
         server.stop()
         configuration = null
         DnsCache.setActiveProxyDomain(null)
-        if (systemProxySet) {
+        setSystemProxy(false, null)
+    }
+
+    /**
+     * Turns the Windows proxy on or off for the running listeners. The engine
+     * owns the flag so a toggle while connected is undone on stop like any other.
+     */
+    fun setSystemProxy(enabled: Boolean, settings: DesktopSettings?) {
+        if (enabled && settings != null) {
+            SystemProxy.enable("127.0.0.1:${settings.httpPort}", settings.proxyBypass)
+            systemProxySet = true
+        } else if (systemProxySet || com.mythaia.desktop.AppPaths.proxySnapshot.isFile) {
             SystemProxy.restore()
             systemProxySet = false
         }

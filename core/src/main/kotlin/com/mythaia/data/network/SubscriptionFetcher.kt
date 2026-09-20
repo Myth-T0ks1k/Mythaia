@@ -185,6 +185,19 @@ object SubscriptionFetcher {
     private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo): Result {
         val bodyString = decodeBody(data)
 
+        if (XrayJsonImporter.looksLikeJson(bodyString)) {
+            val configurations = runCatching { XrayJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
+            if (configurations.isEmpty()) throw FetchError.NoConfigurations()
+            return Result(
+                configurations = configurations,
+                name = profileTitle,
+                upload = userInfo.upload,
+                download = userInfo.download,
+                total = userInfo.total,
+                expire = userInfo.expire
+            )
+        }
+
         if (looksLikeClash(bodyString)) {
             val result = ClashProxyParser.parse(bodyString)
             if (result.configurations.isEmpty()) throw FetchError.NoConfigurations()
@@ -237,7 +250,8 @@ object SubscriptionFetcher {
     internal fun decodeBody(data: ByteArray): String {
         val raw = String(data, Charsets.UTF_8)
         val prefixes = ProxyConfiguration.parsableUrlPrefixes
-        fun recognisable(text: String) = prefixes.any { text.contains(it) } || looksLikeClash(text)
+        fun recognisable(text: String) =
+            prefixes.any { text.contains(it) } || looksLikeClash(text) || XrayJsonImporter.looksLikeJson(text)
         if (recognisable(raw)) return raw
 
         for (urlSafe in booleanArrayOf(false, true)) {

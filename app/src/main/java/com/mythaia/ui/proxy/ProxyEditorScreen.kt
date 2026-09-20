@@ -319,27 +319,28 @@ fun ProxyEditorScreen(
                             )
                         }
 
+                        // VLESS, VMess and Trojan share the stream transports.
+                        val streamProtocol = isVless || isVmess || isTrojan
                         val effectiveTransport = when {
-                            isVless -> transport
-                            isVmess -> if (transport == "ws") "ws" else "tcp"
+                            streamProtocol -> transport
                             isTuic -> "quic"
                             else -> "tcp"
                         }
 
                         var wsConfiguration: WebSocketConfiguration? = null
-                        if (effectiveTransport == "ws" && (isVless || isVmess)) {
+                        if (effectiveTransport == "ws" && streamProtocol) {
                             val host = wsHost.trim().ifEmpty { bareAddress }
                             wsConfiguration = (configuration?.websocket ?: WebSocketConfiguration(host = host))
                                 .copy(host = host, path = wsPath.trim().ifEmpty { "/" })
                         }
                         var httpUpgradeConfiguration: HttpUpgradeConfiguration? = null
-                        if (transport == "httpupgrade" && isVless) {
+                        if (transport == "httpupgrade" && streamProtocol) {
                             val host = httpUpgradeHost.trim().ifEmpty { bareAddress }
                             httpUpgradeConfiguration = (configuration?.httpUpgrade ?: HttpUpgradeConfiguration(host = host))
                                 .copy(host = host, path = httpUpgradePath.trim().ifEmpty { "/" })
                         }
                         var xhttpConfiguration: XHttpConfiguration? = null
-                        if (transport == "xhttp" && isVless) {
+                        if (transport == "xhttp" && streamProtocol) {
                             val host = xhttpHost.trim().ifEmpty { bareAddress }
                             xhttpConfiguration = XHttpConfiguration.fromExtraJson(
                                 host = host, path = xhttpPath.trim().ifEmpty { "/" },
@@ -347,7 +348,7 @@ fun ProxyEditorScreen(
                             )
                         }
                         var grpcConfiguration: GrpcConfiguration? = null
-                        if (transport == "grpc" && isVless) {
+                        if (transport == "grpc" && streamProtocol) {
                             grpcConfiguration = GrpcConfiguration(
                                 serviceName = grpcServiceName,
                                 authority = grpcAuthority,
@@ -463,7 +464,7 @@ fun ProxyEditorScreen(
                         selectedProtocol = next
                         if (next != OutboundProtocol.VLESS) {
                             flow = ""
-                            if (next != OutboundProtocol.VMESS) transport = "tcp"
+                            if (next != OutboundProtocol.VMESS && next != OutboundProtocol.TROJAN) transport = "tcp"
                             security = when (next) {
                                 OutboundProtocol.TROJAN, OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC,
                                 OutboundProtocol.ANYTLS, OutboundProtocol.NOWHERE -> "tls"
@@ -632,19 +633,19 @@ fun ProxyEditorScreen(
                 }
             }
 
-            // VLESS chooses among every transport; VMess between TCP and WebSocket.
-            if (isVless || isVmess) {
+            // VLESS, VMess and Trojan choose among the stream transports.
+            if (isVless || isVmess || isTrojan) {
                 SectionCard(title = stringResource(R.string.transport)) {
                     DropdownField(
                         label = stringResource(R.string.transport),
                         selectedValue = transport,
-                        options = if (isVless) listOf(
+                        options = listOf(
                             "tcp" to "TCP",
                             "ws" to "WebSocket",
                             "httpupgrade" to "HTTPUpgrade",
                             "xhttp" to "XHTTP",
                             "grpc" to "gRPC"
-                        ) else listOf("tcp" to "TCP", "ws" to "WebSocket"),
+                        ),
                         onSelect = {
                             transport = it
                             if (flow.isNotEmpty() && it != "tcp") flow = ""
@@ -655,11 +656,11 @@ fun ProxyEditorScreen(
                         WingField(wsHost, { wsHost = it }, stringResource(R.string.host))
                         WingField(wsPath, { wsPath = it }, stringResource(R.string.path))
                     }
-                    if (transport == "httpupgrade" && isVless) {
+                    if (transport == "httpupgrade") {
                         WingField(httpUpgradeHost, { httpUpgradeHost = it }, stringResource(R.string.host))
                         WingField(httpUpgradePath, { httpUpgradePath = it }, stringResource(R.string.path))
                     }
-                    if (transport == "xhttp" && isVless) {
+                    if (transport == "xhttp") {
                         WingField(xhttpHost, { xhttpHost = it }, stringResource(R.string.host))
                         WingField(xhttpPath, { xhttpPath = it }, stringResource(R.string.path))
                         DropdownField(
@@ -688,7 +689,7 @@ fun ProxyEditorScreen(
                             colors = wingTextFieldColors()
                         )
                     }
-                    if (transport == "grpc" && isVless) {
+                    if (transport == "grpc") {
                         WingField(grpcServiceName, { grpcServiceName = it }, stringResource(R.string.grpc_service_name))
                         WingField(grpcAuthority, { grpcAuthority = it }, stringResource(R.string.grpc_authority))
                         DropdownField(

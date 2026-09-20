@@ -101,8 +101,9 @@ class Router(
         companion object {
             fun parse(text: String): Cidr? {
                 val parts = text.trim().split("/")
-                val address = runCatching { InetAddress.getByName(parts[0].trim()) }.getOrNull() ?: return null
+                // Literal check first: getByName would resolve a host name.
                 if (!DnsCache.isIpAddress(parts[0].trim())) return null
+                val address = runCatching { InetAddress.getByName(parts[0].trim()) }.getOrNull() ?: return null
                 val bytes = address.address
                 val prefix = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: (bytes.size * 8)
                 if (prefix < 0 || prefix > bytes.size * 8) return null

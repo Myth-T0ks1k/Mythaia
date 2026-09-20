@@ -81,6 +81,8 @@ fun ProxiesScreen(state: AppState) {
     }
 
     var showAdd by remember { mutableStateOf(false) }
+    // null = closed; Optional-like holder so a null configuration (new server) can be edited too.
+    var editor by remember { mutableStateOf<Pair<Boolean, ProxyConfiguration?>?>(null) }
     var editSubscription by remember { mutableStateOf<Subscription?>(null) }
     var confirmDeleteSubscription by remember { mutableStateOf<Subscription?>(null) }
     var confirmDeleteConfig by remember { mutableStateOf<ProxyConfiguration?>(null) }
@@ -97,7 +99,7 @@ fun ProxiesScreen(state: AppState) {
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .background(if (selected) Azure else MaterialTheme.colorScheme.surfaceContainerLow)
-                            .clickable { shownGroup = g.id; state.selectGroup(g.id) }
+                            .clickable { shownGroup = g.id }
                             .padding(horizontal = 14.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -144,6 +146,16 @@ fun ProxiesScreen(state: AppState) {
                         trailingIcon = if (sortByLatency) ({ Icon(Icons.Default.Check, null) }) else null,
                         onClick = { menu = false; sortByLatency = !sortByLatency }
                     )
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text(tr("add_manually")) }, onClick = { menu = false; editor = true to null })
+                    DropdownMenuItem(text = { Text(tr("remove_duplicates")) }, onClick = {
+                        menu = false
+                        state.notify(tr("removed_n", state.removeDuplicates(shownGroup)))
+                    })
+                    DropdownMenuItem(text = { Text(tr("remove_failed")) }, onClick = {
+                        menu = false
+                        state.notify(tr("removed_n", state.removeFailed(shownGroup)))
+                    })
                     if (group.subscription != null) {
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text(tr("update_all")) }, onClick = { menu = false; state.updateAllSubscriptions() })
@@ -228,10 +240,27 @@ fun ProxiesScreen(state: AppState) {
                         }
                     },
                     onRename = { renameConfig = config },
+                    onEdit = { editor = true to config },
                     onDelete = { confirmDeleteConfig = config }
                 )
             }
             item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+
+    editor?.let { (_, config) ->
+        androidx.compose.ui.window.DialogWindow(
+            onCloseRequest = { editor = null },
+            title = if (config == null) tr("add_configuration") else tr("edit_configuration"),
+            state = androidx.compose.ui.window.rememberDialogState(
+                size = androidx.compose.ui.unit.DpSize(560.dp, 720.dp)
+            )
+        ) {
+            ServerEditor(
+                configuration = config,
+                onSave = { state.saveConfiguration(it); editor = null },
+                onDismiss = { editor = null }
+            )
         }
     }
 
@@ -282,6 +311,7 @@ private fun ProxyRow(
     onPing: () -> Unit,
     onCopy: () -> Unit,
     onRename: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -326,6 +356,7 @@ private fun ProxyRow(
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(tr("ping_real")) }, onClick = { menu = false; onPing() })
                 DropdownMenuItem(text = { Text(tr("copy_link")) }, onClick = { menu = false; onCopy() })
+                DropdownMenuItem(text = { Text(tr("edit")) }, onClick = { menu = false; onEdit() })
                 DropdownMenuItem(text = { Text(tr("rename")) }, onClick = { menu = false; onRename() })
                 DropdownMenuItem(text = { Text(tr("delete")) }, onClick = { menu = false; onDelete() })
             }
