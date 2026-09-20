@@ -209,7 +209,9 @@ class WintunAdapter private constructor(
                 override fun invoke(level: Int, timestamp: Long, message: Pointer?) {
                     val text = message?.getWideString(0) ?: return
                     when (level) {
-                        2 -> logger.error(text)
+                        // "Element not found" is Wintun looking for a leftover
+                        // adapter before creating one: expected, not an error.
+                        2 -> if (text.contains("0x00000490")) logger.debug(text) else logger.error(text)
                         1 -> logger.warning(text)
                         else -> logger.debug(text)
                     }
