@@ -63,3 +63,5 @@ desktop/native/out/
 desktop/resources/windows-x64/
 *.zip
 desktop/tools/
+*.exe
+*.msi
