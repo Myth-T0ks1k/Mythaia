@@ -40,7 +40,9 @@ class LwipUdpFlow(
     val isIpv6: Boolean,
     val configuration: ProxyConfiguration,
     private val forceBypass: Boolean,
-    private val lwipExecutor: ScheduledExecutorService
+    private val lwipExecutor: ScheduledExecutorService,
+    /** The stack this flow belongs to; see [LwipHost]. */
+    private val host: LwipHost
 ) {
     // Coroutine scope for protocol operations, dispatched on the lwIP executor
     private val scopeJob = SupervisorJob()
@@ -58,7 +60,7 @@ class LwipUdpFlow(
     // Mux path
     private var muxSession: MuxSession? = null
 
-    // Shadowsocks: shared session per ProxyConfiguration owned by LwipStack;
+    // Shadowsocks: shared session per ProxyConfiguration owned by the host stack;
     // we hold an opaque token for our flow's responses.
     private var ssSession: ShadowsocksUdpSession? = null
     private var ssSessionToken: Long? = null
@@ -177,7 +179,7 @@ class LwipUdpFlow(
     private fun connectProxy() {
         if (proxyConnecting || proxyConnection != null || muxSession != null || directRelay != null || ssSession != null || closed) return
 
-        if (forceBypass || LwipStack.instance?.shouldBypass(dstHost) == true) {
+        if (forceBypass || host.shouldBypass(dstHost)) {
             connectDirectUdp()
             return
         }
@@ -202,20 +204,20 @@ class LwipUdpFlow(
         val allowUdp443 = flow == "xtls-rprx-vision-udp443"
         if (dstPort == 443 && isVision && !allowUdp443) {
             closed = true
-            LwipStack.instance?.udpFlows?.remove(flowKey)
+            host.removeUdpFlow(flowKey)
             return
         }
 
         proxyConnecting = true
 
         // Check if we should use mux (only for default VLESS configuration)
-        val stack = LwipStack.instance
-        val isDefaultConfig = stack?.configuration?.id == configuration.id
+        val isDefaultConfig = host.configuration?.id == configuration.id
+        val hostMux = host.muxManager
         if (isDefaultConfig &&
             configuration.outboundProtocol == OutboundProtocol.VLESS &&
-            stack?.muxManager != null
+            hostMux != null
         ) {
-            val muxManager = stack.muxManager!!
+            val muxManager = hostMux
             // Cone NAT: GlobalID = blake3_keyed(BaseKey, "udp:srcHost:srcPort")[0:8]
             // Uses keyed BLAKE3 with per-process BaseKey and 8-byte output.
             val globalId = if (configuration.xudpEnabled) {
@@ -248,7 +250,7 @@ class LwipUdpFlow(
                         session.closeHandler = {
                             lwipExecutor.execute {
                                 close()
-                                LwipStack.instance?.udpFlows?.remove(flowKey)
+                                host.removeUdpFlow(flowKey)
                             }
                         }
 
@@ -257,7 +259,7 @@ class LwipUdpFlow(
                         // this handler ran.
                         if (session.closed) {
                             releaseProtocol()
-                            LwipStack.instance?.udpFlows?.remove(flowKey)
+                            host.removeUdpFlow(flowKey)
                             return@execute
                         }
 
@@ -280,7 +282,7 @@ class LwipUdpFlow(
                         if (closed) return@execute
                         logTransportFailure("Mux dispatch", e, TransportLogLevel.ERROR)
                         releaseProtocol()
-                        LwipStack.instance?.udpFlows?.remove(flowKey)
+                        host.removeUdpFlow(flowKey)
                     }
                 }
             }
@@ -355,7 +357,7 @@ class LwipUdpFlow(
                         logTransportFailure("Connect", e, TransportLogLevel.ERROR)
                     }
                     releaseProtocol()
-                    LwipStack.instance?.udpFlows?.remove(flowKey)
+                    host.removeUdpFlow(flowKey)
                 }
             }
         }
@@ -412,7 +414,7 @@ class LwipUdpFlow(
                         logTransportFailure("Connect", e, TransportLogLevel.ERROR)
                     }
                     releaseProtocol()
-                    LwipStack.instance?.udpFlows?.remove(flowKey)
+                    host.removeUdpFlow(flowKey)
                 }
             }
         }
@@ -424,12 +426,7 @@ class LwipUdpFlow(
         // The shared per-config session connects lazily on its first send;
         // there's no async TCP/TLS handshake to wait for, so flows bind
         // synchronously on the lwipExecutor and start sending immediately.
-        val stack = LwipStack.instance
-        if (stack == null) {
-            close()
-            return
-        }
-        val session = stack.shadowsocksUDPSession(configuration)
+        val session = host.shadowsocksUDPSession(configuration)
         if (session == null) {
             logTransportFailure(
                 "SS UDP session",
@@ -437,7 +434,7 @@ class LwipUdpFlow(
                 TransportLogLevel.ERROR
             )
             close()
-            stack.udpFlows.remove(flowKey)
+            host.removeUdpFlow(flowKey)
             return
         }
 
@@ -457,7 +454,7 @@ class LwipUdpFlow(
                     if (closed) return@execute
                     logTransportFailure("SS UDP session", error, TransportLogLevel.WARNING)
                     close()
-                    LwipStack.instance?.udpFlows?.remove(flowKey)
+                    host.removeUdpFlow(flowKey)
                 }
             }
         )
@@ -535,7 +532,7 @@ class LwipUdpFlow(
                     if (closed) return@execute
                     logTransportFailure("Connect", e, TransportLogLevel.ERROR)
                     close()
-                    LwipStack.instance?.udpFlows?.remove(flowKey)
+                    host.removeUdpFlow(flowKey)
                 }
             }
         }
@@ -553,7 +550,7 @@ class LwipUdpFlow(
                     }
                     lwipExecutor.execute {
                         close()
-                        LwipStack.instance?.udpFlows?.remove(flowKey)
+                        host.removeUdpFlow(flowKey)
                     }
                 }
             )
@@ -605,7 +602,7 @@ class LwipUdpFlow(
         connection?.cancel()
         session?.close()
         // Unregister our flow from the shared SS UDP session — the session
-        // itself is owned by LwipStack and stays alive for other flows.
+        // itself is owned by the host stack and stays alive for other flows.
         if (ssSess != null && ssTok != null) {
             ssSess.unregister(ssTok)
         }

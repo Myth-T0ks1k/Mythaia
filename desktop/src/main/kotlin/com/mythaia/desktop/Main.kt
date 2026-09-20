@@ -50,8 +50,14 @@ fun main(args: Array<String>) {
 
     val nativeAvailable = loadNativeLibrary(logger)
     SystemProxy.restoreIfLeftOver()
+    runCatching { com.mythaia.desktop.tun.TunEngine.cleanupLeftovers() }
 
     val state = AppState(DesktopStore(), nativeAvailable)
+    // An elevated relaunch for TUN mode: switch to it and connect at once.
+    if (args.contains("--tun")) {
+        state.updateSettings { it.copy(tunnelMode = "tun") }
+        state.connect()
+    }
     Runtime.getRuntime().addShutdownHook(Thread { runCatching { state.shutdown() } })
     watchShowRequests(state)
     val startHidden = args.contains("--minimized") || state.settings.value.startMinimized

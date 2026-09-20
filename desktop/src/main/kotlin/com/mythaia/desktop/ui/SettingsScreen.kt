@@ -54,6 +54,32 @@ fun SettingsScreen(state: AppState) {
         Column(modifier = Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
 
             Section(tr("settings_connection")) {
+                val needsElevation by state.needsElevation.collectAsState()
+                Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DropdownField(
+                        tr("tunnel_mode"), settings.tunnelMode,
+                        listOf("proxy" to tr("mode_proxy"), "tun" to tr("mode_tun")),
+                        modifier = Modifier.weight(1f)
+                    ) { v -> state.updateSettings { it.copy(tunnelMode = v) } }
+                }
+                Text(
+                    if (settings.tunnelMode == "tun") tr("tun_hint") else tr("proxy_mode_hint"),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 18.dp)
+                )
+                if (needsElevation) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { state.needsElevation.value = false },
+                        text = { Text(tr("tun_needs_admin")) },
+                        confirmButton = {
+                            Button(onClick = {
+                                state.needsElevation.value = false
+                                if (state.relaunchElevated()) kotlin.system.exitProcess(0)
+                            }) { Text(tr("tun_relaunch")) }
+                        },
+                        dismissButton = { TextButton(onClick = { state.needsElevation.value = false }) { Text(tr("cancel")) } }
+                    )
+                }
                 var socks by remember(settings.socksPort) { mutableStateOf(settings.socksPort.toString()) }
                 var http by remember(settings.httpPort) { mutableStateOf(settings.httpPort.toString()) }
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -211,13 +237,13 @@ private fun RulesEditor(rules: List<RouteRule>, onChange: (List<RouteRule>) -> U
             DropdownField(
                 tr("rule_type"), type.name,
                 DomainRuleType.entries.map { it.name to typeName(it) },
-                modifier = Modifier.weight(1.1f)
+                modifier = Modifier.weight(1.5f)
             ) { v -> type = DomainRuleType.valueOf(v) }
-            WingField(value, { value = it }, tr("rule_value"), modifier = Modifier.weight(1.4f))
+            WingField(value, { value = it }, tr("rule_value"), modifier = Modifier.weight(1.3f))
             DropdownField(
                 tr("rule_action"), action.name,
                 RouteTarget.entries.map { it.name to actionName(it) },
-                modifier = Modifier.weight(0.9f)
+                modifier = Modifier.weight(1.2f)
             ) { v -> action = RouteTarget.valueOf(v) }
             Button(
                 onClick = { onChange(rules + RouteRule(type, value.trim(), action)); value = "" },

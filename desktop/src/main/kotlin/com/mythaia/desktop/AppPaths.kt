@@ -17,6 +17,8 @@ object AppPaths {
     val chains: File get() = File(dataDir, "chains.json")
     val importRequest: File get() = File(dataDir, "import.request")
     val proxySnapshot: File get() = File(dataDir, "system-proxy-before.json")
+    /** The routes TUN mode added on the physical side, so a crash can be cleaned up on the next start. */
+    val tunRouteSnapshot: File get() = File(dataDir, "tun-routes.json")
     val geoIp: File get() = File(dataDir, "geoip.mmdb")
     val logDir: File get() = File(dataDir, "logs").apply { mkdirs() }
     val instanceLock: File get() = File(dataDir, "instance.lock")
@@ -36,6 +38,22 @@ object AppPaths {
         val candidates = buildList {
             System.getProperty("mythaia.native.library")?.let { add(File(it)) }
             System.getenv("MYTHAIA_NATIVE")?.let { add(File(it)) }
+            resourcesDir?.let { add(File(it, name)) }
+            val cwd = File(System.getProperty("user.dir"))
+            add(File(cwd, "desktop/resources/windows-x64/$name"))
+            add(File(cwd, "resources/windows-x64/$name"))
+            add(File(cwd, "desktop/native/out/$name"))
+            add(File(cwd, name))
+        }
+        return candidates.firstOrNull { it.isFile }
+    }
+
+    /** The Wintun driver DLL (see desktop/native/fetch-wintun.cmd), wherever this run keeps it; null when absent. */
+    fun wintunLibrary(): File? {
+        val name = "wintun.dll"
+        val candidates = buildList {
+            System.getProperty("mythaia.wintun.library")?.let { add(File(it)) }
+            System.getenv("MYTHAIA_WINTUN")?.let { add(File(it)) }
             resourcesDir?.let { add(File(it, name)) }
             val cwd = File(System.getProperty("user.dir"))
             add(File(cwd, "desktop/resources/windows-x64/$name"))

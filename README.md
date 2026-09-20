@@ -93,9 +93,14 @@ ativeuild.cmd
 ```
 
 The app image lands in `desktop/build/compose/binaries/main/app/Mythaia Pro/`;
-run `Mythaia Pro.exe` from there. `./gradlew :desktop:run` starts it from
-sources. Data lives in `%APPDATA%\Mythaia`. Not yet on Windows: a TUN (VPN)
-mode, WireGuard, chains and the field-by-field server editor.
+run `Mythaia Pro.exe` from there. With WiX 3.14 on the PATH (unzip
+`wix314-binaries.zip` into `desktop/tools/wix314`), `:desktop:packageMsi` and
+`:desktop:packageExe` produce installers. `./gradlew :desktop:run` starts it
+from sources. Data lives in `%APPDATA%\Mythaia`. Links (`vless://` …,
+`mythaia://add-proxy?link=`), Xray JSON and QR codes on screen import; the
+server table sorts and batch-selects; chains, the full server editor,
+subscription auto-update and a status bar are there. Not yet on Windows:
+WireGuard.
 
 ## License
 

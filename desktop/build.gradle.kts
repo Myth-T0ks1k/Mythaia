@@ -42,10 +42,13 @@ dependencies {
 }
 
 // The JNI library is built by desktop/native/build.cmd (MSVC) into
-// desktop/native/out; it is copied next to the app's other resources so the
-// packaged app and `gradle :desktop:run` both find it.
+// desktop/native/out, and desktop/native/fetch-wintun.cmd puts wintun.dll
+// (plus its licence) there too; both are copied next to the app's other
+// resources so the packaged app and `gradle :desktop:run` find them.
 val prepareNative by tasks.registering(Copy::class) {
-    from(layout.projectDirectory.file("native/out/mythaia_native.dll"))
+    from(layout.projectDirectory.dir("native/out")) {
+        include("mythaia_native.dll", "wintun.dll", "wintun-LICENSE.txt")
+    }
     into(layout.projectDirectory.dir("resources/windows-x64"))
 }
 
@@ -68,7 +71,8 @@ compose.desktop {
         mainClass = "com.mythaia.desktop.MainKt"
         packagingJdk?.let { javaHome = it }
 
-        jvmArgs("-Dfile.encoding=UTF-8", "-Dsun.java2d.uiScale.enabled=true")
+        // Compose scales for HiDPI itself; forcing Java2D scaling on top doubled it.
+        jvmArgs("-Dfile.encoding=UTF-8")
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)

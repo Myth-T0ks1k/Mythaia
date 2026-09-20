@@ -59,6 +59,20 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
     val configurations by state.configurations.collectAsState()
     val subscriptions by state.subscriptions.collectAsState()
     val speed by state.speed.collectAsState()
+    val needsElevation by state.needsElevation.collectAsState()
+    if (needsElevation) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { state.needsElevation.value = false },
+            text = { androidx.compose.material3.Text(tr("tun_needs_admin")) },
+            confirmButton = {
+                androidx.compose.material3.Button(onClick = {
+                    state.needsElevation.value = false
+                    if (state.relaunchElevated()) kotlin.system.exitProcess(0)
+                }) { androidx.compose.material3.Text(tr("tun_relaunch")) }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { state.needsElevation.value = false }) { androidx.compose.material3.Text(tr("cancel")) } }
+        )
+    }
 
     // A one-second tick for the counters.
     var now by remember { mutableStateOf(System.currentTimeMillis()) }

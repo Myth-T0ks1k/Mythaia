@@ -46,7 +46,9 @@ class LwipTcpConnection(
     configuration: ProxyConfiguration,
     forceBypass: Boolean,
     sniffSNI: Boolean,
-    private val lwipExecutor: ScheduledExecutorService
+    private val lwipExecutor: ScheduledExecutorService,
+    /** The stack this connection belongs to; see [LwipHost]. */
+    private val host: LwipHost
 ) {
     /**
      * Destination the proxy will be asked to connect to. Initialized from
@@ -95,8 +97,7 @@ class LwipTcpConnection(
      * Whether the connection should bypass the configured proxy and connect
      * directly. May flip after SNI sniff resolves a routing rule.
      */
-    private var bypass: Boolean = forceBypass ||
-        (LwipStack.instance?.shouldBypass(dstHost) == true)
+    private var bypass: Boolean = forceBypass || host.shouldBypass(dstHost)
 
     private var pendingData = ByteArrayOutputStream()
     var closed = false
@@ -467,24 +468,23 @@ class LwipTcpConnection(
      *     a different CDN IP than the one the caller already chose.
      */
     private fun applySNI(sni: String) {
-        val stack = LwipStack.instance ?: return
-        val action = stack.domainRouter.matchDomain(sni) ?: return
+        val route = host.routeDomain(sni) ?: return
 
         // Rule matched: the sniffed hostname drives the new route, so
         // forward the proxy CONNECT to the name rather than the tentative
         // IP.
         dstHost = sni
 
-        when (action) {
-            RouteAction.Direct -> {
+        when (route) {
+            LwipDomainRoute.Direct -> {
                 bypass = true
             }
-            RouteAction.Reject -> {
+            LwipDomainRoute.Reject -> {
                 logger.debug("[TCP] SNI rejected by routing rule: $sni ($dstHost:$dstPort)")
                 rejectGracefully()
             }
-            is RouteAction.Proxy -> {
-                val resolved = stack.domainRouter.resolveConfiguration(action)
+            is LwipDomainRoute.Proxy -> {
+                val resolved = route.configuration
                 if (resolved != null) {
                     // Preserve the ambient chain from the default
                     // configuration if the rule-targeted configuration
@@ -498,7 +498,7 @@ class LwipTcpConnection(
                 } else {
                     logger.warning("[TCP] SNI routing configuration not found for $sni")
                 }
-                bypass = stack.shouldBypass(sni)
+                bypass = host.shouldBypass(sni)
             }
         }
     }
@@ -636,7 +636,7 @@ class LwipTcpConnection(
                 logger.debug("[TCP] lwIP closed connection: $endpointDescription: $reason")
             err == -14 ->  // ERR_RST — always local-app-initiated in TUN mode
                 logger.debug("[TCP] lwIP peer reset: $endpointDescription: $reason")
-            err == -13 && LwipStack.instance?.isTearingDown == true ->
+            err == -13 && host.isTearingDown ->
                 // ERR_ABRT during a deliberate stack teardown
                 // (shutdown/restart/wake). Outside teardown, ERR_ABRT
                 // indicates lwIP's own pressure aborts (tcp_kill_prio /
@@ -648,7 +648,7 @@ class LwipTcpConnection(
         if (closed) return
         closed = true
         releaseProtocol()
-        LwipStack.instance?.removeConnection(connId)
+        host.removeConnection(connId)
     }
 
     private val endpointDescription: String
@@ -751,7 +751,7 @@ class LwipTcpConnection(
             remaining -= chunk
         }
         NativeBridge.nativeTcpOutput(pcb)
-        LwipStack.instance?.flushOutputInline()
+        host.flushOutputInline()
     }
 
     /**
@@ -1051,7 +1051,7 @@ class LwipTcpConnection(
                 NativeBridge.nativeTcpOutput(pcb)
                 // Flush the egress queue inline so freed pbufs leave the host
                 // within the same drain cycle that consumed them.
-                LwipStack.instance?.flushOutputInline()
+                host.flushOutputInline()
             } else {
                 // Nothing drained (ERR_MEM / zero window) — schedule a delayed
                 // retry. Skip `tryArmReceive` on purpose: piling more upstream
@@ -1151,7 +1151,7 @@ class LwipTcpConnection(
         flushPendingToLwip()
         NativeBridge.nativeTcpClose(pcb)
         releaseProtocol()
-        LwipStack.instance?.removeConnection(connId)
+        host.removeConnection(connId)
     }
 
     /**
@@ -1184,7 +1184,7 @@ class LwipTcpConnection(
         closed = true
         NativeBridge.nativeTcpAbort(pcb)
         releaseProtocol()
-        LwipStack.instance?.removeConnection(connId)
+        host.removeConnection(connId)
     }
 
     private fun releaseProtocol() {

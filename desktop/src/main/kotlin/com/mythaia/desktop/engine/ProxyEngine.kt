@@ -165,6 +165,8 @@ class DirectUpstream private constructor(private val socket: Socket) : Upstream 
             val socket = Socket()
             try {
                 socket.tcpNoDelay = true
+                // A no-op in proxy mode; with the TUN up it keeps this socket off the tunnel.
+                if (!com.mythaia.vpn.SocketProtector.protect(socket)) throw IOException("cannot protect the socket")
                 socket.connect(InetSocketAddress(InetAddress.getByName(address), port), CONNECT_TIMEOUT_MS)
                 if (initialData != null && initialData.isNotEmpty()) {
                     socket.getOutputStream().apply { write(initialData); flush() }
@@ -200,7 +202,9 @@ class DirectUdpUpstream private constructor(private val socket: DatagramSocket, 
         suspend fun connect(host: String, port: Int): DirectUdpUpstream = withContext(Dispatchers.IO) {
             val address = if (DnsCache.isIpAddress(host)) host
             else DnsCache.resolveHost(host) ?: throw IOException("cannot resolve $host")
-            val socket = DatagramSocket()
+            val socket = DatagramSocket(null)
+            if (!com.mythaia.vpn.SocketProtector.protect(socket)) throw IOException("cannot protect the socket")
+            if (!socket.isBound) socket.bind(null)
             socket.soTimeout = 120_000
             DirectUdpUpstream(socket, InetSocketAddress(InetAddress.getByName(address), port))
         }

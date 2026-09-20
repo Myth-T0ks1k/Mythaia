@@ -79,6 +79,16 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     val stats = TrafficStats()
     val engine = ProxyEngine(stats)
+    val tun = com.mythaia.desktop.tun.TunEngine(stats)
+
+    /** True when TUN mode was asked for without administrator rights; the UI offers a relaunch. */
+    val needsElevation = MutableStateFlow(false)
+
+    /** Whichever tunnel is up. */
+    val isTunnelRunning: Boolean get() = engine.isRunning || tun.isRunning
+
+    /** The outbound the live tunnel dials through, whichever mode. */
+    val liveConfiguration: ProxyConfiguration? get() = if (tun.isRunning) tun.configuration else engine.configuration
 
     private val stateLock = Any()
 
@@ -300,8 +310,15 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         configs.mapNotNull { runCatching { it.toUrl() }.getOrNull() }.joinToString("\n")
 
     private fun reconnectIfNeeded() {
-        if (!engine.isRunning) return
+        if (!isTunnelRunning) return
         scope.launch { startConnection() }
+    }
+
+    /** Hands the app to an elevated copy of itself for TUN mode. */
+    fun relaunchElevated(): Boolean {
+        val ok = com.mythaia.desktop.tun.TunEngine.relaunchElevated(listOf("--tun"))
+        if (!ok) notify(tr("tun_unavailable", com.mythaia.desktop.tun.Elevation.lastError ?: "?"))
+        return ok
     }
 
     private fun pruneSelection() {
@@ -321,7 +338,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     // --------------------------------------------------------- connection
 
     fun toggle() {
-        if (engine.isRunning || _connection.value is ConnectionState.Connecting) disconnect()
+        if (isTunnelRunning || _connection.value is ConnectionState.Connecting) disconnect()
         else scope.launch { startConnection() }
     }
 
@@ -334,7 +351,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         if (config == null) {
             val reason = if (!nativeAvailable && groupConfigs(gid).isNotEmpty()) tr("native_missing") else tr("no_servers_hint")
             // A live connection is kept rather than replaced by nothing.
-            if (engine.isRunning && previous is ConnectionState.Connected) {
+            if (isTunnelRunning && previous is ConnectionState.Connected) {
                 notify(reason)
                 return@withLock
             }
@@ -343,25 +360,46 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             return@withLock
         }
         if (!nativeAvailable && config.outboundProtocol.needsNative()) {
-            if (engine.isRunning && previous is ConnectionState.Connected) {
+            if (isTunnelRunning && previous is ConnectionState.Connected) {
                 notify(tr("no_native_for", config.name))
                 return@withLock
             }
             _connection.value = ConnectionState.Failed(tr("native_missing"))
             return@withLock
         }
-        val wasRunning = engine.isRunning
+        val settings = _settings.value
+        val useTun = settings.tunnelMode == "tun"
+        if (useTun) {
+            if (!com.mythaia.desktop.tun.TunEngine.isAvailable()) {
+                _connection.value = ConnectionState.Failed(tr("tun_unavailable", "wintun.dll"))
+                return@withLock
+            }
+            if (!com.mythaia.desktop.tun.TunEngine.isElevated()) {
+                _connection.value = ConnectionState.Failed(tr("tun_needs_admin_short"))
+                needsElevation.value = true
+                return@withLock
+            }
+        }
+        // Switching modes while up: the other tunnel comes down first.
+        if (useTun && engine.isRunning) engine.stop()
+        if (!useTun && tun.isRunning) tun.stop()
+        val wasRunning = isTunnelRunning
         _connection.value = ConnectionState.Connecting(config)
         try {
-            engine.updateRouting(_rules.value, _settings.value)
-            engine.start(_settings.value, config)
-        } catch (e: IOException) {
+            if (useTun) {
+                tun.updateRouting(_rules.value, settings)
+                tun.start(settings, config)
+            } else {
+                engine.updateRouting(_rules.value, settings)
+                engine.start(settings, config)
+            }
+        } catch (e: Exception) {
             logger.error("Start failed: ${e.message}")
-            val port = _settings.value.socksPort
+            val port = settings.socksPort
             _connection.value = ConnectionState.Failed(
                 if (e is java.net.BindException) tr("port_in_use", port) else (e.message ?: tr("failed"))
             )
-            engine.stop()
+            runCatching { if (useTun) tun.stop() else engine.stop() }
             return@withLock
         }
         if (!wasRunning) _connectedSince.value = System.currentTimeMillis()
@@ -379,6 +417,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private fun disconnectLocked() {
         autoJob?.cancel(); autoJob = null
         probeJob?.cancel(); probeJob = null
+        if (tun.isRunning) runCatching { tun.stop() }.onFailure { logger.error("TUN stop: ${it.message}") }
         engine.stop()
         _connection.value = ConnectionState.Disconnected
         _connectedSince.value = null
@@ -425,7 +464,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             _latencies.update { m -> m + configs.associate { it.id to LatencyResult.Testing } }
             var bestId: UUID? = null
             var bestMs = Int.MAX_VALUE
-            val current = engine.configuration?.id
+            val current = liveConfiguration?.id
             var currentMs: Int? = null
             var currentFailed = false
             try {
@@ -444,7 +483,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                     // guess, so the first good answer is worth moving to; later,
                     // only a current server known to have failed is left mid-round.
                     val best = bestId?.let { b -> configs.firstOrNull { it.id == b } }
-                    if (best != null && best.id != engine.configuration?.id) {
+                    if (best != null && best.id != liveConfiguration?.id) {
                         val currentKnown = currentMs
                         val move = when {
                             currentFailed -> true
@@ -461,8 +500,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             }
             autoMeasuredOnce = true
             val best = bestId?.let { b -> configs.firstOrNull { it.id == b } }
-            if (best != null && engine.configuration?.id != best.id) {
-                val currMs = (httpLatencies.value[engine.configuration?.id] as? LatencyResult.Success)?.ms
+            if (best != null && liveConfiguration?.id != best.id) {
+                val currMs = (httpLatencies.value[liveConfiguration?.id] as? LatencyResult.Success)?.ms
                 if (currMs == null || bestMs + AUTO_SWITCH_MARGIN_MS < currMs) switchAuto(groupId, best)
             }
             if (best == null) {
@@ -475,8 +514,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     private fun switchAuto(groupId: String, config: ProxyConfiguration) {
-        if (engine.configuration?.id == config.id) return
-        engine.switchTo(config)
+        if (liveConfiguration?.id == config.id) return
+        if (tun.isRunning) tun.switchTo(config) else engine.switchTo(config)
         _connection.value = ConnectionState.Connected(config)
         _connectivityOk.value = true
         probeFailures = 0
@@ -489,13 +528,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         delay(PROBE_FIRST_DELAY_MS)
         probeFailures = 0
         while (scope.isActive) {
-            val config = engine.configuration
+            val config = liveConfiguration
             if (config != null) {
                 val result = safeTest(config, LatencyKind.HTTP)
                 _latencies.update { it + (config.id to result) }
                 httpLatencies.update { it + (config.id to result) }
                 val ok = result is LatencyResult.Success
-                if (engine.configuration?.id == config.id) _connectivityOk.value = ok
+                if (liveConfiguration?.id == config.id) _connectivityOk.value = ok
                 if (!ok) {
                     probeFailures++
                     logger.warning("Probe failed for ${config.name} ($probeFailures)")
@@ -594,19 +633,19 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             if (list.any { it.id == config.id }) list.map { if (it.id == config.id) config.copy(subscriptionId = it.subscriptionId) else it }
             else list + config.copy(subscriptionId = null)
         }
-        if (engine.configuration?.id == config.id) reconnectIfNeeded()
+        if (liveConfiguration?.id == config.id) reconnectIfNeeded()
     }
 
     fun deleteConfiguration(config: ProxyConfiguration) {
         mutateConfigurations { list -> list.filterNot { it.id == config.id } }
         pruneSelection()
-        if (engine.configuration?.id == config.id) reconnectIfNeeded()
+        if (liveConfiguration?.id == config.id) reconnectIfNeeded()
     }
 
     fun deleteConfigurations(ids: Set<UUID>) {
         mutateConfigurations { list -> list.filterNot { it.id in ids } }
         pruneSelection()
-        if (engine.configuration?.id in ids) reconnectIfNeeded()
+        if (liveConfiguration?.id in ids) reconnectIfNeeded()
     }
 
     fun renameConfiguration(config: ProxyConfiguration, name: String) {
@@ -700,7 +739,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 pruneSelection()
                 val name = _subscriptions.value.firstOrNull { it.id == id }?.name ?: subscription.name
                 notify(if (announceAdded) tr("subscription_added", name) else tr("subscription_updated", name, fresh.size))
-                val live = engine.configuration
+                val live = liveConfiguration
                 if (live?.subscriptionId == id && _configurations.value.none { it.id == live.id }) reconnectIfNeeded()
             } catch (e: Exception) {
                 logger.error("Subscription ${subscription.name}: ${e.message}")
@@ -715,7 +754,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         mutateSubscriptions { list -> list.filterNot { it.id == id } }
         mutateConfigurations { list -> list.filterNot { it.subscriptionId == id } }
         pruneSelection()
-        if (engine.configuration?.subscriptionId == id) reconnectIfNeeded()
+        if (liveConfiguration?.subscriptionId == id) reconnectIfNeeded()
     }
 
     /** Refreshes every subscription on the configured interval, and once on start when stale. */
@@ -748,13 +787,15 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
         val portsChanged = after.socksPort != old.socksPort || after.httpPort != old.httpPort ||
             after.allowLan != old.allowLan || after.socksUdp != old.socksUdp
-        if (engine.isRunning) {
-            if (portsChanged) {
+        val modeChanged = after.tunnelMode != old.tunnelMode
+        if (modeChanged) needsElevation.value = false
+        if (isTunnelRunning) {
+            if (portsChanged || modeChanged || (tun.isRunning && after.bypassTurkmenistan != old.bypassTurkmenistan)) {
                 scope.launch {
-                    connectLock.withLock { engine.stop() }
+                    connectLock.withLock { if (tun.isRunning) runCatching { tun.stop() } else engine.stop() }
                     startConnection()
                 }
-            } else if (after.setSystemProxy != old.setSystemProxy || after.proxyBypass != old.proxyBypass) {
+            } else if (engine.isRunning && (after.setSystemProxy != old.setSystemProxy || after.proxyBypass != old.proxyBypass)) {
                 engine.setSystemProxy(after.setSystemProxy, after)
             }
         }
@@ -769,6 +810,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         _rules.value = rules
         store.saveRules(rules)
         engine.updateRouting(rules, _settings.value)
+        tun.updateRouting(rules, _settings.value)
     }
 
     fun importGeoIp(file: java.io.File, onDone: (Boolean) -> Unit) {

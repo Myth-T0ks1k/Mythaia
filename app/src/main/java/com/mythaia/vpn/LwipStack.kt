@@ -10,6 +10,8 @@ import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.MythaiaLogger
+import com.mythaia.vpn.tun.FakeIpDns
+import com.mythaia.vpn.util.IcmpPackets
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import com.mythaia.vpn.protocol.mux.MuxManager
@@ -36,12 +38,12 @@ import com.mythaia.vpn.util.reload
  * reassembly, and dispatches resulting connections through VLESS proxy clients.
  * Response data is written back to the TUN fd.
  */
-class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
+class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipHost {
 
     /** Single-threaded executor for all lwIP operations (lwIP is not thread-safe).
      *  DiscardPolicy silently drops tasks submitted after shutdown(), preventing
      *  RejectedExecutionException from in-flight coroutines that resume during teardown. */
-    val lwipExecutor: ScheduledExecutorService = ScheduledThreadPoolExecutor(1) { r ->
+    override val lwipExecutor: ScheduledExecutorService = ScheduledThreadPoolExecutor(1) { r ->
         Thread(r, "lwip-thread").apply { isDaemon = true }
     }.apply {
         rejectedExecutionHandler = ThreadPoolExecutor.DiscardPolicy()
@@ -53,7 +55,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
     private var tunFd: ParcelFileDescriptor? = null
     private var tunInput: FileInputStream? = null
     private var tunOutput: FileOutputStream? = null
-    var configuration: ProxyConfiguration? = null
+    final override var configuration: ProxyConfiguration? = null
         private set
 
     // `ipv6DNSEnabled` is a single knob that controls both IPv6 routes on the
@@ -109,7 +111,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
     private var proxyServerAddresses: Set<String> = emptySet()
 
     /** Mux manager for multiplexing UDP flows (created when Vision+Mux is active). */
-    var muxManager: MuxManager? = null
+    override var muxManager: MuxManager? = null
 
     /** Shared Shadowsocks UDP sessions keyed by configuration id. One session
      *  services every UDP flow for a given SS configuration so all
@@ -124,7 +126,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
      * aborts (e.g. tcp_kill_prio under PCB pool exhaustion) as warnings.
      */
     @Volatile
-    var isTearingDown: Boolean = false
+    override var isTearingDown: Boolean = false
 
     /** Active UDP flows keyed by 5-tuple string. */
     val udpFlows = ConcurrentHashMap<String, LwipUdpFlow>()
@@ -202,8 +204,21 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
      *  DomainRouter rules (`bypassRules` in routing.json) by the app, so all
      *  routing decisions go through DomainRouter consistently — runtime GeoIP
      *  would override user routing rules. */
-    fun shouldBypass(host: String): Boolean {
+    override fun shouldBypass(host: String): Boolean {
         return isProxyServerAddress(host)
+    }
+
+    /** The domain router's verdict for a sniffed SNI, in the form the shared flow code understands. */
+    override fun routeDomain(domain: String): LwipDomainRoute? =
+        when (val action = domainRouter.matchDomain(domain)) {
+            null -> null
+            RouteAction.Direct -> LwipDomainRoute.Direct
+            RouteAction.Reject -> LwipDomainRoute.Reject
+            is RouteAction.Proxy -> LwipDomainRoute.Proxy(domainRouter.resolveConfiguration(action))
+        }
+
+    override fun removeUdpFlow(flowKey: String) {
+        udpFlows.remove(flowKey)
     }
 
     /** Returns true if the given host matches any proxy server address across all
@@ -348,7 +363,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
      *   Shadowsocks credentials. Caller should treat null as a fatal flow
      *   misconfiguration.
      */
-    fun shadowsocksUDPSession(
+    override fun shadowsocksUDPSession(
         config: ProxyConfiguration
     ): com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession? {
         ssUDPSessions[config.id]?.let { existing ->
@@ -936,7 +951,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
      * — `flushOutputPackets()` is a single-shot drain that clears
      * [outputFlushScheduled] so the deferred path becomes a no-op.
      */
-    fun flushOutputInline() {
+    override fun flushOutputInline() {
         flushOutputPackets()
     }
 
@@ -1010,7 +1025,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             configuration = connectionConfig,
             forceBypass = forceBypass,
             sniffSNI = sniffSNI,
-            lwipExecutor = lwipExecutor
+            lwipExecutor = lwipExecutor,
+            host = this
         )
         tcpConnections[connId] = connection
         return connId
@@ -1139,7 +1155,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
             isIpv6 = isIpv6,
             configuration = flowConfig,
             forceBypass = forceBypass,
-            lwipExecutor = lwipExecutor
+            lwipExecutor = lwipExecutor,
+            host = this
         )
         udpFlows[flowKey] = flow
         flow.handleReceivedData(data, data.size)
@@ -1187,6 +1204,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
 
     /**
      * Intercepts a DNS query. Returns true if handled (no UDP flow needed).
+     * The decision itself lives in the shared [FakeIpDns].
      */
     private fun handleDnsQuery(
         payload: ByteArray,
@@ -1194,81 +1212,17 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         dstIp: ByteArray, dstPort: Int,
         isIpv6: Boolean
     ): Boolean {
-        // Parse domain + QTYPE
-        val parsed = com.mythaia.vpn.util.PacketUtil.parseDnsQueryExt(payload) ?: return false
-        val domain = parsed.domain.lowercase()
-        val qtype = parsed.qtype
-
-        // Block DDR (Discovery of Designated Resolvers, RFC 9462) when encrypted DNS is
-        // disabled to prevent the system from auto-upgrading to DoH/DoT, which bypasses
-        // port-53 interception needed for fake-IP domain routing.
-        if (!encryptedDnsEnabled && domain == "_dns.resolver.arpa") {
-            return sendNodata(payload, srcIp, srcPort, dstIp, dstPort, isIpv6, qtype, "DDR")
-        }
-
-        // Block SVCB/HTTPS (qtype=65, RFC 9460) queries with NODATA.
-        // When proxied to real DNS, these queries follow CNAME chains
-        // (e.g. example.com → example.com.cdn.net), causing the browser to
-        // connect using the CNAME target domain instead of the original.
-        // Since routing/bypass rules match on the original domain, the CNAME
-        // target may not match, sending traffic through the wrong proxy path.
-        // Returning NODATA forces the browser to fall back to A/AAAA records,
-        // which are intercepted by our fake-IP system with correct routing.
-        if (qtype == 65) {
-            return sendNodata(payload, srcIp, srcPort, dstIp, dstPort, isIpv6, qtype, "SVCB")
-        }
-
-        // Only intercept A (1) and AAAA (28) queries; let MX/SRV/etc. pass through
-        if (qtype != 1 && qtype != 28) return false
-
-        // Intercept ALL A/AAAA queries with fake IPs — including rejected domains.
-        // Routing decisions (direct/reject/proxy) are all made at connection time
-        // by checking domainRouter in resolveFakeIp(). This avoids NODATA responses
-        // that could be negatively cached by the OS, making rule changes stick even
-        // after the user removes a REJECT assignment.
-        val offset = fakeIpPool.allocate(domain)
-
-        // A queries always get fake IPv4. AAAA queries get fake IPv6 only when
-        // ipv6DNSEnabled is true; otherwise NODATA so apps fall back to IPv4
-        // fake IPs. Omitting fc00::/7 from VPN routes causes fake IPv6 packets
-        // to fall through to the physical network and time out slowly.
-        // Returning NODATA for AAAA avoids this entirely.
-        val fakeIpBytes: ByteArray? = when (qtype) {
-            1 -> FakeIpPool.ipv4Bytes(offset)
-            28 -> if (ipv6DNSEnabled) FakeIpPool.ipv6Bytes(offset) else null
-            else -> null
-        }
-
-        val response = com.mythaia.vpn.util.PacketUtil.generateDnsResponse(payload, fakeIpBytes, qtype) ?: return false
+        val answer = FakeIpDns.answer(payload, fakeIpPool, ipv6DNSEnabled, encryptedDnsEnabled)
+        val reply = answer as? FakeIpDns.Answer.Reply ?: return false
 
         // Send response back via lwIP (swap src/dst)
         NativeBridge.nativeUdpSendto(
             dstIp, dstPort,     // original dst becomes response src
             srcIp, srcPort,     // original src becomes response dst
             isIpv6,
-            response, response.size
+            reply.response, reply.response.size
         )
-
-        return true
-    }
-
-    /** Sends a NODATA DNS response (ANCOUNT=0) for the given query. */
-    private fun sendNodata(
-        payload: ByteArray,
-        srcIp: ByteArray, srcPort: Int,
-        dstIp: ByteArray, dstPort: Int,
-        isIpv6: Boolean, qtype: Int,
-        reason: String
-    ): Boolean {
-        val response = com.mythaia.vpn.util.PacketUtil.generateDnsResponse(payload, null, qtype) ?: return false
-
-        NativeBridge.nativeUdpSendto(
-            dstIp, dstPort,
-            srcIp, srcPort,
-            isIpv6,
-            response, response.size
-        )
-        logger.debug("[FakeIP] Blocked $reason query (qtype=$qtype)")
+        reply.reason?.let { logger.debug("[FakeIP] Blocked $it query") }
         return true
     }
 
@@ -1300,135 +1254,20 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
         }
     }
 
-    /**
-     * Builds an IPv4 ICMP Destination Unreachable (Type 3, Code 3) packet.
-     * Contains a reconstructed original IPv4+UDP header per RFC 792.
-     */
+    /** IPv4 ICMP Port Unreachable; see [IcmpPackets.portUnreachableV4]. */
     private fun buildIcmpv4PortUnreachable(
         srcIp: ByteArray, srcPort: Int,
         dstIp: ByteArray, dstPort: Int,
         udpPayloadLength: Int
-    ): ByteArray {
-        // Outer IPv4 (20) + ICMP header (8) + inner IPv4 (20) + UDP header (8) = 56
-        val packetLen = 56
-        val p = ByteArray(packetLen)
+    ): ByteArray = IcmpPackets.portUnreachableV4(srcIp, srcPort, dstIp, dstPort, udpPayloadLength)
 
-        // Outer IPv4 header (src=fake IP, dst=sender)
-        p[0] = 0x45.toByte()                                   // Version 4, IHL 5
-        p[1] = 0x00                                             // TOS
-        p[2] = (packetLen shr 8).toByte()                       // Total length
-        p[3] = (packetLen and 0xFF).toByte()
-        p[8] = 64                                               // TTL
-        p[9] = 1                                                // Protocol: ICMP
-        System.arraycopy(dstIp, 0, p, 12, 4)                   // Src = fake IP
-        System.arraycopy(srcIp, 0, p, 16, 4)                   // Dst = sender
-
-        var sum = 0L
-        for (i in 0 until 20 step 2) {
-            sum += ((p[i].toInt() and 0xFF) shl 8) or (p[i + 1].toInt() and 0xFF)
-        }
-        while (sum > 0xFFFF) sum = (sum and 0xFFFF) + (sum shr 16)
-        val ipCksum = sum.toInt().inv() and 0xFFFF
-        p[10] = (ipCksum shr 8).toByte()
-        p[11] = (ipCksum and 0xFF).toByte()
-
-        // ICMP header (Type 3 = Dest Unreachable, Code 3 = Port Unreachable)
-        p[20] = 3; p[21] = 3                                   // Type, Code
-
-        // Reconstructed original IPv4 header
-        val udpTotalLen = 8 + udpPayloadLength
-        val innerTotalLen = 20 + udpTotalLen
-        p[28] = 0x45.toByte(); p[29] = 0x00                    // Version 4, IHL 5, TOS
-        p[30] = ((innerTotalLen shr 8) and 0xFF).toByte()       // Total length
-        p[31] = (innerTotalLen and 0xFF).toByte()
-        p[36] = 64; p[37] = 17                                 // TTL, Protocol: UDP
-        System.arraycopy(srcIp, 0, p, 40, 4)                   // Src = original sender
-        System.arraycopy(dstIp, 0, p, 44, 4)                   // Dst = fake IP
-
-        // First 8 bytes of original UDP
-        p[48] = (srcPort shr 8).toByte(); p[49] = (srcPort and 0xFF).toByte()
-        p[50] = (dstPort shr 8).toByte(); p[51] = (dstPort and 0xFF).toByte()
-        p[52] = ((udpTotalLen shr 8) and 0xFF).toByte()
-        p[53] = (udpTotalLen and 0xFF).toByte()
-
-        // ICMP checksum (over ICMP header + data, offset 20..55)
-        sum = 0L
-        for (i in 20 until packetLen step 2) {
-            sum += ((p[i].toInt() and 0xFF) shl 8) or (p[i + 1].toInt() and 0xFF)
-        }
-        while (sum > 0xFFFF) sum = (sum and 0xFFFF) + (sum shr 16)
-        val icmpCksum = sum.toInt().inv() and 0xFFFF
-        p[22] = (icmpCksum shr 8).toByte()
-        p[23] = (icmpCksum and 0xFF).toByte()
-
-        return p
-    }
-
-    /**
-     * Builds an IPv6 ICMPv6 Destination Unreachable (Type 1, Code 4) packet.
-     * Contains a reconstructed original IPv6+UDP header per RFC 4443.
-     */
+    /** IPv6 ICMPv6 Port Unreachable; see [IcmpPackets.portUnreachableV6]. */
     private fun buildIcmpv6PortUnreachable(
         srcIp: ByteArray, srcPort: Int,
         dstIp: ByteArray, dstPort: Int,
         udpPayloadLength: Int
-    ): ByteArray {
-        // Outer IPv6 (40) + ICMPv6 header (8) + inner IPv6 (40) + UDP header (8) = 96
-        val icmpLen = 56  // 8 + 40 + 8
-        val packetLen = 40 + icmpLen
-        val p = ByteArray(packetLen)
+    ): ByteArray = IcmpPackets.portUnreachableV6(srcIp, srcPort, dstIp, dstPort, udpPayloadLength)
 
-        // Outer IPv6 header (src=fake IP, dst=sender)
-        p[0] = 0x60; p[1] = 0; p[2] = 0; p[3] = 0            // Version 6, TC, Flow Label
-        p[4] = (icmpLen shr 8).toByte()                         // Payload length
-        p[5] = (icmpLen and 0xFF).toByte()
-        p[6] = 58                                               // Next Header: ICMPv6
-        p[7] = 64                                               // Hop Limit
-        System.arraycopy(dstIp, 0, p, 8, 16)                   // Src = fake IP
-        System.arraycopy(srcIp, 0, p, 24, 16)                  // Dst = sender
-
-        // ICMPv6 header (Type 1 = Dest Unreachable, Code 4 = Port Unreachable)
-        p[40] = 1; p[41] = 4                                   // Type, Code
-
-        // Reconstructed original IPv6 header
-        val udpTotalLen = 8 + udpPayloadLength
-        p[48] = 0x60; p[49] = 0; p[50] = 0; p[51] = 0         // Version 6
-        p[52] = (udpTotalLen shr 8).toByte()                    // Payload length
-        p[53] = (udpTotalLen and 0xFF).toByte()
-        p[54] = 17; p[55] = 64                                 // Next Header: UDP, Hop Limit
-        System.arraycopy(srcIp, 0, p, 56, 16)                  // Src = original sender
-        System.arraycopy(dstIp, 0, p, 72, 16)                  // Dst = fake IP
-
-        // First 8 bytes of original UDP
-        p[88] = (srcPort shr 8).toByte(); p[89] = (srcPort and 0xFF).toByte()
-        p[90] = (dstPort shr 8).toByte(); p[91] = (dstPort and 0xFF).toByte()
-        p[92] = ((udpTotalLen shr 8) and 0xFF).toByte()
-        p[93] = (udpTotalLen and 0xFF).toByte()
-
-        // ICMPv6 checksum (includes pseudo-header per RFC 4443 §2.3)
-        var sum = 0L
-        // Pseudo-header: source address (outer src = dstIp)
-        for (i in 8 until 24 step 2) {
-            sum += ((p[i].toInt() and 0xFF) shl 8) or (p[i + 1].toInt() and 0xFF)
-        }
-        // Pseudo-header: destination address (outer dst = srcIp)
-        for (i in 24 until 40 step 2) {
-            sum += ((p[i].toInt() and 0xFF) shl 8) or (p[i + 1].toInt() and 0xFF)
-        }
-        // Pseudo-header: upper-layer packet length + next header (58)
-        sum += icmpLen.toLong()
-        sum += 58
-        // ICMPv6 header + data
-        for (i in 40 until packetLen step 2) {
-            sum += ((p[i].toInt() and 0xFF) shl 8) or (p[i + 1].toInt() and 0xFF)
-        }
-        while (sum > 0xFFFF) sum = (sum and 0xFFFF) + (sum shr 16)
-        val cksum = sum.toInt().inv() and 0xFFFF
-        p[42] = (cksum shr 8).toByte()
-        p[43] = (cksum and 0xFF).toByte()
-
-        return p
-    }
 
     /** Continuously reads IP packets from the TUN fd and feeds them into lwIP.
      *  Batches multiple packets per executor dispatch to reduce task overhead. */
@@ -1519,7 +1358,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback {
     }
 
     /** Called by LwipTcpConnection when it closes/aborts itself. */
-    fun removeConnection(connId: Long) {
+    override fun removeConnection(connId: Long) {
         tcpConnections.remove(connId)
     }
 
