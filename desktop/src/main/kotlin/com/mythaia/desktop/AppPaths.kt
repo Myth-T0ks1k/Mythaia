@@ -4,11 +4,20 @@ import java.io.File
 
 /** Where the desktop app keeps its files: `%APPDATA%\Mythaia`. */
 object AppPaths {
+    /** Set before first use to move the data directory (the service keeps its files in ProgramData). */
+    @Volatile
+    var overrideDataDir: File? = null
+
     val dataDir: File by lazy {
+        overrideDataDir?.let { return@lazy it.apply { mkdirs() } }
         val base = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
             ?: System.getProperty("user.home")
         File(base, "Mythaia").apply { mkdirs() }
     }
+
+    /** Where the service, running as SYSTEM, keeps its snapshot and log. */
+    val programData: File
+        get() = File(System.getenv("ProgramData") ?: "C:/ProgramData", "Mythaia")
 
     val configs: File get() = File(dataDir, "configs.json")
     val subscriptions: File get() = File(dataDir, "subscriptions.json")

@@ -67,6 +67,23 @@ fun SettingsScreen(state: AppState) {
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 18.dp)
                 )
+                val serviceInstalled by state.serviceInstalled.collectAsState()
+                val serviceAvailable by state.serviceAvailable.collectAsState()
+                Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(tr("service"), style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            when {
+                                serviceAvailable -> tr("service_running")
+                                serviceInstalled -> tr("service_installed_stopped")
+                                else -> tr("service_not_installed")
+                            } + "  ·  " + tr("service_hint"),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (serviceInstalled) TextButton(onClick = { state.uninstallService() }) { Text(tr("service_remove")) }
+                    else TextButton(onClick = { state.installService() }) { Text(tr("service_install")) }
+                }
                 if (needsElevation) {
                     androidx.compose.material3.AlertDialog(
                         onDismissRequest = { state.needsElevation.value = false },

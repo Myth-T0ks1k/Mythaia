@@ -84,11 +84,20 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     /** True when TUN mode was asked for without administrator rights; the UI offers a relaunch. */
     val needsElevation = MutableStateFlow(false)
 
+    /** The service is registered and answering, so TUN runs there without elevation. */
+    val serviceAvailable = MutableStateFlow(false)
+    val serviceInstalled = MutableStateFlow(false)
+
+    /** The TUN tunnel the service is running for us, and its outbound. */
+    @Volatile
+    private var remoteTun: ProxyConfiguration? = null
+    private var remoteLogSeq = 0L
+
     /** Whichever tunnel is up. */
-    val isTunnelRunning: Boolean get() = engine.isRunning || tun.isRunning
+    val isTunnelRunning: Boolean get() = engine.isRunning || tun.isRunning || remoteTun != null
 
     /** The outbound the live tunnel dials through, whichever mode. */
-    val liveConfiguration: ProxyConfiguration? get() = if (tun.isRunning) tun.configuration else engine.configuration
+    val liveConfiguration: ProxyConfiguration? get() = remoteTun ?: if (tun.isRunning) tun.configuration else engine.configuration
 
     private val stateLock = Any()
 
@@ -170,6 +179,74 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         pruneSelection()
         scope.launch { speedLoop() }
         scope.launch { subscriptionRefreshLoop() }
+        scope.launch { serviceWatchLoop() }
+    }
+
+    // ------------------------------------------------------------- service
+
+    /** Keeps [serviceAvailable]/[serviceInstalled] fresh and, while the service runs our tunnel, mirrors its counters and log. */
+    private suspend fun serviceWatchLoop() {
+        while (scope.isActive) {
+            val installed = runCatching { com.mythaia.desktop.service.ServiceInstaller.isInstalled() }.getOrDefault(false)
+            serviceInstalled.value = installed
+            val remote = remoteTun
+            if (remote != null) {
+                val status = com.mythaia.desktop.service.ServiceClient.status(remoteLogSeq)
+                if (status == null || !status.running) {
+                    // The service dropped the tunnel (stopped, crashed, or restarted).
+                    logger.warning("Service tunnel is gone; disconnecting")
+                    remoteTun = null
+                    serviceAvailable.value = status != null
+                    disconnect()
+                } else {
+                    serviceAvailable.value = true
+                    stats.up.set(status.up)
+                    stats.down.set(status.down)
+                    stats.connections.set(status.connections)
+                    status.logs.forEach { entry ->
+                        remoteLogSeq = maxOf(remoteLogSeq, entry.seq)
+                        val level = runCatching { MythaiaLogger.Level.valueOf(entry.level) }.getOrDefault(MythaiaLogger.Level.info)
+                        _logs.update { lines -> (lines + LogLine(entry.time, level, "[service] ${entry.text}")).takeLast(MAX_LOG_LINES) }
+                    }
+                }
+                delay(1_000)
+            } else {
+                serviceAvailable.value = installed && com.mythaia.desktop.service.ServiceClient.isAvailable()
+                delay(5_000)
+            }
+        }
+    }
+
+    /** Registers the service (one administrator prompt) and waits for it to answer. */
+    fun installService() {
+        scope.launch {
+            if (com.mythaia.desktop.service.ServiceInstaller.launcher() == null) {
+                notify(tr("service_needs_install"))
+                return@launch
+            }
+            val ok = com.mythaia.desktop.service.ServiceInstaller.install()
+            if (!ok) { notify(tr("service_install_failed")); return@launch }
+            repeat(20) {
+                if (com.mythaia.desktop.service.ServiceClient.isAvailable()) {
+                    serviceAvailable.value = true
+                    serviceInstalled.value = true
+                    notify(tr("service_installed"))
+                    return@launch
+                }
+                delay(500)
+            }
+            notify(tr("service_install_failed"))
+        }
+    }
+
+    fun uninstallService() {
+        scope.launch {
+            if (remoteTun != null) disconnect()
+            val ok = com.mythaia.desktop.service.ServiceInstaller.uninstall()
+            serviceAvailable.value = false
+            serviceInstalled.value = !ok && serviceInstalled.value
+            notify(if (ok) tr("service_removed") else tr("service_install_failed"))
+        }
     }
 
     // ------------------------------------------------------------- groups
@@ -369,7 +446,10 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
         val settings = _settings.value
         val useTun = settings.tunnelMode == "tun"
-        if (useTun) {
+        // The service runs the TUN tunnel when it is there; otherwise this
+        // process must be elevated to do it itself.
+        val viaService = useTun && (serviceAvailable.value || com.mythaia.desktop.service.ServiceClient.isAvailable())
+        if (useTun && !viaService) {
             if (!com.mythaia.desktop.tun.TunEngine.isAvailable()) {
                 _connection.value = ConnectionState.Failed(tr("tun_unavailable", "wintun.dll"))
                 return@withLock
@@ -383,15 +463,26 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         // Switching modes while up: the other tunnel comes down first.
         if (useTun && engine.isRunning) engine.stop()
         if (!useTun && tun.isRunning) tun.stop()
+        if ((!useTun || !viaService) && remoteTun != null) { runCatching { com.mythaia.desktop.service.ServiceClient.stop() }; remoteTun = null }
+        if (viaService && tun.isRunning) tun.stop()
         val wasRunning = isTunnelRunning
         _connection.value = ConnectionState.Connecting(config)
         try {
-            if (useTun) {
-                tun.updateRouting(_rules.value, settings)
-                tun.start(settings, config)
-            } else {
-                engine.updateRouting(_rules.value, settings)
-                engine.start(settings, config)
+            when {
+                viaService -> {
+                    if (!wasRunning) stats.reset()
+                    com.mythaia.desktop.service.ServiceClient.start(settings, config, _rules.value)
+                    remoteTun = config
+                    serviceAvailable.value = true
+                }
+                useTun -> {
+                    tun.updateRouting(_rules.value, settings)
+                    tun.start(settings, config)
+                }
+                else -> {
+                    engine.updateRouting(_rules.value, settings)
+                    engine.start(settings, config)
+                }
             }
         } catch (e: Exception) {
             logger.error("Start failed: ${e.message}")
@@ -399,7 +490,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             _connection.value = ConnectionState.Failed(
                 if (e is java.net.BindException) tr("port_in_use", port) else (e.message ?: tr("failed"))
             )
-            runCatching { if (useTun) tun.stop() else engine.stop() }
+            runCatching {
+                when {
+                    viaService -> { com.mythaia.desktop.service.ServiceClient.stop(); remoteTun = null }
+                    useTun -> tun.stop()
+                    else -> engine.stop()
+                }
+            }
             return@withLock
         }
         if (!wasRunning) _connectedSince.value = System.currentTimeMillis()
@@ -417,6 +514,10 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private fun disconnectLocked() {
         autoJob?.cancel(); autoJob = null
         probeJob?.cancel(); probeJob = null
+        if (remoteTun != null) {
+            remoteTun = null
+            runCatching { com.mythaia.desktop.service.ServiceClient.stop() }.onFailure { logger.error("Service stop: ${it.message}") }
+        }
         if (tun.isRunning) runCatching { tun.stop() }.onFailure { logger.error("TUN stop: ${it.message}") }
         engine.stop()
         _connection.value = ConnectionState.Disconnected
@@ -515,7 +616,19 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     private fun switchAuto(groupId: String, config: ProxyConfiguration) {
         if (liveConfiguration?.id == config.id) return
-        if (tun.isRunning) tun.switchTo(config) else engine.switchTo(config)
+        when {
+            remoteTun != null -> {
+                try {
+                    com.mythaia.desktop.service.ServiceClient.switchTo(config)
+                    remoteTun = config
+                } catch (e: Exception) {
+                    logger.error("Service switch: ${e.message}")
+                    return
+                }
+            }
+            tun.isRunning -> tun.switchTo(config)
+            else -> engine.switchTo(config)
+        }
         _connection.value = ConnectionState.Connected(config)
         _connectivityOk.value = true
         probeFailures = 0
@@ -790,9 +903,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         val modeChanged = after.tunnelMode != old.tunnelMode
         if (modeChanged) needsElevation.value = false
         if (isTunnelRunning) {
-            if (portsChanged || modeChanged || (tun.isRunning && after.bypassTurkmenistan != old.bypassTurkmenistan)) {
+            val tunUp = tun.isRunning || remoteTun != null
+            if (portsChanged || modeChanged || (tunUp && after.bypassTurkmenistan != old.bypassTurkmenistan)) {
                 scope.launch {
-                    connectLock.withLock { if (tun.isRunning) runCatching { tun.stop() } else engine.stop() }
+                    connectLock.withLock {
+                        if (remoteTun != null) { remoteTun = null; runCatching { com.mythaia.desktop.service.ServiceClient.stop() } }
+                        if (tun.isRunning) runCatching { tun.stop() } else engine.stop()
+                    }
                     startConnection()
                 }
             } else if (engine.isRunning && (after.setSystemProxy != old.setSystemProxy || after.proxyBypass != old.proxyBypass)) {
@@ -811,6 +928,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         store.saveRules(rules)
         engine.updateRouting(rules, _settings.value)
         tun.updateRouting(rules, _settings.value)
+        if (remoteTun != null) scope.launch { runCatching { com.mythaia.desktop.service.ServiceClient.updateRouting(_settings.value, rules) } }
     }
 
     fun importGeoIp(file: java.io.File, onDone: (Boolean) -> Unit) {

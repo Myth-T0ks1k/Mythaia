@@ -38,6 +38,9 @@ private object InstanceLock {
 
 fun main(args: Array<String>) {
     ensureAsciiSocketTempDir()
+    // The service process: no window, no user data, just the tunnel behind a pipe.
+    if (args.contains("--service")) com.mythaia.desktop.service.MythaiaService.runUnderScm()
+    if (args.contains("--service-console")) com.mythaia.desktop.service.MythaiaService.runInConsole()
     val logger = installLogging()
     InstanceLock.lock = acquireInstanceLock()
     if (InstanceLock.lock == null) {
