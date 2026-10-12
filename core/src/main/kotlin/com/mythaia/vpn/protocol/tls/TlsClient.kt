@@ -756,6 +756,15 @@ class TlsClient(private val configuration: TlsConfiguration) {
         }
 
         val leafCert = serverCertificates.first()
+
+        // A pinned certificate is the whole decision: trusted without a CA when
+        // it matches, refused even with a valid chain when it does not.
+        val pins = configuration.pinnedCertSha256
+        if (!pins.isNullOrEmpty()) {
+            if (serverCertificates.any { TlsPeerVerifier.matchesPin(it, pins) }) return
+            throw TlsError.CertificateValidationFailed("Certificate does not match the pinned SHA-256")
+        }
+
         leafCert.checkValidity()
 
         try {
@@ -776,7 +785,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
                 x509tm.checkServerTrusted(serverCertificates.toTypedArray(), authType)
             }
 
-            verifyHostname(leafCert, configuration.serverName)
+            verifyHostname(leafCert, configuration.verifyName ?: configuration.serverName)
         } catch (e: Exception) {
             logger.warning("Chain/hostname validation failed: ${e.message}")
             if (!isUserTrusted(leafCert)) {

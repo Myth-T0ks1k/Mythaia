@@ -63,6 +63,13 @@ android {
     }
 
     buildTypes {
+        // Debug builds also carry x86_64 so they run on the emulator (the
+        // test AVD is x86_64); release stays arm64-only.
+        debug {
+            ndk {
+                abiFilters += listOf("x86_64")
+            }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

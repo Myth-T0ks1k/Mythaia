@@ -38,7 +38,11 @@ class QuicTlsHandler(
     private val tuning: QuicTuning,
     private val fingerprint: TlsFingerprint = TlsFingerprint.CHROME_133,
     /** The link's own `insecure` flag; the global policy is honoured as well. */
-    private val allowInsecure: Boolean = false
+    private val allowInsecure: Boolean = false,
+    /** Certificates trusted by SHA-256 regardless of CA (`pinSHA256=`/`pcs=`). */
+    private val pinnedCertSha256: List<String>? = null,
+    /** The name the certificate must carry when it is not [serverName] (`vcn=`). */
+    private val verifyName: String? = null
 ) {
 
     /** How far the handshake has got. */
@@ -418,10 +422,17 @@ class QuicTlsHandler(
             return fail(e.message ?: "certificate did not parse")
         }
 
-        try {
-            TlsPeerVerifier.verifyTrust(chain, serverName)
-        } catch (e: TlsPeerVerifier.Failure) {
-            return fail(e.message ?: "certificate not trusted")
+        val pins = pinnedCertSha256
+        if (!pins.isNullOrEmpty()) {
+            if (chain.none { TlsPeerVerifier.matchesPin(it, pins) }) {
+                return fail("certificate does not match the pinned SHA-256")
+            }
+        } else {
+            try {
+                TlsPeerVerifier.verifyTrust(chain, verifyName ?: serverName)
+            } catch (e: TlsPeerVerifier.Failure) {
+                return fail(e.message ?: "certificate not trusted")
+            }
         }
 
         val signature = certificateVerifySignature

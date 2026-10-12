@@ -43,6 +43,10 @@ class QuicConnection(
     tlsServerName: String = serverName,
     /** The link's `insecure` flag. */
     allowInsecure: Boolean = false,
+    /** Certificates trusted by SHA-256 regardless of CA. */
+    pinnedCertSha256: List<String>? = null,
+    /** The name the certificate must carry when it is not the SNI. */
+    verifyName: String? = null,
     /**
      * Hysteria's packet obfuscation, applied to every datagram in both
      * directions; null sends QUIC packets as they are.
@@ -50,7 +54,7 @@ class QuicConnection(
     private val obfuscator: com.mythaia.vpn.protocol.hysteria.HysteriaObfuscator? = null
 ) : NativeBridge.QuicCallback {
 
-    private val tls = QuicTlsHandler(tlsServerName, alpn, tuning, fingerprint, allowInsecure)
+    private val tls = QuicTlsHandler(tlsServerName, alpn, tuning, fingerprint, allowInsecure, pinnedCertSha256, verifyName)
 
     /** ngtcp2's handle. Zero before [connect] and after [close]. */
     @Volatile

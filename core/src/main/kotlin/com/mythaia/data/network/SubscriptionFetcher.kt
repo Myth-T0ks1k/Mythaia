@@ -182,6 +182,9 @@ object SubscriptionFetcher {
     }
 
     /** The parsing shared by both transports. */
+    /** Parses a subscription body already in hand (pasted text, a file), exactly as a fetch would. */
+    fun parse(data: ByteArray): Result = parseBody(data, null, UserInfo())
+
     private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo): Result {
         val bodyString = decodeBody(data)
 

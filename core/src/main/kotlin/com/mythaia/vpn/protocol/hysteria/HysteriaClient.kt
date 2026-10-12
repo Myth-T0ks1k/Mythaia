@@ -110,6 +110,8 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             fingerprint = tls?.fingerprint ?: com.mythaia.data.model.TlsFingerprint.CHROME_133,
             tlsServerName = tls?.serverName?.takeIf { it.isNotBlank() } ?: configuration.serverAddress,
             allowInsecure = tls?.allowInsecure == true,
+            pinnedCertSha256 = tls?.pinnedCertSha256,
+            verifyName = tls?.verifyName,
             obfuscator = obfuscation?.let { HysteriaObfuscator.of(it) }
         )
         if (!connection.connect()) {

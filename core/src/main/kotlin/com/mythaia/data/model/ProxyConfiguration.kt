@@ -50,6 +50,29 @@ internal fun parseAlpn(raw: String?): List<String>? =
  * `fragment=`/`frg=` (`length,interval,packets[,maxSplit]`) or the FinalMask
  * document in `fm=`, which says the same per piece.
  */
+/**
+ * `pcs=` / `pinnedPeerCertSha256=` / `pinSHA256=` as lowercase hex SHA-256
+ * fingerprints. Hex may carry colons; a 32-byte base64 value is accepted too.
+ * Null when absent or nothing in it is a fingerprint.
+ */
+internal fun parsePinnedCerts(params: Map<String, String>): List<String>? {
+    val raw = params["pcs"] ?: params["pinnedPeerCertSha256"] ?: params["pinSHA256"] ?: params["pinsha256"]
+        ?: return null
+    val pins = raw.split(',', ';', ' ').mapNotNull { item ->
+        val text = item.trim()
+        val hex = text.replace(":", "").lowercase()
+        when {
+            hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' } -> hex
+            text.isNotEmpty() -> runCatching {
+                val bytes = java.util.Base64.getDecoder().decode(text.replace('-', '+').replace('_', '/').padEnd((text.length + 3) / 4 * 4, '='))
+                if (bytes.size == 32) bytes.joinToString("") { "%02x".format(it) } else null
+            }.getOrNull()
+            else -> null
+        }
+    }
+    return pins.takeIf { it.isNotEmpty() }
+}
+
 internal fun parseFragmentParams(params: Map<String, String>): FragmentSettings? =
     (params["fragment"] ?: params["frg"])?.let(FragmentSettings::fromShareLink)
         ?: params["fm"]?.let(FragmentSettings::fromFinalMask)
@@ -192,7 +215,16 @@ data class TlsConfiguration(
      * server matches on the config's exact bytes, and a re-serialised copy that
      * differed by a byte would be silently ignored rather than rejected.
      */
-    val echConfig: String? = null
+    val echConfig: String? = null,
+    /**
+     * Xray's `pinnedPeerCertSha256` (`pcs=`; Hysteria's `pinSHA256=`): hex
+     * SHA-256 of certificates the server may present. A match is trusted
+     * without a certificate authority — Xray 26 replaced `allowInsecure` with
+     * this — and a mismatch fails even a CA-valid chain.
+     */
+    val pinnedCertSha256: List<String>? = null,
+    /** Xray's `verifyPeerCertByName` (`vcn=`): the name the certificate must carry when it is not the SNI. */
+    val verifyName: String? = null
 ) {
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): TlsConfiguration? {
@@ -212,7 +244,9 @@ data class TlsConfiguration(
                 fingerprint = TlsFingerprint.fromRaw(fp),
                 minVersion = minVersion,
                 maxVersion = maxVersion,
-                fragment = fragment
+                fragment = fragment,
+                pinnedCertSha256 = parsePinnedCerts(params),
+                verifyName = params["vcn"]?.takeIf { it.isNotEmpty() }
             )
         }
 
@@ -1002,6 +1036,8 @@ data class ProxyConfiguration(
             // Without this a shared link silently turns certificate checking
             // back on, and the server the user could reach stops working.
             if (it.allowInsecure) json.put("allowInsecure", "true")
+            it.pinnedCertSha256?.takeIf { pins -> pins.isNotEmpty() }?.let { pins -> json.put("pcs", pins.joinToString(",")) }
+            it.verifyName?.let { name -> json.put("vcn", name) }
         } ?: json.put("tls", "")
 
         val encoded = java.util.Base64.getEncoder()
@@ -1162,6 +1198,13 @@ data class ProxyConfiguration(
         if (tls.fingerprint != TlsFingerprint.CHROME_133) params.add("fp=${tls.fingerprint.raw}")
         if (tls.allowInsecure) params.add("insecure=1")
         tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
+        appendPinParams(params, tls)
+    }
+
+    /** `pcs=` and `vcn=`, Xray 26's replacements for `allowInsecure`. */
+    private fun appendPinParams(params: MutableList<String>, tls: TlsConfiguration) {
+        tls.pinnedCertSha256?.takeIf { it.isNotEmpty() }?.let { params.add("pcs=${it.joinToString(",")}") }
+        tls.verifyName?.let { params.add("vcn=${urlEncode(it)}") }
     }
 
     private fun toTrojanUrl(): String {
@@ -1179,6 +1222,7 @@ data class ProxyConfiguration(
             }
             if (tls.allowInsecure) params.add("allowInsecure=1")
             tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
+            appendPinParams(params, tls)
             tls.fragment?.let { params.add("fragment=${urlEncode(it.toShareLinkValue())}") }
         }
         if (transport != "tcp") {
@@ -1251,6 +1295,7 @@ data class ProxyConfiguration(
         tls.echConfig?.let { params.add("ech=${urlEncode(it)}") }
         tls.minVersion?.let { params.add("minVersion=${it.urlValue}") }
         tls.maxVersion?.let { params.add("maxVersion=${it.urlValue}") }
+        appendPinParams(params, tls)
         // Only a per-server override is exported; a server following the
         // tunnel-wide default carries no `fragment=`, which is what the
         // default means.
@@ -1371,6 +1416,8 @@ data class ProxyConfiguration(
                 tls = TlsConfiguration(
                     serverName = sni,
                     echConfig = link.params["ech"]?.takeIf { it.isNotEmpty() },
+                    pinnedCertSha256 = parsePinnedCerts(link.params),
+                    verifyName = link.params["vcn"]?.takeIf { it.isNotEmpty() },
                     alpn = parseAlpn(link.params["alpn"]),
                     allowInsecure = insecure,
                     fingerprint = TlsFingerprint.fromRaw(link.params["fp"] ?: "chrome_133")
@@ -1642,7 +1689,9 @@ data class ProxyConfiguration(
                 alpn = alpn,
                 allowInsecure = isTruthy(params["allowInsecure"]) || isTruthy(params["insecure"]),
                 fingerprint = TlsFingerprint.fromRaw(fp),
-                fragment = parseFragmentParams(params)
+                fragment = parseFragmentParams(params),
+                pinnedCertSha256 = parsePinnedCerts(params),
+                verifyName = params["vcn"]?.takeIf { it.isNotEmpty() }
             )
 
             return ProxyConfiguration(
@@ -1798,7 +1847,9 @@ data class ProxyConfiguration(
                     allowInsecure = allowInsecure,
                     fingerprint = TlsFingerprint.fromRaw(
                         json.optString("fp").ifEmpty { "chrome_133" }
-                    )
+                    ),
+                    pinnedCertSha256 = parsePinnedCerts(mapOf("pcs" to json.optString("pcs"))),
+                    verifyName = json.optString("vcn").takeIf { it.isNotEmpty() }
                 )
             } else {
                 null
@@ -1888,6 +1939,8 @@ data class ProxyConfiguration(
             val tls = TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
+                pinnedCertSha256 = parsePinnedCerts(params),
+                verifyName = params["vcn"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 allowInsecure = insecure,
                 fingerprint = TlsFingerprint.fromRaw(params["fp"] ?: "chrome_133")
@@ -1945,6 +1998,8 @@ data class ProxyConfiguration(
             val tls = TlsConfiguration(
                 serverName = sni,
                 echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
+                pinnedCertSha256 = parsePinnedCerts(params),
+                verifyName = params["vcn"]?.takeIf { it.isNotEmpty() },
                 alpn = alpn,
                 allowInsecure = insecure,
                 fingerprint = TlsFingerprint.fromRaw(params["fp"] ?: "chrome_133")

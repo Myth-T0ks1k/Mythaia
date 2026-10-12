@@ -167,6 +167,19 @@ object TlsPeerVerifier {
      * Every entry is compared, without stopping at the first match, so the time
      * taken does not depend on where in the list a match sits.
      */
+    /** Whether [certificate]'s SHA-256 is one of [pins] (lowercase hex). */
+    fun matchesPin(certificate: X509Certificate, pins: List<String>): Boolean {
+        val candidate = MessageDigest.getInstance("SHA-256")
+            .digest(certificate.encoded)
+            .joinToString("") { "%02x".format(it) }
+            .toByteArray(Charsets.US_ASCII)
+        var matched = false
+        for (pin in pins) {
+            if (constantTimeEqual(candidate, pin.lowercase().toByteArray(Charsets.US_ASCII))) matched = true
+        }
+        return matched
+    }
+
     fun isUserTrusted(certificate: X509Certificate): Boolean {
         val trusted = CertificatePolicy.trustedFingerprints
         if (trusted.isEmpty()) return false
