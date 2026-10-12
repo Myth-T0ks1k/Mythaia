@@ -30,7 +30,11 @@ data class AmneziaSettings(
         get() = junkPacketCount > 0 ||
             initPacketJunkSize > 0 ||
             responsePacketJunkSize > 0 ||
-            initPacketMagicHeader != 1L ||
+            renumbersTypes
+
+    /** Whether H1-H4 replace the type words, which then own all four octets of them. */
+    val renumbersTypes: Boolean
+        get() = initPacketMagicHeader != 1L ||
             responsePacketMagicHeader != 2L ||
             underloadPacketMagicHeader != 3L ||
             transportPacketMagicHeader != 4L
@@ -105,9 +109,31 @@ data class WireGuardConfig(
     val dnsServers: List<String>,
     val mtu: Int,
     val peer: WireGuardPeer,
-    val amnezia: AmneziaSettings
+    val amnezia: AmneziaSettings,
+    /**
+     * `Reserved = a,b,c`: three bytes written into octets 1-3 of every message
+     * this side sends, where plain WireGuard has zeroes.
+     *
+     * Cloudflare WARP routes on them — they carry the client id its API hands
+     * out — and drops a handshake without them, so a WARP profile that loses
+     * this field connects nowhere. Xray, sing-box and v2rayNG all call it
+     * `reserved`.
+     */
+    val reserved: ByteArray? = null
 ) {
     val publicKey: ByteArray get() = WireGuardCrypto.publicKey(privateKey)
+
+    /**
+     * [reserved] when it can be put on the wire, else null.
+     *
+     * AmneziaWG's H1-H4 already fill all four octets of the type word, so the
+     * two cannot both apply; the renumbering wins because a server expecting
+     * it drops anything else outright, while WARP is never an AmneziaWG peer.
+     * `0,0,0` — Xray's default, written into many configs — is plain WireGuard
+     * and is left null so nothing about the wire changes for it.
+     */
+    val headerReserved: ByteArray?
+        get() = reserved?.takeIf { bytes -> !amnezia.renumbersTypes && bytes.any { it != 0.toByte() } }
 
     override fun equals(other: Any?): Boolean =
         other is WireGuardConfig &&
@@ -116,7 +142,8 @@ data class WireGuardConfig(
             dnsServers == other.dnsServers &&
             mtu == other.mtu &&
             peer == other.peer &&
-            amnezia == other.amnezia
+            amnezia == other.amnezia &&
+            (reserved?.contentEquals(other.reserved ?: ByteArray(0)) ?: (other.reserved == null))
 
     override fun hashCode(): Int {
         var result = privateKey.contentHashCode()
@@ -125,6 +152,7 @@ data class WireGuardConfig(
         result = 31 * result + mtu
         result = 31 * result + peer.hashCode()
         result = 31 * result + amnezia.hashCode()
+        result = 31 * result + (reserved?.contentHashCode() ?: 0)
         return result
     }
 
@@ -201,6 +229,13 @@ data class WireGuardConfig(
                     ?: throw WireGuardError("[Peer] PresharedKey is not a 32-byte key")
             }
 
+            // Clients disagree on the section; WARP generators put it under
+            // either, and it means the same thing in both.
+            val reserved = (one(interfaceValues, "reserved") ?: one(peerValues, "reserved"))?.let {
+                parseReserved(it)
+                    ?: throw WireGuardError("Reserved must be three bytes (a,b,c or base64), not \"$it\"")
+            }
+
             return WireGuardConfig(
                 privateKey = privateKey,
                 addresses = splitAll(interfaceValues["address"]),
@@ -217,8 +252,33 @@ data class WireGuardConfig(
                     persistentKeepalive = one(peerValues, "persistentkeepalive")?.toIntOrNull()
                         ?.takeIf { it in 0..65535 } ?: 0
                 ),
-                amnezia = parseAmnezia(interfaceValues)
+                amnezia = parseAmnezia(interfaceValues),
+                reserved = reserved
             )
+        }
+
+        /**
+         * WARP's three reserved bytes as configs write them: decimal octets
+         * (`1,2,3`, optionally bracketed, as Xray and v2rayNG do) or base64 of
+         * the three bytes (`AQID`, sing-box's string form and what the WARP API
+         * returns as `client_id`). Null when it is neither.
+         */
+        fun parseReserved(text: String): ByteArray? {
+            val trimmed = text.trim().removePrefix("[").removeSuffix("]").trim()
+            if (trimmed.isEmpty()) return null
+            val parts = trimmed.split(',', ' ').map { it.trim() }.filter { it.isNotEmpty() }
+            if (parts.size == 3 && parts.all { p -> p.all { it.isDigit() } }) {
+                val values = parts.map { it.toIntOrNull() ?: return null }
+                if (values.any { it !in 0..255 }) return null
+                return ByteArray(3) { values[it].toByte() }
+            }
+            if (parts.size != 1) return null
+            val bytes = runCatching {
+                java.util.Base64.getDecoder().decode(
+                    trimmed.replace('-', '+').replace('_', '/').let { it.padEnd((it.length + 3) / 4 * 4, '=') }
+                )
+            }.getOrNull() ?: return null
+            return bytes.takeIf { it.size == 3 }
         }
 
         private fun parseAmnezia(values: Map<String, MutableList<String>>): AmneziaSettings {

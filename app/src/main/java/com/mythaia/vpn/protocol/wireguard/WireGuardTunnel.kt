@@ -122,6 +122,10 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     private val cookieType = amnezia.cookieType
     private val transportType = amnezia.transportType
 
+    // Cloudflare WARP's client id, stamped into octets 1-3 of what we send;
+    // with it set, received types are matched on their low octet only.
+    private val reserved = config.headerReserved
+
     fun start(fd: ParcelFileDescriptor) {
         if (running) return
         running = true
@@ -273,7 +277,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
             initiationType = initiationType,
             responseType = responseType,
             initiationJunkSize = amnezia.initPacketJunkSize,
-            responseJunkSize = amnezia.responsePacketJunkSize
+            responseJunkSize = amnezia.responsePacketJunkSize,
+            reserved = reserved
         )
         handshake.cookie = cookie?.takeIf { System.currentTimeMillis() < cookieExpiresAt }
 
@@ -326,7 +331,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
             receiveKey = keys.receiveKey,
             peerIndex = keys.peerIndex,
             localIndex = keys.localIndex,
-            transportType = transportType
+            transportType = transportType,
+            reserved = reserved
         )
         val first = sessionStartedAt == 0L
         sessionStartedAt = System.currentTimeMillis()
@@ -577,15 +583,16 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         val junk = amnezia.responsePacketJunkSize
         if (junk > 0 &&
             message.size == WireGuardHandshake.RESPONSE_SIZE + junk &&
-            WireGuardHandshake.readLe32(message, junk) == responseType
+            WireGuardHandshake.isType(WireGuardHandshake.readLe32(message, junk), responseType, reserved)
         ) {
             return Kind.RESPONSE
         }
 
-        return when (WireGuardHandshake.readLe32(message, 0)) {
-            responseType -> Kind.RESPONSE
-            cookieType -> Kind.COOKIE
-            transportType -> Kind.TRANSPORT
+        val type = WireGuardHandshake.readLe32(message, 0)
+        return when {
+            WireGuardHandshake.isType(type, responseType, reserved) -> Kind.RESPONSE
+            WireGuardHandshake.isType(type, cookieType, reserved) -> Kind.COOKIE
+            WireGuardHandshake.isType(type, transportType, reserved) -> Kind.TRANSPORT
             else -> Kind.UNKNOWN
         }
     }

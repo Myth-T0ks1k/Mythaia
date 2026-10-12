@@ -22,7 +22,12 @@ class WireGuardHandshake(
     private val initiationType: Int = MESSAGE_INITIATION,
     private val responseType: Int = MESSAGE_RESPONSE,
     private val initiationJunkSize: Int = 0,
-    private val responseJunkSize: Int = 0
+    private val responseJunkSize: Int = 0,
+    /**
+     * WARP's three reserved bytes ([WireGuardConfig.headerReserved]), or null
+     * for plain WireGuard. See [stampReserved] and [isType].
+     */
+    private val reserved: ByteArray? = null
 ) {
 
     /** What a completed handshake yields. */
@@ -92,7 +97,12 @@ class WireGuardHandshake(
 
         // The MACs cover the message only. S1's junk is prepended afterwards,
         // so it is outside both the MAC and the peer's length check.
-        return junk(initiationJunkSize) + body + macs(body)
+        val message = body + macs(body)
+        // The reserved bytes go on after the MACs, over a type word the MACs
+        // saw as zeroes — which is what WARP verifies against, because every
+        // client that speaks to it stamps them at send time the same way.
+        stampReserved(message, 0, reserved)
+        return junk(initiationJunkSize) + message
     }
 
     /**
@@ -119,7 +129,7 @@ class WireGuardHandshake(
             throw WireGuardError("response is ${message.size} bytes, expected $RESPONSE_SIZE")
         }
         val type = readLe32(message, 0)
-        if (type != responseType) {
+        if (!isType(type, responseType, reserved)) {
             throw WireGuardError("message type $type is not a handshake response")
         }
 
@@ -214,6 +224,31 @@ class WireGuardHandshake(
                 ((bytes[2].toInt() and 0xFF) shl 8) or
                 (bytes[3].toInt() and 0xFF)
         }
+
+        /**
+         * Puts WARP's reserved bytes into octets 1-3 of the type word at [at].
+         *
+         * Only the octets change, never the length or anything authenticated:
+         * a transport message's header is outside its AEAD, and a handshake
+         * message's MACs are computed before this is called.
+         */
+        fun stampReserved(message: ByteArray, at: Int, reserved: ByteArray?) {
+            if (reserved == null || reserved.size != 3 || message.size < at + 4) return
+            message[at + 1] = reserved[0]
+            message[at + 2] = reserved[1]
+            message[at + 3] = reserved[2]
+        }
+
+        /**
+         * Whether a received type word is [expected].
+         *
+         * The whole word normally — AmneziaWG's H1-H4 fill all four octets.
+         * With reserved bytes in use only the low octet is the type: WARP puts
+         * its own bytes in the other three, and Xray and sing-box both clear
+         * them before looking, so comparing them would drop every reply.
+         */
+        fun isType(word: Int, expected: Int, reserved: ByteArray?): Boolean =
+            if (reserved != null) (word and 0xFF) == (expected and 0xFF) else word == expected
 
         fun writeLe32(out: ByteArray, at: Int, value: Int) {
             out[at] = (value and 0xFF).toByte()

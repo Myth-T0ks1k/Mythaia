@@ -74,6 +74,25 @@ class FragmentSettingsTest {
     }
 
     @Test
+    fun `fm with singular length and delay reads like the plural lists`() {
+        // The spelling one real provider uses next to the plural one.
+        val singular = FragmentSettings.fromFinalMask(
+            """{"tcp":[{"type":"fragment","settings":{"packets":"tlshello","maxSplit":"2","length":"3","delay":"1"}}]}"""
+        )!!
+        assertEquals(listOf(3..3), singular.lengthRanges)
+        assertEquals(listOf(1..1), singular.delayRanges)
+        assertEquals(2, singular.maxSplit)
+
+        // Bare numbers mean the same as the strings.
+        val numbers = FragmentSettings.fromFinalMask(
+            """{"tcp":[{"type":"fragment","settings":{"packets":"tlshello","length":5,"delay":2,"maxSplit":3}}]}"""
+        )!!
+        assertEquals(listOf(5..5), numbers.lengthRanges)
+        assertEquals(listOf(2..2), numbers.delayRanges)
+        assertEquals(3, numbers.maxSplit)
+    }
+
+    @Test
     fun `final mask export says what was parsed`() {
         val settings = FragmentSettings.fromFinalMask(finalMask)!!
         val back = FragmentSettings.fromFinalMask(settings.toFinalMaskJson())!!

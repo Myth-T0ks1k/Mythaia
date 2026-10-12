@@ -133,7 +133,10 @@ object LatencyTester {
             initiationType = amnezia.initiationType,
             responseType = amnezia.responseType,
             initiationJunkSize = amnezia.initPacketJunkSize,
-            responseJunkSize = amnezia.responsePacketJunkSize
+            responseJunkSize = amnezia.responsePacketJunkSize,
+            // WARP ignores an initiation without its client id, so the probe
+            // would time out on a profile that connects fine.
+            reserved = parsed.headerReserved
         )
 
         val socket = java.net.DatagramSocket()

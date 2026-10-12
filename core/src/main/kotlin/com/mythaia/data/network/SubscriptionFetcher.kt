@@ -97,40 +97,12 @@ object SubscriptionFetcher {
 
             val data = readBounded(connection.inputStream, MAX_BODY_BYTES)
 
-            val profileTitle = parseProfileTitle(connection)
-            val userInfo = parseSubscriptionUserInfo(connection)
-
-            val bodyString = decodeBody(data)
-
-            if (looksLikeClash(bodyString)) {
-                val result = ClashProxyParser.parse(bodyString)
-                if (result.configurations.isEmpty()) throw FetchError.NoConfigurations()
-                return@withContext Result(
-                    configurations = result.configurations,
-                    name = profileTitle,
-                    upload = userInfo.upload,
-                    download = userInfo.download,
-                    total = userInfo.total,
-                    expire = userInfo.expire
-                )
-            }
-
-            val parsablePrefixes = ProxyConfiguration.parsableUrlPrefixes
-            val configurations = bodyString
-                .lines()
-                .map { it.trim() }
-                .filter { line -> parsablePrefixes.any { line.startsWith(it) } }
-                .mapNotNull { runCatching { ProxyConfiguration.fromUrl(it) }.getOrNull() }
-
-            if (configurations.isEmpty()) throw FetchError.NoConfigurations()
-
-            Result(
-                configurations = configurations,
-                name = profileTitle,
-                upload = userInfo.upload,
-                download = userInfo.download,
-                total = userInfo.total,
-                expire = userInfo.expire
+            // The same parsing the fronted path and a pasted body get; a copy
+            // of it here once missed JSON subscriptions entirely.
+            parseBody(
+                data = data,
+                profileTitle = parseProfileTitle(connection),
+                userInfo = parseSubscriptionUserInfo(connection)
             )
         } finally {
             connection.disconnect()
@@ -187,6 +159,21 @@ object SubscriptionFetcher {
 
     private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo): Result {
         val bodyString = decodeBody(data)
+
+        // sing-box first: its configs have `outbounds` too, and only the
+        // shape of each outbound tells the two apart.
+        if (SingBoxJsonImporter.looksLikeSingBox(bodyString)) {
+            val configurations = runCatching { SingBoxJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
+            if (configurations.isEmpty()) throw FetchError.NoConfigurations()
+            return Result(
+                configurations = configurations,
+                name = profileTitle,
+                upload = userInfo.upload,
+                download = userInfo.download,
+                total = userInfo.total,
+                expire = userInfo.expire
+            )
+        }
 
         if (XrayJsonImporter.looksLikeJson(bodyString)) {
             val configurations = runCatching { XrayJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
