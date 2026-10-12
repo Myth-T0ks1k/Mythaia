@@ -1026,19 +1026,25 @@ data class ProxyConfiguration(
             val extra = it.toExtraJson()
             if (extra.isNotBlank()) json.put("extra", extra)
         }
-        tls?.let {
+        // An if rather than `tls?.let { … } ?: …`: the block's last statement
+        // is itself a null-safe call, and a null there would run the fallback
+        // and quietly export a TLS server as plaintext.
+        val tls = tls
+        if (tls != null) {
             json.put("tls", "tls")
-            json.put("sni", it.serverName)
-            it.alpn?.takeIf { alpn -> alpn.isNotEmpty() }?.let { alpn ->
+            json.put("sni", tls.serverName)
+            tls.alpn?.takeIf { alpn -> alpn.isNotEmpty() }?.let { alpn ->
                 json.put("alpn", alpn.joinToString(","))
             }
-            json.put("fp", it.fingerprint.raw)
+            json.put("fp", tls.fingerprint.raw)
             // Without this a shared link silently turns certificate checking
             // back on, and the server the user could reach stops working.
-            if (it.allowInsecure) json.put("allowInsecure", "true")
-            it.pinnedCertSha256?.takeIf { pins -> pins.isNotEmpty() }?.let { pins -> json.put("pcs", pins.joinToString(",")) }
-            it.verifyName?.let { name -> json.put("vcn", name) }
-        } ?: json.put("tls", "")
+            if (tls.allowInsecure) json.put("allowInsecure", "true")
+            tls.pinnedCertSha256?.takeIf { pins -> pins.isNotEmpty() }?.let { pins -> json.put("pcs", pins.joinToString(",")) }
+            tls.verifyName?.let { name -> json.put("vcn", name) }
+        } else {
+            json.put("tls", "")
+        }
 
         val encoded = java.util.Base64.getEncoder()
             .encodeToString(json.toString().toByteArray(Charsets.UTF_8))
