@@ -41,6 +41,14 @@ interface Dialer {
     /** Null when the route blocks this destination. */
     suspend fun dial(host: String, port: Int, initialData: ByteArray?): Upstream?
     suspend fun dialUdp(host: String, port: Int): Upstream?
+
+    /**
+     * True when [host] goes through a protocol whose request should carry the
+     * client's first bytes (VLESS, VMess). The listener then confirms the
+     * connection before dialling, so the client sends them, and dials with
+     * them; see `TunnelConstants.firstDataWaitMs`.
+     */
+    fun wantsFirstData(host: String): Boolean = false
 }
 
 /** Byte counters the home screen shows. */
@@ -182,6 +190,23 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
 
         when (command) {
             CMD_CONNECT -> {
+                if (dialer.wantsFirstData(host)) {
+                    // Confirm first, as Xray's inbounds do, so the client sends
+                    // its first bytes and they go out with the request header.
+                    // A dial that then fails can only close the connection.
+                    write(output, socksReply(REP_SUCCESS))
+                    val first = readFirstData(client, input)
+                    val upstream = try {
+                        dialer.dial(host, port, first)
+                    } catch (e: Exception) {
+                        logger.debug("dial $host:$port failed: ${e.message ?: e}")
+                        null
+                    } ?: return
+                    if (first != null) stats.up.addAndGet(first.size.toLong())
+                    client.soTimeout = 0
+                    relay(client, input, output, upstream)
+                    return
+                }
                 val upstream = try {
                     dialer.dial(host, port, null)
                 } catch (e: Exception) {
@@ -373,6 +398,21 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 write(output, httpError(400, "Bad Request"))
                 return
             }
+            if (dialer.wantsFirstData(host)) {
+                // As for SOCKS: confirm first, dial with the client's first bytes.
+                write(output, "$version 200 Connection established\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                val first = readFirstData(client, input, head.remainder)
+                val upstream = try {
+                    dialer.dial(host, port, first)
+                } catch (e: Exception) {
+                    logger.debug("dial $host:$port failed: ${e.message ?: e}")
+                    null
+                } ?: return
+                if (first != null) stats.up.addAndGet(first.size.toLong())
+                client.soTimeout = 0
+                relay(client, input, output, upstream)
+                return
+            }
             val upstream = try {
                 dialer.dial(host, port, null)
             } catch (e: Exception) {
@@ -560,6 +600,37 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * The client's first bytes after the connection was confirmed, after
+     * [already] when some came with the request: read until they are whole
+     * (`FirstData`: any non-TLS bytes, or a whole first TLS record), each read
+     * waiting at most `TunnelConstants.firstDataWaitMs`. Null when the client
+     * sent none in that time (a server-speaks-first protocol) or closed.
+     */
+    private suspend fun readFirstData(
+        client: Socket,
+        input: InputStream,
+        already: ByteArray = ByteArray(0)
+    ): ByteArray? = withContext(io) {
+        val first = ByteArrayOutputStream().apply { write(already) }
+        val chunk = ByteArray(32 * 1024)
+        try {
+            while (!com.mythaia.vpn.FirstData.isComplete(first.toByteArray())) {
+                client.soTimeout = com.mythaia.vpn.TunnelConstants.firstDataWaitMs.toInt()
+                val n = try {
+                    input.read(chunk)
+                } catch (_: java.net.SocketTimeoutException) {
+                    break
+                }
+                if (n < 0) break
+                first.write(chunk, 0, n)
+            }
+        } finally {
+            client.soTimeout = 0
+        }
+        first.toByteArray().takeIf { it.isNotEmpty() }
+    }
 
     private suspend fun readByte(input: InputStream): Int = withContext(io) {
         val b = input.read()

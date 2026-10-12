@@ -153,7 +153,8 @@ class LwipTcpConnection(
         // handleReceivedData before choosing a route. Otherwise commit
         // immediately using the IP-derived configuration.
         if (sniffer == null) {
-            beginConnecting()
+            // VLESS and VMess wait for the app's first bytes; the rest dial now.
+            beginConnectingWhenFirstDataReady()
         } else {
             // Safety net: non-TLS protocols where the server speaks first
             // (SSH, SMTP, FTP) never send client bytes of their own accord.
@@ -202,9 +203,32 @@ class LwipTcpConnection(
      * the connect has started or completed.
      */
     private fun beginConnecting() {
+        cancelSniffDeadline()
         if (closed || vlessConnecting || directConnecting) return
         if (vlessConnection != null || directRelay != null) return
         if (bypass) connectDirect() else connectProxy()
+    }
+
+    /**
+     * Dials now, unless the request of this route carries the app's first
+     * bytes (VLESS, VMess) and those are not all in yet: then once
+     * [pendingData] holds them ([FirstData]: any non-TLS bytes, or a whole
+     * first TLS record), or after [TunnelConstants.firstDataWaitMs] without
+     * more. That covers a hello split over TCP segments and, with nothing
+     * buffered, protocols whose server speaks first.
+     */
+    private fun beginConnectingWhenFirstDataReady() {
+        if (closed) return
+        if (!bypass && configuration.outboundProtocol.handshakeCarriesInitialData &&
+            !FirstData.isComplete(pendingData.toByteArray())
+        ) {
+            cancelSniffDeadline()
+            sniffDeadline = lwipExecutor.schedule({
+                if (!closed) beginConnecting()
+            }, TunnelConstants.firstDataWaitMs, TimeUnit.MILLISECONDS)
+            return
+        }
+        beginConnecting()
     }
 
     /**
@@ -527,14 +551,15 @@ class LwipTcpConnection(
                     // for this host; otherwise dial exactly as before. The gate is
                     // inert (returns false without touching state) on the empty
                     // default store — see [beginMitmIfConfigured].
-                    if (!beginMitmIfConfigured(state.serverName)) beginConnecting()
+                    // The server name can come before the end of the hello.
+                    if (!beginMitmIfConfigured(state.serverName)) beginConnectingWhenFirstDataReady()
                     return
                 }
                 is TlsClientHelloSniffer.State.NotTls,
                 is TlsClientHelloSniffer.State.Unavailable -> {
                     sniffer = null
                     cancelSniffDeadline()
-                    beginConnecting()
+                    beginConnectingWhenFirstDataReady()
                     return
                 }
             }
@@ -577,8 +602,10 @@ class LwipTcpConnection(
                 lwipExecutor.execute { flushCoalesceBuffer() }
             }
         } else {
+            // Not dialled yet: the first bytes go out with the request header,
+            // once a TLS hello split over segments is whole.
             if (!appendPendingData(data)) return
-            beginConnecting()
+            beginConnectingWhenFirstDataReady()
         }
     }
 

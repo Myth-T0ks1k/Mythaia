@@ -85,6 +85,10 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
 
     // ----------------------------------------------------------------- dialer
 
+    override fun wantsFirstData(host: String): Boolean =
+        configuration?.outboundProtocol?.handshakeCarriesInitialData == true &&
+            router.decide(host) == RouteTarget.PROXY
+
     override suspend fun dial(host: String, port: Int, initialData: ByteArray?): Upstream? =
         when (router.decide(host)) {
             RouteTarget.BLOCK -> null

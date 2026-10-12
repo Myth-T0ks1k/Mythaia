@@ -31,6 +31,16 @@ object TunnelConstants {
      */
     const val sniffDeadlineMs: Long = 500L
 
+    /**
+     * How long a VLESS or VMess dial waits for the app's first bytes, so the
+     * request header and those bytes leave in one message, as Xray sends them
+     * (its outbound waits 100 ms too). A header sent alone broke servers that
+     * re-send only the first message's payload when they retry a target: on
+     * such a server HTTPS to Cloudflare-hosted sites (speedtest.net) hung.
+     * Server-speaks-first protocols (SSH, SMTP) just dial this much later.
+     */
+    const val firstDataWaitMs: Long = 100L
+
     // -- TCP Buffer Sizes --
 
     /**
