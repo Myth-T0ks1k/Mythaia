@@ -160,6 +160,21 @@ object SubscriptionFetcher {
     private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo): Result {
         val bodyString = decodeBody(data)
 
+        // sing-box first: its configs have `outbounds` too, and only the
+        // shape of each outbound tells the two apart.
+        if (SingBoxJsonImporter.looksLikeSingBox(bodyString)) {
+            val configurations = runCatching { SingBoxJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
+            if (configurations.isEmpty()) throw FetchError.NoConfigurations()
+            return Result(
+                configurations = configurations,
+                name = profileTitle,
+                upload = userInfo.upload,
+                download = userInfo.download,
+                total = userInfo.total,
+                expire = userInfo.expire
+            )
+        }
+
         if (XrayJsonImporter.looksLikeJson(bodyString)) {
             val configurations = runCatching { XrayJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
             if (configurations.isEmpty()) throw FetchError.NoConfigurations()

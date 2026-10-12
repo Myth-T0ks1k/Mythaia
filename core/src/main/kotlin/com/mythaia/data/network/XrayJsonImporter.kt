@@ -19,7 +19,9 @@ import java.util.Base64
  * disagree about what a field means. `sockopt.dialerProxy` is honoured: a
  * `freedom` outbound with `fragment` settings becomes the server's
  * ClientHello fragmentation, and another proxy outbound becomes the entry
- * hop of a chain.
+ * hop of a chain. A sing-box config handed in here is passed on to
+ * [SingBoxJsonImporter], so a caller that only knows this importer (the
+ * paste box, the desktop import) reads both.
  */
 object XrayJsonImporter {
 
@@ -27,15 +29,23 @@ object XrayJsonImporter {
         "vless", "vmess", "trojan", "shadowsocks", "socks", "http", "hysteria", "hysteria2", "wireguard"
     )
 
-    /** Whether [text] is worth handing to [parse]: a JSON object or array. */
+    /**
+     * Whether [text] is worth handing to [parse]: a JSON object or array of
+     * Xray or sing-box outbounds. A lone sing-box outbound has neither
+     * `protocol` nor `outbounds`, only `type` and `server`.
+     */
     fun looksLikeJson(text: String): Boolean {
         val t = text.trimStart()
-        return (t.startsWith("{") || t.startsWith("[")) && (t.contains("\"protocol\"") || t.contains("\"outbounds\""))
+        if (!t.startsWith("{") && !t.startsWith("[")) return false
+        return t.contains("\"protocol\"") || t.contains("\"outbounds\"") || t.contains("\"endpoints\"") ||
+            (t.contains("\"type\"") && t.contains("\"server\""))
     }
 
     /** One config per usable outbound. Throws [ProxyError.InvalidUrl] when nothing usable is there. */
     fun parse(text: String): List<ProxyConfiguration> {
         val root = parseJson(text)
+        if (SingBoxJsonImporter.isSingBox(root)) return SingBoxJsonImporter.parse(root)
+
         val documents = collectDocuments(root)
         if (documents.all { it.outbounds.isEmpty() }) throw ProxyError.InvalidUrl("No outbounds found in the JSON")
 
