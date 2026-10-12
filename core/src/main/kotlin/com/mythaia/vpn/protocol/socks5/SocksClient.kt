@@ -9,6 +9,8 @@ import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.protocol.TunneledTransport
 import com.mythaia.vpn.util.NioSocket
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -367,26 +369,46 @@ class SocksUdpConnection(
         }
     }
 
-    override suspend fun receiveRaw(): ByteArray? {
-        while (!cancelled) {
+    /**
+     * Replies, read by a thread of this connection's own. `DatagramSocket.receive`
+     * blocks its thread, and the tunnel calls [receiveRaw] from its single lwIP
+     * thread: one SOCKS5 UDP flow waiting for a reply there froze the whole
+     * tunnel, TCP included, until the app was restarted.
+     */
+    private val inbox = Channel<ByteArray>(capacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    private val readerStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun startReader() {
+        Thread({
             val buffer = ByteArray(65536)
-            val packet = DatagramPacket(buffer, buffer.size)
-            try {
-                udpSocket.receive(packet)
-            } catch (e: Exception) {
-                if (cancelled) return null
-                throw ProxyError.ConnectionFailed("SOCKS5 UDP receive failed: ${e.message}")
+            var failure: Throwable? = null
+            while (!cancelled) {
+                val packet = DatagramPacket(buffer, buffer.size)
+                try {
+                    udpSocket.receive(packet)
+                } catch (e: Exception) {
+                    if (!cancelled) failure = ProxyError.ConnectionFailed("SOCKS5 UDP receive failed: ${e.message}")
+                    break
+                }
+                stripUdpHeader(buffer.copyOfRange(0, packet.length))?.let { inbox.trySend(it) }
             }
-            val payload = stripUdpHeader(buffer.copyOfRange(0, packet.length)) ?: continue
-            return payload
-        }
-        return null
+            inbox.close(failure)
+        }, "socks5-udp-recv").apply { isDaemon = true }.start()
+    }
+
+    override suspend fun receiveRaw(): ByteArray? {
+        if (readerStarted.compareAndSet(false, true)) startReader()
+        val result = inbox.receiveCatching()
+        result.exceptionOrNull()?.let { if (!cancelled) throw it }
+        return result.getOrNull()
     }
 
     override fun cancel() {
         if (cancelled) return
         cancelled = true
+        // Closing the socket ends the reader's receive; the inbox wakes any waiter.
         try { udpSocket.close() } catch (_: Exception) {}
+        inbox.close()
         tcpTransport.forceCancel()
     }
 
