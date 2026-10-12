@@ -7,6 +7,16 @@
 # onHandshakeComplete/onDatagram by name on whatever object implements this.
 -keep interface com.mythaia.vpn.NativeBridge$QuicCallback { *; }
 -keep class * implements com.mythaia.vpn.NativeBridge$QuicCallback { <methods>; }
+# lwip_bridge.c looks the stack's callbacks up by name the same way.
+-keep class * implements com.mythaia.vpn.NativeBridge$LwipCallback { <methods>; }
+
+# ============================================================================
+# Room databases (WorkManager's WorkDatabase among them) are created by
+# reflection on `<Name>_Impl`'s no-argument constructor. Without this R8 drops
+# that constructor and the release build dies at startup in
+# androidx.startup.InitializationProvider before any of our code runs.
+# ============================================================================
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
 
 # ============================================================================
 # VPN Service + Binder (accessed via reflection by Android framework)

@@ -71,6 +71,11 @@ android {
             }
         }
         release {
+            // `-Pmythaia.releaseX86=true` adds x86_64, so the R8-shrunk build
+            // can be tested on the emulator before it reaches a phone.
+            if (project.findProperty("mythaia.releaseX86") == "true") {
+                ndk { abiFilters += listOf("x86_64") }
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
