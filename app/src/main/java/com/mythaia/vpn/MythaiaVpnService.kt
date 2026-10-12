@@ -791,6 +791,13 @@ class MythaiaVpnService : VpnService() {
     private fun findUnderlyingNetwork(): Network? {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return null
 
+        // What the best-matching callback last reported is the system's own
+        // answer; the guesses below are only for before it has spoken.
+        bestUnderlyingNetwork?.let { best ->
+            val caps = cm.getNetworkCapabilities(best)
+            if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return best
+        }
+
         // The active network first: it is the one traffic actually takes.
         // Scanning the list and returning whichever came first would pick an
         // idle interface as readily as the working one.
@@ -805,14 +812,23 @@ class MythaiaVpnService : VpnService() {
         }
 
         // Falls back to a scan, which is what happens while our own VPN is the
-        // active network.
-        for (network in cm.allNetworks) {
-            val caps = cm.getNetworkCapabilities(network) ?: continue
-            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
-            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return network
-        }
-        return null
+        // active network. Prefer what the system would: validated, then
+        // unmetered (Wi-Fi over a cellular link kept up in the background).
+        @Suppress("DEPRECATION")
+        return cm.allNetworks.mapNotNull { network ->
+            val caps = cm.getNetworkCapabilities(network) ?: return@mapNotNull null
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@mapNotNull null
+            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return@mapNotNull null
+            var score = 0
+            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) score += 2
+            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) score += 1
+            network to score
+        }.maxByOrNull { it.second }?.first
     }
+
+    /** The non-VPN network the system routes through, as its best-matching callback last said. */
+    @Volatile
+    private var bestUnderlyingNetwork: Network? = null
 
     /**
      * Begins observing the system's underlying (non-VPN) network so we can
@@ -822,27 +838,40 @@ class MythaiaVpnService : VpnService() {
         if (networkCallback != null) return
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
 
-        lastUnderlyingNetwork = null
-        lastUnderlyingTransports = 0
-        lastNetworkAvailable = false
+        // Start from the network the tunnel was just brought up on, so the
+        // callback's first report of that same network is not mistaken for a
+        // change and does not restart every connection a second after connect.
+        val initial = findUnderlyingNetwork()
+        lastUnderlyingNetwork = initial
+        lastUnderlyingTransports = initial?.let { cm.getNetworkCapabilities(it) }?.let(::transportBitmask) ?: 0
+        lastNetworkAvailable = initial != null
 
+        // The best network for "internet, not a VPN" — exactly the one the
+        // system would put our protected sockets on. A listen on every network
+        // filtered against activeNetwork never fired for a 4G -> Wi-Fi switch:
+        // inside our own VPN, activeNetwork is the VPN. NetworkRequest.Builder
+        // adds NOT_VPN by default; it is spelled out here because it matters.
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .removeTransportType(NetworkCapabilities.TRANSPORT_VPN)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
             .build()
 
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                bestUnderlyingNetwork = network
                 handlePathUpdate(network, available = true)
             }
 
             override fun onLost(network: Network) {
+                if (bestUnderlyingNetwork == network) bestUnderlyingNetwork = null
                 if (network == lastUnderlyingNetwork) {
                     handlePathUpdate(null, available = false)
                 }
             }
 
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                bestUnderlyingNetwork = network
                 handlePathUpdate(network, available = true, caps = caps)
             }
 
@@ -856,16 +885,29 @@ class MythaiaVpnService : VpnService() {
         }
 
         try {
-            cm.registerNetworkCallback(request, callback)
+            // Best-matching (API 31+) and requestNetwork both follow the one
+            // network the system picks for this request and move with it; a
+            // request that the current default already satisfies brings up
+            // nothing extra.
+            val handler = android.os.Handler(mainLooper)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                cm.registerBestMatchingNetworkCallback(request, callback, handler)
+            } else {
+                cm.requestNetwork(request, callback, handler)
+            }
             networkCallback = callback
-        } catch (e: SecurityException) {
-            logger.debug("[VPN] Failed to register network callback: ${e.message}")
+        } catch (e: RuntimeException) {
+            // SecurityException, or too many requests on an exotic ROM: the
+            // old listen still beats knowing nothing.
+            logger.debug("[VPN] Best-network callback refused (${e.message}); listening instead")
+            runCatching { cm.registerNetworkCallback(request, callback) }.onSuccess { networkCallback = callback }
         }
     }
 
     private fun stopNetworkMonitoring() {
         val callback = networkCallback ?: return
         networkCallback = null
+        bestUnderlyingNetwork = null
         lastUnderlyingNetwork = null
         lastUnderlyingTransports = 0
         lastNetworkAvailable = false
@@ -942,6 +984,13 @@ class MythaiaVpnService : VpnService() {
 
         if (!available || network == null) {
             if (lastNetworkAvailable) {
+                // Wi-Fi gone with cellular already up (or the other way round):
+                // one handoff, one restart — not "lost" and "restored" back to back.
+                val next = findUnderlyingNetwork()?.takeIf { it != lastUnderlyingNetwork }
+                if (next != null) {
+                    handlePathUpdate(next, available = true)
+                    return
+                }
                 logger.warning("[VPN] Network path unavailable; active connections interrupted")
                 lastNetworkAvailable = false
                 lastUnderlyingNetwork = null
@@ -949,15 +998,9 @@ class MythaiaVpnService : VpnService() {
                 // Resolving through the network that just went away would
                 // fail every new dial until another callback happened along.
                 DnsCache.setUnderlyingNetwork(null)
+                runCatching { setUnderlyingNetworks(null) }
                 lwipStack?.handleNetworkPathChange("network path unavailable")
                 wireGuardTunnel?.handleNetworkPathChange("network path unavailable")
-
-                // Another network (cellular under a lost Wi-Fi) may already
-                // be up; its onAvailable was ignored earlier for not being
-                // active, so complete the handoff now instead of waiting.
-                findUnderlyingNetwork()?.let { next ->
-                    handlePathUpdate(next, available = true)
-                }
             }
             return
         }
@@ -966,12 +1009,12 @@ class MythaiaVpnService : VpnService() {
         if (networkCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
         if (!networkCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return
 
-        // The callback fires for every matching network, not only the one
-        // traffic actually uses. With Wi-Fi and cellular both up, acting on the
-        // wrong one would point DnsCache at an interface nothing is routed over
-        // and restart every connection for a change that did not happen.
-        val active = cm.activeNetwork
-        if (active != null && active != network) return
+        // Only the system's best non-VPN network is acted on. The callback now
+        // reports just that one; the check stays for the fallback listen,
+        // which hears every network. (activeNetwork cannot be the test: inside
+        // our own VPN it is the VPN, and every Wi-Fi handoff was ignored.)
+        val best = bestUnderlyingNetwork
+        if (best != null && best != network) return
 
         val transports = transportBitmask(networkCaps)
         val previousNetwork = lastUnderlyingNetwork
@@ -983,8 +1026,11 @@ class MythaiaVpnService : VpnService() {
         lastNetworkAvailable = true
 
         // Refresh DnsCache so domain resolution always goes through the new
-        // physical interface.
+        // physical interface, and tell the system which network the tunnel
+        // rides on — it uses that for metering and for the VPN's own
+        // "has internet" state, which some ROMs gate traffic on.
         DnsCache.setUnderlyingNetwork(network?.let { AndroidUnderlyingNetwork(it) })
+        runCatching { setUnderlyingNetworks(arrayOf(network)) }
 
         if (!wasAvailable) {
             logger.info("[VPN] Network path restored: ${transportSummary(transports)}; restarting connections")
