@@ -1363,7 +1363,8 @@ data class ProxyConfiguration(
             "vless://", "trojan://", "ss://",
             "hysteria2://", "hy2://", "anytls://", "vmess://", "tuic://",
             "sudoku://", "nowhere://",
-            "socks5://", "socks://", "https://"
+            "socks5://", "socks://", "https://",
+            "wireguard://", "wg://"
         )
 
         /** Whether [fromUrl] can parse [url]. */
@@ -1383,9 +1384,75 @@ data class ProxyConfiguration(
             url.startsWith("tuic://") -> fromTuicUrl(url)
             url.startsWith("sudoku://") -> fromSudokuUrl(url)
             url.startsWith("nowhere://") -> fromNowhereUrl(url)
+            url.startsWith("wireguard://") -> fromWireGuardUrl(url, "wireguard://")
+            url.startsWith("wg://") -> fromWireGuardUrl(url, "wg://")
             else -> throw ProxyError.InvalidUrl(
-                "URL must start with vless://, trojan://, ss://, vmess://, hysteria2://, hy2://, anytls://, tuic://, sudoku://, nowhere://, socks5://, or https://"
+                "URL must start with vless://, trojan://, ss://, vmess://, hysteria2://, hy2://, anytls://, tuic://, sudoku://, nowhere://, wireguard://, wg://, socks5://, or https://"
             )
+        }
+
+        /**
+         * WireGuard as a share link, in the two shapes clients write:
+         *
+         * - v2rayNG: `wireguard://<private key>@host:port?publickey=…&address=10.0.0.2/32,fd00::2/128&mtu=1420&reserved=1,2,3&presharedkey=…#name`
+         * - Hiddify / sing-box: `wg://host:port?pk=<private key>&local_address=…&peer_pk=…&pre_shared_key=…&reserved=…&mtu=…#name`
+         *
+         * Generators mix the two freely — a `wg://` with the key as userinfo, a
+         * `wireguard://` with `peer_pk` — so every spelling is accepted under
+         * either scheme, keys case-insensitively. The link becomes the INI it
+         * stands for and is stored as that, like a pasted config.
+         */
+        private fun fromWireGuardUrl(url: String, scheme: String): ProxyConfiguration {
+            var remaining = url.removePrefix(scheme)
+
+            var fragmentName: String? = null
+            val hashIndex = remaining.lastIndexOf('#')
+            if (hashIndex >= 0) {
+                fragmentName = percentDecode(remaining.substring(hashIndex + 1)).takeIf { it.isNotBlank() }
+                remaining = remaining.substring(0, hashIndex)
+            }
+            var queryString: String? = null
+            val qIndex = remaining.indexOf('?')
+            if (qIndex >= 0) {
+                queryString = remaining.substring(qIndex + 1)
+                remaining = remaining.substring(0, qIndex)
+            }
+            val params = parseQueryParams(queryString).mapKeys { it.key.lowercase() }
+            fun param(vararg names: String): String? =
+                names.firstNotNullOfOrNull { params[it]?.takeIf { v -> v.isNotBlank() } }
+
+            // A base64 key may end in '=' and contain '/', but never '@'.
+            val atIndex = remaining.lastIndexOf('@')
+            val userInfo = if (atIndex >= 0) percentDecode(remaining.substring(0, atIndex)) else null
+            var serverPart = if (atIndex >= 0) remaining.substring(atIndex + 1) else remaining
+            serverPart = serverPart.trimEnd('/')
+            val (host, port) = parseHostPort(serverPart, defaultPort = 51820u)
+
+            val privateKey = userInfo?.takeIf { it.isNotBlank() }
+                ?: param("pk", "privatekey", "private_key", "secretkey", "secret_key")
+                ?: throw ProxyError.InvalidUrl("WireGuard link has no private key")
+            val publicKey = param("publickey", "public_key", "peer_pk", "peer_public_key", "peerpublickey", "pbk")
+                ?: throw ProxyError.InvalidUrl("WireGuard link has no peer public key")
+
+            val ini = WireGuardIni.build(
+                privateKey = privateKey,
+                addresses = param("address", "local_address", "localaddress", "ip").orEmpty().split(','),
+                peer = WireGuardIni.Peer(
+                    publicKey = publicKey,
+                    endpointHost = host,
+                    endpointPort = port.toInt(),
+                    presharedKey = param("presharedkey", "pre_shared_key", "preshared_key", "psk"),
+                    allowedIps = param("allowedips", "allowed_ips").orEmpty().split(','),
+                    keepalive = param("keepalive", "persistentkeepalive", "persistent_keepalive")?.toIntOrNull() ?: 0
+                ),
+                mtu = param("mtu")?.toIntOrNull(),
+                reserved = param("reserved")?.let {
+                    com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parseReserved(it)
+                        ?: throw ProxyError.InvalidUrl("WireGuard reserved must be three bytes: $it")
+                },
+                dns = param("dns").orEmpty().split(',')
+            )
+            return fromWireGuardConfig(ini, fragmentName)
         }
 
         /**
