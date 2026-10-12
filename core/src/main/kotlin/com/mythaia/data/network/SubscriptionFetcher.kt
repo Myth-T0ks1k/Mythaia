@@ -17,13 +17,25 @@ import com.mythaia.vpn.util.decodeBase64Lenient
 
 object SubscriptionFetcher {
 
+    /**
+     * What a panel says about the subscription besides the servers, in the
+     * headers Remnawave, Marzban and 3x-ui send (and Happ, v2rayN, Hiddify read).
+     */
+    data class PanelInfo(
+        val announce: String? = null,
+        val supportUrl: String? = null,
+        val webPageUrl: String? = null,
+        val updateIntervalHours: Int? = null
+    )
+
     data class Result(
         val configurations: List<ProxyConfiguration>,
         val name: String?,
         val upload: Long?,
         val download: Long?,
         val total: Long?,
-        val expire: Long?
+        val expire: Long?,
+        val panel: PanelInfo = PanelInfo()
     )
 
     sealed class FetchError(message: String) : Exception(message) {
@@ -102,7 +114,8 @@ object SubscriptionFetcher {
             parseBody(
                 data = data,
                 profileTitle = parseProfileTitle(connection),
-                userInfo = parseSubscriptionUserInfo(connection)
+                userInfo = parseSubscriptionUserInfo(connection),
+                panel = panelInfo { connection.getHeaderField(it) }
             )
         } finally {
             connection.disconnect()
@@ -147,7 +160,8 @@ object SubscriptionFetcher {
             return parseBody(
                 data = response.body,
                 profileTitle = decodeProfileTitle(response.header("profile-title")),
-                userInfo = parseUserInfoValue(response.header("subscription-userinfo"))
+                userInfo = parseUserInfoValue(response.header("subscription-userinfo")),
+                panel = panelInfo { response.header(it) }
             )
         }
         throw FetchError.NetworkError(lastError ?: "No front answered")
@@ -157,7 +171,19 @@ object SubscriptionFetcher {
     /** Parses a subscription body already in hand (pasted text, a file), exactly as a fetch would. */
     fun parse(data: ByteArray): Result = parseBody(data, null, UserInfo())
 
-    private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo): Result {
+    /** The panel headers, read through [header] (case-insensitive on both transports). */
+    internal fun panelInfo(header: (String) -> String?): PanelInfo {
+        fun url(name: String) = header(name)?.trim()?.takeIf { it.startsWith("https://") || it.startsWith("http://") || it.startsWith("tg://") }
+        return PanelInfo(
+            // Same encoding as profile-title: plain, or "base64:" for anything non-ASCII.
+            announce = decodeProfileTitle(header("announce"))?.trim()?.take(1000),
+            supportUrl = url("support-url"),
+            webPageUrl = url("profile-web-page-url"),
+            updateIntervalHours = header("profile-update-interval")?.trim()?.toIntOrNull()?.takeIf { it in 1..720 }
+        )
+    }
+
+    private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo, panel: PanelInfo = PanelInfo()): Result {
         val bodyString = decodeBody(data)
 
         // sing-box first: its configs have `outbounds` too, and only the
@@ -171,7 +197,8 @@ object SubscriptionFetcher {
                 upload = userInfo.upload,
                 download = userInfo.download,
                 total = userInfo.total,
-                expire = userInfo.expire
+                expire = userInfo.expire,
+                panel = panel
             )
         }
 
@@ -184,7 +211,8 @@ object SubscriptionFetcher {
                 upload = userInfo.upload,
                 download = userInfo.download,
                 total = userInfo.total,
-                expire = userInfo.expire
+                expire = userInfo.expire,
+                panel = panel
             )
         }
 
@@ -197,7 +225,8 @@ object SubscriptionFetcher {
                 upload = userInfo.upload,
                 download = userInfo.download,
                 total = userInfo.total,
-                expire = userInfo.expire
+                expire = userInfo.expire,
+                panel = panel
             )
         }
 
@@ -216,7 +245,8 @@ object SubscriptionFetcher {
             upload = userInfo.upload,
             download = userInfo.download,
             total = userInfo.total,
-            expire = userInfo.expire
+            expire = userInfo.expire,
+            panel = panel
         )
     }
 

@@ -148,3 +148,56 @@ fun SubscriptionUsageCard(
 }
 
 private const val WEEK_MS = 7L * 24 * 60 * 60 * 1000
+
+/**
+ * What the provider said in the panel headers: an announcement, and where to
+ * get help or manage the account. Renders nothing for a panel that sends none.
+ */
+@Composable
+fun SubscriptionNoticeCard(
+    subscription: Subscription,
+    modifier: Modifier = Modifier
+) {
+    val announce = subscription.announce?.takeIf { it.isNotBlank() }
+    val support = subscription.supportUrl
+    val web = subscription.webPageUrl
+    if (announce == null && support == null && web == null) return
+    val context = LocalContext.current
+    fun open(url: String) {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+    androidx.compose.material3.Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        androidx.compose.foundation.layout.Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            announce?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            if (support != null || web != null) {
+                androidx.compose.foundation.layout.Row {
+                    support?.let { url ->
+                        androidx.compose.material3.TextButton(onClick = { open(url) }) {
+                            Text(androidx.compose.ui.res.stringResource(com.mythaia.R.string.subscription_support))
+                        }
+                    }
+                    web?.let { url ->
+                        androidx.compose.material3.TextButton(onClick = { open(url) }) {
+                            Text(androidx.compose.ui.res.stringResource(com.mythaia.R.string.subscription_web_page))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

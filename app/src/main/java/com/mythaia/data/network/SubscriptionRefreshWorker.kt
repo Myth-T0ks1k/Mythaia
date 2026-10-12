@@ -56,7 +56,13 @@ class SubscriptionRefreshWorker(
         val hwid = SubscriptionRefreshScheduler.remnawaveHWID(context)
 
         var failed = 0
+        val now = System.currentTimeMillis()
         for (subscription in subscriptions) {
+            // A panel that asks for a longer interval than the user's gets it:
+            // refreshing more often only adds load for the same list.
+            val panelHours = subscription.updateIntervalHours
+            val last = subscription.lastUpdate
+            if (panelHours != null && last != null && now - last < panelHours * 3_600_000L * 9 / 10) continue
             try {
                 SubscriptionUpdater.update(
                     subscription = subscription,
@@ -144,9 +150,13 @@ object SubscriptionRefreshScheduler {
         }
 
         val minutes = maxOf(MIN_INTERVAL_MINUTES, hours * 60L)
+        // Spread out: without it every device of a panel's users asks at the
+        // same minute after an app update and the panel sees a spike.
+        val flex = minOf(45L, minutes / 2).coerceAtLeast(5L)
         val request = PeriodicWorkRequestBuilder<SubscriptionRefreshWorker>(
-            minutes, TimeUnit.MINUTES
+            minutes, TimeUnit.MINUTES, flex, TimeUnit.MINUTES
         )
+            .setInitialDelay((0L until minOf(60L, minutes)).random(), TimeUnit.MINUTES)
             .setConstraints(
                 Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)

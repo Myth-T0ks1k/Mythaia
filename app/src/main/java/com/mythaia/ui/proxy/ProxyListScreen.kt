@@ -359,6 +359,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                 item(key = "usage") {
                     Column {
                         SubscriptionUsageCard(subscription = subscription)
+                        com.mythaia.ui.components.SubscriptionNoticeCard(subscription = subscription, modifier = Modifier.padding(top = 8.dp))
                         if (updatingSubscriptionId == subscription.id) {
                             Row(
                                 modifier = Modifier.padding(top = 8.dp, start = 4.dp),

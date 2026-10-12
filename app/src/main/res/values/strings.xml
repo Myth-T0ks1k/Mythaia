@@ -475,4 +475,6 @@
     <string name="exit_ip">Exit: %1$s</string>
     <string name="private_dns_banner">Private DNS (%1$s) is on: Android sends lookups straight to it, so domain rules and ad blocking cannot see them.</string>
     <string name="private_dns_open">Open network settings</string>
+    <string name="subscription_support">Support</string>
+    <string name="subscription_web_page">Account page</string>
 </resources>

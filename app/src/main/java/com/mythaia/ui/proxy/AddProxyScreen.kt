@@ -173,7 +173,11 @@ fun AddProxyScreen(
                     total = result.total,
                     expire = result.expire,
                     frontSni = sni,
-                    frontTargets = targets
+                    frontTargets = targets,
+                    announce = result.panel.announce,
+                    supportUrl = result.panel.supportUrl,
+                    webPageUrl = result.panel.webPageUrl,
+                    updateIntervalHours = result.panel.updateIntervalHours
                 )
                 onSubscriptionImport(result.configurations, subscription)
             } catch (e: Exception) {

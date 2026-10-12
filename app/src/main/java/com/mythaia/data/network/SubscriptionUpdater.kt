@@ -53,7 +53,12 @@ object SubscriptionUpdater {
             upload = result.upload ?: current.upload,
             download = result.download ?: current.download,
             total = result.total ?: current.total,
-            expire = result.expire ?: current.expire
+            expire = result.expire ?: current.expire,
+            // A panel that stops announcing has nothing to say any more.
+            announce = result.panel.announce,
+            supportUrl = result.panel.supportUrl ?: current.supportUrl,
+            webPageUrl = result.panel.webPageUrl ?: current.webPageUrl,
+            updateIntervalHours = result.panel.updateIntervalHours ?: current.updateIntervalHours
         )
         subscriptionRepository.update(updated)
         return updated

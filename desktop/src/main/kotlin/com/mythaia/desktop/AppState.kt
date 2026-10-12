@@ -845,7 +845,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                             name = result.name.takeIf { n -> !it.isNameCustomized && !n.isNullOrBlank() } ?: it.name,
                             lastUpdate = System.currentTimeMillis(),
                             upload = result.upload, download = result.download,
-                            total = result.total, expire = result.expire
+                            total = result.total, expire = result.expire,
+                            announce = result.panel.announce,
+                            supportUrl = result.panel.supportUrl ?: it.supportUrl,
+                            webPageUrl = result.panel.webPageUrl ?: it.webPageUrl,
+                            updateIntervalHours = result.panel.updateIntervalHours ?: it.updateIntervalHours
                         ) else it
                     }
                 }

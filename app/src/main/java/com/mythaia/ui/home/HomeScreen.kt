@@ -343,6 +343,7 @@ fun HomeScreen(
                     activeSubscription?.let { subscription ->
                         Spacer(modifier = Modifier.height(12.dp))
                         SubscriptionUsageCard(subscription = subscription)
+                        com.mythaia.ui.components.SubscriptionNoticeCard(subscription = subscription, modifier = Modifier.padding(top = 8.dp))
                     }
                 }
             }

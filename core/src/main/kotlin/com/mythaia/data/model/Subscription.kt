@@ -26,7 +26,15 @@ data class Subscription(
      * through a filter that blocks its domain but not the CDN in front of it.
      */
     val frontSni: String? = null,
-    val frontTargets: List<String> = emptyList()
+    val frontTargets: List<String> = emptyList(),
+    /** The panel's `announce` header: a message from the provider, shown with the group. */
+    val announce: String? = null,
+    /** `support-url`: where the provider takes questions. */
+    val supportUrl: String? = null,
+    /** `profile-web-page-url`: the provider's page for this account. */
+    val webPageUrl: String? = null,
+    /** `profile-update-interval`, in hours: how often the provider asks to be refreshed. */
+    val updateIntervalHours: Int? = null
 ) {
     /** Whether the fetch goes through a front rather than straight to the URL. */
     val isFronted: Boolean get() = frontTargets.isNotEmpty()

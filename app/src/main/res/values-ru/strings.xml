@@ -455,4 +455,6 @@
     <string name="exit_ip">Выход: %1$s</string>
     <string name="private_dns_banner">Включён частный DNS (%1$s): Android отправляет запросы прямо ему, и правила по доменам и блокировка рекламы их не видят.</string>
     <string name="private_dns_open">Открыть настройки сети</string>
+    <string name="subscription_support">Поддержка</string>
+    <string name="subscription_web_page">Личный кабинет</string>
 </resources>
