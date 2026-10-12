@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: test hooks that must run inside the app's own process. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <!-- Exported so `adb shell am broadcast -n` can reach it; release builds do not contain it. -->
+        <receiver
+            android:name="com.mythaia.debug.UdpSimReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver" />
+    </application>
+</manifest>

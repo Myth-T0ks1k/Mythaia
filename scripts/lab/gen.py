@@ -121,8 +121,13 @@ inbounds.append({"tag": "in-20013", "listen": "127.0.0.1", "port": 20013, "proto
                  "settings": {"auth": "password", "accounts": [{"user": "lab", "pass": PW}], "udp": True, "ip": "127.0.0.1"}})
 links.append(f"socks5://lab:{PW}@{HOST}:20013#{name('SOCKS5 auth')}")
 
+# Call test (docs/TESTING.md, section 4): UDP to any address on port 9053 goes to
+# the helpers' echo, so a call stream to two "public" relays needs no internet.
 xray = {"log": {"loglevel": "warning", "access": "", "error": os.path.join(HERE, "xray.log").replace("\\", "/")},
-        "inbounds": inbounds, "outbounds": [{"protocol": "freedom", "tag": "direct", "settings": {"finalRules": [{"action": "allow"}]}}]}
+        "inbounds": inbounds,
+        "outbounds": [{"protocol": "freedom", "tag": "direct", "settings": {"finalRules": [{"action": "allow"}]}},
+                      {"protocol": "freedom", "tag": "echo", "settings": {"redirect": "127.0.0.1:9053", "finalRules": [{"action": "allow"}]}}],
+        "routing": {"rules": [{"type": "field", "port": "9053", "outboundTag": "echo"}]}}
 json.dump(xray, open(os.path.join(HERE, "xray-lab.json"), "w"), indent=1)
 
 # ---------------------------------------------------------------- sing-box
@@ -145,7 +150,8 @@ sb = {"log": {"level": "warn", "output": os.path.join(HERE, "sb.log").replace("\
       "inbounds": sb_in,
       "endpoints": [{"type": "wireguard", "tag": "wg", "system": False, "listen_port": 21009, "address": ["10.77.0.1/24"], "private_key": WG_SERVER_PRIV,
                      "peers": [{"public_key": WG_CLIENT_PUB, "allowed_ips": ["10.77.0.2/32"]}] + ([{"public_key": os.environ["LAB_WG_EXTRA_PEER"], "allowed_ips": ["10.77.0.3/32"]}] if os.environ.get("LAB_WG_EXTRA_PEER") else [])}],
-      "outbounds": [{"type": "direct", "tag": "direct"}]}
+      "outbounds": [{"type": "direct", "tag": "direct"}],
+      "route": {"rules": [{"port": [9053], "action": "route-options", "override_address": "127.0.0.1"}]}}
 json.dump(sb, open(os.path.join(HERE, "sb-lab.json"), "w"), indent=1)
 
 links.append(f"hysteria2://{PW}@{HOST}:21001?{q({'sni': SNI, 'insecure': '1'})}#{name('Hysteria2')}")
