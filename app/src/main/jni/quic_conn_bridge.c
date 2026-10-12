@@ -974,26 +974,39 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicOpenBidiStream(JNIEnv *env,
 }
 
 /*
- * Sends one QUIC datagram, returning the packet carrying it.
+ * Offers one QUIC datagram to ngtcp2 and returns the packet it built, if any.
  *
- * Null when ngtcp2 declined — a datagram larger than the peer allows, or no
- * congestion window to put it in. Neither is an error: a datagram nobody
- * promised to deliver is allowed to not be delivered.
+ * status[0] says what became of the datagram: 1 when it is in the returned
+ * packet; 0 when there was no room for it yet (congestion window, pacing),
+ * so the caller should offer it again later; negative, an ngtcp2 error, when
+ * it will never fit (larger than the peer accepts, or no DATAGRAM support).
+ *
+ * A packet can come back with status 0: ngtcp2 may fill it with other frames
+ * (ACKs, retransmissions) and leave the datagram out. That packet is already
+ * numbered and must go on the wire. Dropping it, as this function used to,
+ * made the server see its ACKs lost, so it cut its own sending rate and
+ * queued replies: voice over Hysteria2 and TUIC lost packets and gained
+ * hundreds of milliseconds of delay.
  */
 JNIEXPORT jbyteArray JNICALL
 Java_com_mythaia_vpn_NativeBridge_nativeQuicWriteDatagram(JNIEnv *env,
                                                           jclass clazz,
                                                           jlong handle,
-                                                          jbyteArray data) {
+                                                          jbyteArray data,
+                                                          jintArray status) {
   (void)clazz;
+  jint result = NGTCP2_ERR_INVALID_STATE;
   quic_conn *qc = (quic_conn *)(intptr_t)handle;
   if (qc == NULL || qc->conn == NULL) {
+    (*env)->SetIntArrayRegion(env, status, 0, 1, &result);
     return NULL;
   }
 
   jsize len = (*env)->GetArrayLength(env, data);
   jbyte *bytes = (*env)->GetByteArrayElements(env, data, NULL);
   if (bytes == NULL) {
+    result = NGTCP2_ERR_NOMEM;
+    (*env)->SetIntArrayRegion(env, status, 0, 1, &result);
     return NULL;
   }
 
@@ -1012,10 +1025,55 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicWriteDatagram(JNIEnv *env,
 
   (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
 
-  if (written <= 0 || !accepted) {
+  result = written < 0 ? (jint)written : (accepted ? 1 : 0);
+  (*env)->SetIntArrayRegion(env, status, 0, 1, &result);
+  if (written <= 0) {
     return NULL;
   }
   return to_java_bytes(env, qc->out, (size_t)written);
+}
+
+/*
+ * The largest datagram payload that fits one packet on the current path, or 0
+ * before the peer's transport parameters are known.
+ *
+ * Bounded by two things: the peer's max_datagram_frame_size, and the path's
+ * packet size, which starts at 1200 and grows as path MTU discovery confirms
+ * larger packets. From the packet size come off the short header (1 byte, the
+ * current destination connection id, a packet number of up to 4 bytes), the
+ * AEAD tag, and the DATAGRAM frame's type and length.
+ *
+ * Hysteria and TUIC split a UDP payload into fragments only above this, as
+ * their own clients do. Splitting earlier, at a fixed 1100 bytes, broke every
+ * large call packet on servers that do not reassemble fragments (Xray's).
+ */
+JNIEXPORT jint JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicMaxDatagramPayload(JNIEnv *env,
+                                                               jclass clazz,
+                                                               jlong handle) {
+  (void)env;
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return 0;
+  }
+  const ngtcp2_transport_params *remote =
+    ngtcp2_conn_get_remote_transport_params2(qc->conn);
+  if (remote == NULL || remote->max_datagram_frame_size <= 3) {
+    return 0;
+  }
+  /* Frame type (1) and a length varint (2 below 16384). */
+  uint64_t by_peer = remote->max_datagram_frame_size - 3;
+
+  size_t packet = ngtcp2_conn_get_path_max_tx_udp_payload_size2(qc->conn);
+  /* 16: the tag of every QUIC v1 AEAD (AES-GCM, ChaCha20-Poly1305). */
+  size_t overhead = 1 + ngtcp2_conn_get_dcid2(qc->conn)->datalen + 4 + 16 + 3;
+  if (packet <= overhead) {
+    return 0;
+  }
+  uint64_t by_path = (uint64_t)(packet - overhead);
+  uint64_t room = by_peer < by_path ? by_peer : by_path;
+  return room > 16000 ? 16000 : (jint)room;
 }
 
 JNIEXPORT jlong JNICALL

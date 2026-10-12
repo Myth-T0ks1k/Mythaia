@@ -77,6 +77,18 @@ class QuicConnection(
     @Volatile
     var onDatagramReceived: ((ByteArray) -> Unit)? = null
 
+    /**
+     * Datagrams waiting for congestion window or pacing, oldest first; guarded
+     * by [engineLock]. quic-go, which the Hysteria and TUIC servers run, queues
+     * datagrams the same way: dropping every datagram the pacer was not ready
+     * for lost a share of each call's packets on a path with no loss at all,
+     * and every packet that Hysteria or TUIC had to split in two, whose second
+     * half always met the pacer.
+     */
+    private val pendingDatagrams = ArrayDeque<PendingDatagram>()
+
+    private class PendingDatagram(val data: ByteArray, val queuedAt: Long)
+
     /** Streams by ngtcp2 stream id. */
     private val streams = ConcurrentHashMap<Long, QuicStream>()
 
@@ -168,6 +180,7 @@ class QuicConnection(
                 NativeBridge.nativeQuicConnFree(handle)
                 handle = 0L
             }
+            pendingDatagrams.clear()
         }
 
         socket?.close()
@@ -252,18 +265,64 @@ class QuicConnection(
     }
 
     /**
-     * Sends one unreliable datagram.
+     * Sends one unreliable datagram, now or as soon as the congestion window
+     * and pacing allow; see [pendingDatagrams].
      *
-     * False when ngtcp2 declined it — too large for what the peer allows, or no
-     * window for it. Nothing retransmits a datagram, so that is the whole of
-     * the failure handling there is.
+     * False only when the connection is gone. A datagram that can never fit
+     * (larger than the peer accepts) is dropped when its turn comes, and
+     * nothing retransmits a datagram, so that is all the failure handling
+     * there is.
      */
     fun sendDatagram(data: ByteArray): Boolean {
-        val datagram = synchronized(engineLock) {
+        synchronized(engineLock) {
             if (handle == 0L) return false
-            NativeBridge.nativeQuicWriteDatagram(handle, data)
-        } ?: return false
-        return send(datagram)
+            // Full: the oldest goes. For a call, a fresh packet is worth more.
+            if (pendingDatagrams.size >= MAX_PENDING_DATAGRAMS) pendingDatagrams.removeFirst()
+            pendingDatagrams.addLast(PendingDatagram(data, System.nanoTime()))
+        }
+        flush()
+        return true
+    }
+
+    /**
+     * The largest datagram that goes out as one packet right now, or 0 when
+     * not yet known. Protocols that split UDP payloads split above this.
+     */
+    fun maxDatagramPayload(): Int = synchronized(engineLock) {
+        if (handle == 0L) 0 else NativeBridge.nativeQuicMaxDatagramPayload(handle)
+    }
+
+    /**
+     * Hands queued datagrams to ngtcp2 while it has room, sending every packet
+     * it builds, including ones that came back without the datagram in them.
+     * False when the socket has gone.
+     */
+    private fun drainDatagrams(): Boolean {
+        val status = IntArray(1)
+        while (true) {
+            val packet = synchronized(engineLock) {
+                if (handle == 0L) return true
+                // Stale ones go unsent: late audio is useless, and a datagram
+                // ngtcp2 can never fit (it then builds nothing and says "not
+                // yet") must not hold up the queue for good.
+                val now = System.nanoTime()
+                while (pendingDatagrams.firstOrNull()?.let { now - it.queuedAt > MAX_DATAGRAM_AGE_NS } == true) {
+                    pendingDatagrams.removeFirst()
+                }
+                val next = pendingDatagrams.firstOrNull() ?: return true
+                val built = NativeBridge.nativeQuicWriteDatagram(handle, next.data, status)
+                // Sent, or never sendable: either way it leaves the queue.
+                if (status[0] != 0) pendingDatagrams.removeFirst()
+                built
+            }
+            if (status[0] < 0) logger.debug("[QUIC] Datagram refused (ngtcp2 ${status[0]})")
+            if (packet != null) {
+                if (!send(packet)) return false
+            } else if (status[0] == 0) {
+                // No room yet: the next ACK read or pacing deadline flushes again.
+                return true
+            }
+        }
     }
 
     internal fun shutdownStream(streamId: Long) {
@@ -290,6 +349,7 @@ class QuicConnection(
 
     /** Drains everything ngtcp2 wants to send and puts it on the wire. */
     private fun flush() {
+        if (!drainDatagrams()) return
         while (true) {
             val datagram = synchronized(engineLock) {
                 if (handle == 0L) null else NativeBridge.nativeQuicConnWrite(handle)
@@ -360,8 +420,16 @@ class QuicConnection(
      */
     private fun runTimer() {
         while (running.get()) {
+            // Sleep until ngtcp2's deadline, at most a tick. A fixed 10 ms tick
+            // held every paced packet for up to 10 ms: the second half of a
+            // fragmented call packet arrived that much after the first.
+            val deadline = synchronized(engineLock) {
+                if (handle == 0L) -1L else NativeBridge.nativeQuicConnExpiry(handle)
+            }
+            val wait = if (deadline < 0) TIMER_TICK_NANOS
+            else (deadline - System.nanoTime()).coerceIn(MIN_TIMER_WAIT_NANOS, TIMER_TICK_NANOS)
             try {
-                Thread.sleep(TIMER_TICK_MS)
+                Thread.sleep(wait / 1_000_000, (wait % 1_000_000).toInt())
             } catch (_: InterruptedException) {
                 break
             }
@@ -438,8 +506,18 @@ class QuicConnection(
         /** Everything a QUIC datagram can be, plus room to read a larger one. */
         private const val MAX_DATAGRAM = 1500
 
+        /** quic-go queues 32; fragments of a large payload count one each. */
+        private const val MAX_PENDING_DATAGRAMS = 64
+
+        /** How long a datagram may wait for room before it is dropped. */
+        private const val MAX_DATAGRAM_AGE_NS = 500_000_000L
+
         private const val SOCKET_POLL_MS = 1000
-        private const val TIMER_TICK_MS = 10L
+        /** The longest the timer sleeps; it wakes sooner when ngtcp2's deadline is nearer. */
+        private const val TIMER_TICK_NANOS = 10_000_000L
+
+        /** The shortest, so a deadline already past cannot spin the thread. */
+        private const val MIN_TIMER_WAIT_NANOS = 200_000L
         private const val HANDSHAKE_TIMEOUT_MS = 10_000L
     }
 }

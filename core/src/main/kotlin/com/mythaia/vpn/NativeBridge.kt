@@ -372,13 +372,23 @@ object NativeBridge {
     external fun nativeQuicOpenBidiStream(handle: Long): Long
 
     /**
-     * Sends one QUIC datagram, returning the packet carrying it, or null.
+     * Offers one QUIC datagram; returns the packet ngtcp2 built, or null.
      *
-     * Null is not an error — ngtcp2 declines a datagram larger than the peer
-     * allows, or one with no congestion window to put it in.
+     * [status] receives the datagram's fate: 1 when it is in the returned
+     * packet, 0 when there was no room yet (offer it again later), negative
+     * (an ngtcp2 error) when it will never fit. A packet can come back with
+     * status 0, full of other frames; it must be sent all the same.
      */
     @JvmStatic
-    external fun nativeQuicWriteDatagram(handle: Long, data: ByteArray): ByteArray?
+    external fun nativeQuicWriteDatagram(handle: Long, data: ByteArray, status: IntArray): ByteArray?
+
+    /**
+     * The largest datagram payload one packet carries on the current path
+     * (it grows with path MTU discovery), or 0 before the peer's transport
+     * parameters are known.
+     */
+    @JvmStatic
+    external fun nativeQuicMaxDatagramPayload(handle: Long): Int
 
     /** A unidirectional stream, which only this end may write to. */
     @JvmStatic

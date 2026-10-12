@@ -94,7 +94,8 @@ class TuicClient(private val configuration: ProxyConfiguration) {
         val session = ensureSession()
         val overhead = TuicProtocol.HEADER_SIZE + TuicProtocol.PACKET_HEADER_SIZE +
             TuicProtocol.encodeAddress(host, port).size
-        val room = MAX_UDP_DATAGRAM - overhead
+        // Split only above what one packet carries now, as tuic-rs does.
+        val room = (session.maxDatagramPayload().takeIf { it > 0 } ?: MAX_UDP_DATAGRAM) - overhead
         val packetId = nextPacketId.getAndIncrement() and 0xFFFF
         val count = maxOf(1, (payload.size + room - 1) / room)
         if (count > 255) throw ProxyError.ProtocolError("TUIC: UDP payload too large")
@@ -230,7 +231,7 @@ class TuicClient(private val configuration: ProxyConfiguration) {
         const val ALPN = "h3"
         const val HEARTBEAT_INTERVAL_MS = 10_000L
 
-        /** The largest TUIC packet sent as one datagram; see Hysteria's for the arithmetic. */
+        /** The TUIC packet size assumed while QUIC cannot say yet; see Hysteria's. */
         const val MAX_UDP_DATAGRAM = 1100
     }
 }

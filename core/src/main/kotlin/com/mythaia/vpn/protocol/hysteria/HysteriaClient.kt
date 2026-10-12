@@ -120,11 +120,11 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
      */
     private suspend fun sendUdp(sessionId: Long, address: String, payload: ByteArray) {
         val session = ensureSession()
-        val room = MAX_UDP_DATAGRAM - HysteriaProtocol.udpHeaderSize(address)
+        val room = datagramLimit(session) - HysteriaProtocol.udpHeaderSize(address)
         val packetId = nextPacketId.getAndIncrement() and 0xFFFF
         if (payload.size <= room) {
             if (!session.sendDatagram(HysteriaProtocol.UdpMessage(sessionId, packetId, 0, 1, address, payload).encode())) {
-                logger.debug("[Hysteria] UDP datagram refused by QUIC (${payload.size} bytes to $address)")
+                logger.debug("[Hysteria] UDP datagram dropped, QUIC connection gone (${payload.size} bytes to $address)")
             }
             return
         }
@@ -327,10 +327,19 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         const val MAX_RESPONSE = 8192
 
         /**
-         * The largest Hysteria UDP message sent as one datagram. A QUIC
-         * DATAGRAM frame has to fit one packet on a 1280-byte path after the
-         * packet header, AEAD tag and frame header; anything over is split.
+         * The Hysteria UDP message size assumed while QUIC cannot say yet:
+         * one that fits a packet on any path after the packet header, AEAD
+         * tag and frame header.
          */
         const val MAX_UDP_DATAGRAM = 1100
+
+        /**
+         * The largest Hysteria UDP message sent whole: what one QUIC packet
+         * carries on this path now, as the official client sends. Messages
+         * over it are split into fragments, which some servers (Xray's) never
+         * reassemble, so splitting below it lost every large call packet there.
+         */
+        fun datagramLimit(session: com.mythaia.vpn.protocol.quic.QuicConnection): Int =
+            session.maxDatagramPayload().takeIf { it > 0 } ?: MAX_UDP_DATAGRAM
     }
 }
