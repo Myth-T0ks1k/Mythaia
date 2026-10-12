@@ -54,12 +54,11 @@ class Http2Stream(
     }
 
     override suspend fun receiveData(): ByteArray? {
-        if (state == State.CLOSED) return null
-        val data = try {
-            dataChannel.receive()
-        } catch (e: Exception) {
-            return null
-        }
+        // Drain before reporting the end: END_STREAM closes the channel the
+        // moment it arrives, usually while DATA frames ahead of it are still
+        // buffered. Returning null on the CLOSED state alone threw that tail
+        // away — a fast server's last few hundred kilobytes of every response.
+        val data = dataChannel.receiveCatching().getOrNull() ?: return null
         // Defer WINDOW_UPDATE to consume time so back-pressure is preserved
         // through the channel — mirrors iOS HTTP2Stream.acknowledgeConsumedData.
         if (data.isNotEmpty()) {

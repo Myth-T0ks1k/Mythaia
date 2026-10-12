@@ -147,7 +147,8 @@ object ProtocolProbe {
             val chunk = try {
                 connection.receive()
             } catch (e: Exception) {
-                if (out.size() > 0) null else throw e
+                if (out.size() > 0) throw IllegalStateException("${e.javaClass.simpleName} after ${out.size()} bytes: ${e.message}", e)
+                throw e
             } ?: break
             out.write(chunk)
             if (headerEnd < 0) {
