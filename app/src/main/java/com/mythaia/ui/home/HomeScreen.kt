@@ -87,8 +87,8 @@ import com.mythaia.ui.components.PowerButton
 import com.mythaia.ui.components.SessionStatsRow
 import com.mythaia.ui.components.SubscriptionUsageCard
 import com.mythaia.ui.components.WingMark
+import com.mythaia.ui.proxy.NewServerFlow
 import com.mythaia.ui.proxy.AddProxyScreen
-import com.mythaia.ui.proxy.ProxyEditorScreen
 import com.mythaia.ui.theme.GradientConnectedEndDark
 import com.mythaia.ui.theme.GradientConnectedEndLight
 import com.mythaia.ui.theme.GradientConnectedStartDark
@@ -448,10 +448,12 @@ fun HomeScreen(
     if (showingManualAddSheet) {
         ModalBottomSheet(
             onDismissRequest = { showingManualAddSheet = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            // The editor inside paints the background colour; matching it
+            // keeps the strip under the content from showing as a white band.
+            containerColor = MaterialTheme.colorScheme.background
         ) {
-            ProxyEditorScreen(
-                configuration = null,
+            NewServerFlow(
                 onSave = { config ->
                     viewModel.addConfiguration(config)
                     showingManualAddSheet = false

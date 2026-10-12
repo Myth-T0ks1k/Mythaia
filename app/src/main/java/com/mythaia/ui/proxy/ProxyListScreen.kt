@@ -516,10 +516,9 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             onDismissRequest = { showingManualAddSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.background
         ) {
-            ProxyEditorScreen(
-                configuration = null,
+            NewServerFlow(
                 onSave = { config ->
                     viewModel.addConfiguration(config)
                     browsingGroupId = ProxyGroup.DEFAULT_ID
@@ -535,7 +534,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             onDismissRequest = { configurationToEdit = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.background
         ) {
             if (config.outboundProtocol == OutboundProtocol.WIREGUARD) {
                 WireGuardEditorScreen(
