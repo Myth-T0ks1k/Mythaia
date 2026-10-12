@@ -65,3 +65,7 @@ desktop/resources/windows-x64/
 desktop/tools/
 *.exe
 *.msi
+
+# Interop lab output (scripts/lab/gen.py) and matrix results
+scripts/lab/out/
+matrix-results.tsv

@@ -34,7 +34,9 @@ class LabMatrixSmoke {
                     println("LOG ${System.currentTimeMillis() % 100000} debug [$category] $message")
             }
         }
-        for (path in files) {
+        for (given in files) {
+            // Gradle runs tests in desktop/; paths in docs/TESTING.md are from the repo root.
+            val path = File(given).takeIf { it.exists() }?.path ?: File("..", given).path
             var bytes = File(path).readBytes()
             if (host != null) bytes = String(bytes, Charsets.UTF_8).replace("10.0.2.2", host).toByteArray()
             val input = ProtocolProbe.readInput(bytes)
