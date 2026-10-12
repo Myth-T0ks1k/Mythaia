@@ -326,13 +326,11 @@ class VlessClient(
                     ?: throw ProxyError.ConnectionFailed("WSS requires TLS configuration")
 
                 // Force ALPN to http/1.1; HTTP/2 negotiation would break the
-                // WebSocket upgrade handshake.
-                val wsTlsConfig = TlsConfiguration(
-                    serverName = baseTlsConfig.serverName,
-                    alpn = listOf("http/1.1"),
-                    allowInsecure = baseTlsConfig.allowInsecure,
-                    fingerprint = baseTlsConfig.fingerprint
-                )
+                // WebSocket upgrade handshake. A copy, so the link's fragment,
+                // ECH and pinned certificates still apply: rebuilding it from
+                // four fields silently dropped the FinalMask fragment, and the
+                // hello went out under the default split that DPI sees through.
+                val wsTlsConfig = baseTlsConfig.copy(alpn = listOf("http/1.1"))
 
                 val tlsClient = TlsClient(wsTlsConfig)
                 val tlsConn = if (tunnel != null) {
@@ -468,7 +466,9 @@ class VlessClient(
                 val baseTlsConfig = configuration.tls
                     ?: throw ProxyError.ConnectionFailed("HTTPS upgrade requires TLS configuration")
 
-                val tlsClient = TlsClient(baseTlsConfig)
+                // HTTPUpgrade is an HTTP/1.1 upgrade, like WebSocket; a server
+                // allowed to pick h2 would read the request as a bogus preface.
+                val tlsClient = TlsClient(baseTlsConfig.copy(alpn = listOf("http/1.1")))
                 val tlsConn = if (tunnel != null) {
                     tlsClient.connect(requireTunnelTransport())
                 } else {
@@ -573,12 +573,7 @@ class VlessClient(
                 }
             }
         }
-        return TlsConfiguration(
-            serverName = base.serverName,
-            alpn = sanitizedAlpn,
-            allowInsecure = base.allowInsecure,
-            fingerprint = base.fingerprint
-        )
+        return base.copy(alpn = sanitizedAlpn)
     }
 
     private suspend fun connectWithXHttp(
@@ -932,11 +927,28 @@ class VlessClient(
         initialData: ByteArray?
     ): ProxyConnection {
         // Tunneled connections reuse the existing tunnel — no NioSocket, no retries.
-        if (tunnel != null) {
+        if (tunnel != null && configuration.transport.ifEmpty { "tcp" } == "tcp" && configuration.security != "tls") {
             val transport = requireTunnelTransport()
             return performEncryptedHandshake(
                 encryption, transport, command, destinationHost, destinationPort, initialData
             )
+        }
+
+        // The encryption sits on whatever byte pipe the link describes, as in
+        // Xray: raw TCP, or TLS and/or WebSocket, HTTPUpgrade, gRPC or XHTTP —
+        // XHTTP over TLS through a CDN being the deployment it is built for.
+        val layered = configuration.transport.ifEmpty { "tcp" } != "tcp" || configuration.security == "tls"
+        if (configuration.security == "reality") {
+            throw ProxyError.ProtocolError("VLESS encryption over REALITY is not supported")
+        }
+        if (layered && tunnel != null) {
+            val opened = com.mythaia.vpn.protocol.StreamTransports.open(configuration, configuration.tls, tunnel)
+            return try {
+                performEncryptedHandshake(encryption, opened.transport, command, destinationHost, destinationPort, initialData)
+            } catch (e: Exception) {
+                runCatching { opened.transport.forceCancel() }
+                throw e
+            }
         }
 
         var lastError: Exception? = null
@@ -948,6 +960,18 @@ class VlessClient(
             }
 
             try {
+                if (layered) {
+                    val opened = com.mythaia.vpn.protocol.StreamTransports.open(configuration, configuration.tls, null)
+                    try {
+                        return performEncryptedHandshake(
+                            encryption, opened.transport, command, destinationHost, destinationPort, initialData
+                        )
+                    } catch (e: Exception) {
+                        runCatching { opened.transport.forceCancel() }
+                        throw e
+                    }
+                }
+
                 val socket = NioSocket()
                 this.connection = socket
 

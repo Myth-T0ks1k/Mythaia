@@ -98,7 +98,7 @@ class TuicClient(private val configuration: ProxyConfiguration) {
     /**
      * Sends the `Authenticate` command on a unidirectional stream.
      *
-     * The token is the TLS exporter's output with the UUID as the label and the
+     * The token is the TLS exporter's output with the UUID's raw bytes as the label and the
      * raw password as the context, which is what binds it to this session. It
      * is fire-and-forget: the specification defines no response, and a server
      * that rejects it simply stops relaying.
@@ -109,8 +109,13 @@ class TuicClient(private val configuration: ProxyConfiguration) {
             ?: configuration.trojanPassword
             ?: throw ProxyError.ProtocolError("TUIC password not set")
 
+        // The label is the UUID's 16 raw bytes, as tuic-rs (`uuid.as_ref()`)
+        // and sing-quic (`string(uuid[:])`) both use — not its text form,
+        // which every server rejects as a token mismatch.
+        val uuidBytes = java.nio.ByteBuffer.allocate(16)
+            .putLong(uuid.mostSignificantBits).putLong(uuid.leastSignificantBits).array()
         val token = connection.exportKeyingMaterial(
-            label = uuid.toString(),
+            label = uuidBytes,
             context = password.toByteArray(Charsets.UTF_8),
             length = TuicProtocol.TOKEN_LENGTH
         ) ?: throw ProxyError.ProtocolError("TUIC: no keying material to build a token from")

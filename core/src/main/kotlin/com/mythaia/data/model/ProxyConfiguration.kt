@@ -1035,9 +1035,11 @@ data class ProxyConfiguration(
             json.put("fp", it.fingerprint.raw)
             // Without this a shared link silently turns certificate checking
             // back on, and the server the user could reach stops working.
-            if (it.allowInsecure) json.put("allowInsecure", "true")
             it.pinnedCertSha256?.takeIf { pins -> pins.isNotEmpty() }?.let { pins -> json.put("pcs", pins.joinToString(",")) }
             it.verifyName?.let { name -> json.put("vcn", name) }
+            // Kept last: the block must not end in an expression that can be
+            // null, or the elvis below would wipe "tls" for every TLS server.
+            if (it.allowInsecure) json.put("allowInsecure", "true")
         } ?: json.put("tls", "")
 
         val encoded = java.util.Base64.getEncoder()

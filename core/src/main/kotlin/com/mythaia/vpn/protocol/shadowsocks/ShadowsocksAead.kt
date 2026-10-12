@@ -192,7 +192,7 @@ object ShadowsocksAEADCrypto {
     }
 
     private fun chaCha20Cipher(): Cipher {
-        return tlChaCha.get() ?: Cipher.getInstance("ChaCha20/Poly1305/NoPadding").also { tlChaCha.set(it) }
+        return tlChaCha.get() ?: chaChaCipher().also { tlChaCha.set(it) }
     }
 
     fun seal(cipher: ShadowsocksCipher, key: ByteArray, nonce: ByteArray, plaintext: ByteArray): ByteArray {
@@ -463,4 +463,15 @@ sealed class ShadowsocksError(message: String) : Exception(message) {
     class BadRequestSalt : ShadowsocksError("Shadowsocks 2022 bad request salt")
     class BadHeaderType : ShadowsocksError("Shadowsocks 2022 bad header type")
     class InvalidPSK : ShadowsocksError("Invalid Shadowsocks 2022 PSK")
+}
+
+/**
+ * Conscrypt (Android) names the AEAD `ChaCha20/Poly1305/NoPadding`; the
+ * desktop JDK only knows `ChaCha20-Poly1305`. Same algorithm, same IV
+ * handling, so whichever this runtime has.
+ */
+private fun chaChaCipher(): Cipher = try {
+    Cipher.getInstance("ChaCha20/Poly1305/NoPadding")
+} catch (_: java.security.GeneralSecurityException) {
+    Cipher.getInstance("ChaCha20-Poly1305")
 }

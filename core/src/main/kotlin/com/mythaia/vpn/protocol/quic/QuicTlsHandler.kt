@@ -516,7 +516,7 @@ class QuicTlsHandler(
      * connection proves nothing on another. Null before the handshake reaches
      * the server Finished, since the secret it derives from does not exist yet.
      */
-    fun exportKeyingMaterial(label: String, context: ByteArray, length: Int): ByteArray? {
+    fun exportKeyingMaterial(label: ByteArray, context: ByteArray, length: Int): ByteArray? {
         val secret = exporterMasterSecret ?: return null
         return Tls13Crypto.exportKeyingMaterial(cipherSuite, secret, label, context, length)
     }

@@ -944,9 +944,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
         val content = spaces + label + byteArrayOf(0x00) + transcriptHash
 
         try {
-            // Conscrypt uses "SHA256withRSA/PSS" naming (not generic "RSASSA-PSS"
-            // which requires explicit PSSParameterSpec).
-            val sig = java.security.Signature.getInstance(javaSignatureAlgorithm(algorithm))
+            val sig = TlsPeerVerifier.signature(algorithm)
             sig.initVerify(serverPublicKey)
             sig.update(content)
             val isValid = sig.verify(signature)
@@ -957,29 +955,6 @@ class TlsClient(private val configuration: TlsConfiguration) {
             throw e
         } catch (e: Exception) {
             throw TlsError.CertificateValidationFailed("CertificateVerify failed: ${e.message}")
-        }
-    }
-
-    /** Maps TLS signature algorithm identifier to Conscrypt Signature algorithm name
-     *  ("SHA256withRSA/PSS" rather than generic "RSASSA-PSS"). */
-    private fun javaSignatureAlgorithm(tlsAlgorithm: Int): String {
-        return when (tlsAlgorithm) {
-            // ECDSA
-            0x0403 -> "SHA256withECDSA"    // ecdsa_secp256r1_sha256
-            0x0503 -> "SHA384withECDSA"    // ecdsa_secp384r1_sha384
-            0x0603 -> "SHA512withECDSA"    // ecdsa_secp521r1_sha512
-            // RSA-PSS
-            0x0804 -> "SHA256withRSA/PSS"  // rsa_pss_rsae_sha256
-            0x0805 -> "SHA384withRSA/PSS"  // rsa_pss_rsae_sha384
-            0x0806 -> "SHA512withRSA/PSS"  // rsa_pss_rsae_sha512
-            // RSA-PKCS1
-            0x0401 -> "SHA256withRSA"      // rsa_pkcs1_sha256
-            0x0501 -> "SHA384withRSA"      // rsa_pkcs1_sha384
-            0x0601 -> "SHA512withRSA"      // rsa_pkcs1_sha512
-            0x0201 -> "SHA1withRSA"        // rsa_pkcs1_sha1 (legacy, RFC 8446 §B.3.1.3)
-            // EdDSA
-            0x0807 -> "Ed25519"            // ed25519 (Android API 33+)
-            else -> "SHA256withRSA"
         }
     }
 
@@ -1419,7 +1394,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
         val content = cRandom + sRandom + body.copyOfRange(0, paramsEnd)
 
         try {
-            val sig = java.security.Signature.getInstance(javaSignatureAlgorithm(sigAlgorithm))
+            val sig = TlsPeerVerifier.signature(sigAlgorithm)
             sig.initVerify(serverCert.publicKey)
             sig.update(content)
             if (!sig.verify(signature)) {

@@ -84,8 +84,21 @@ internal object Tls13Crypto {
         label: String,
         context: ByteArray,
         length: Int
+    ): ByteArray = hkdfExpandLabel(algo, hashLen, secret, label.toByteArray(Charsets.US_ASCII), context, length)
+
+    /**
+     * HKDF-Expand-Label with the label as raw bytes. TLS's own labels are
+     * ASCII, but an exporter label is whatever the protocol above chooses —
+     * TUIC's is the UUID's 16 raw bytes, which no String round-trips.
+     */
+    private fun hkdfExpandLabel(
+        algo: String,
+        hashLen: Int,
+        secret: ByteArray,
+        labelBytes: ByteArray,
+        context: ByteArray,
+        length: Int
     ): ByteArray {
-        val labelBytes = label.toByteArray(Charsets.US_ASCII)
         val fullLabelLen = 6 + labelBytes.size  // "tls13 " prefix
         val info = ByteArray(2 + 1 + fullLabelLen + 1 + context.size)
         var idx = 0
@@ -216,12 +229,13 @@ internal object Tls13Crypto {
     fun exportKeyingMaterial(
         cipherSuite: Int,
         exporterMasterSecret: ByteArray,
-        label: String,
+        label: ByteArray,
         context: ByteArray,
         length: Int
     ): ByteArray {
         val params = suiteParams(cipherSuite)
-        val secret = deriveSecret(params, exporterMasterSecret, label, ByteArray(0))
+        val emptyHash = MessageDigest.getInstance(params.hashAlgo).digest(ByteArray(0))
+        val secret = hkdfExpandLabel(params.hmacAlgo, params.hashLen, exporterMasterSecret, label, emptyHash, params.hashLen)
         val contextHash = MessageDigest.getInstance(params.hashAlgo).digest(context)
         return hkdfExpandLabel(params.hmacAlgo, params.hashLen, secret, "exporter", contextHash, length)
     }

@@ -305,7 +305,7 @@ class NowhereSession(val configuration: NowhereConfiguration) {
         // offer, and we offer exactly one, so a completed handshake is also
         // the ALPN check the protocol asks for.
         val exporter = connection.exportKeyingMaterial(
-            label = NowhereProtocol.EXPORTER_LABEL,
+            label = NowhereProtocol.EXPORTER_LABEL.toByteArray(Charsets.US_ASCII),
             context = ByteArray(0),
             length = NowhereProtocol.EXPORTER_LENGTH
         ) ?: run {

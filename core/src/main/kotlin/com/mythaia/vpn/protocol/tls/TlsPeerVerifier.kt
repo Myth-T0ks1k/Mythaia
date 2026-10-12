@@ -96,7 +96,7 @@ object TlsPeerVerifier {
             transcriptHash
 
         return try {
-            Signature.getInstance(javaSignatureAlgorithm(algorithm)).run {
+            signature(algorithm).run {
                 initVerify(certificate.publicKey)
                 update(content)
                 verify(signature)
@@ -209,6 +209,37 @@ object TlsPeerVerifier {
      * Conscrypt spells PSS as `SHA256withRSA/PSS`; the generic `RSASSA-PSS`
      * needs explicit parameters it will not infer.
      */
+    /**
+     * A verifier for a TLS signature scheme, ready for `initVerify`.
+     *
+     * Conscrypt (Android) knows RSA-PSS as `SHA256withRSA/PSS`; the desktop
+     * JDK has no such name and only `RSASSA-PSS`, which takes its digest,
+     * MGF1 digest and salt length as parameters instead of inferring them.
+     * Without this fallback the Windows build failed every TLS 1.3 server
+     * with an RSA certificate — most of them, CloudFront included.
+     */
+    fun signature(tlsAlgorithm: Int): Signature {
+        val name = javaSignatureAlgorithm(tlsAlgorithm)
+        return try {
+            Signature.getInstance(name)
+        } catch (e: java.security.NoSuchAlgorithmException) {
+            val digest = when (tlsAlgorithm) {
+                0x0804, 0x0809 -> "SHA-256"
+                0x0805, 0x080a -> "SHA-384"
+                0x0806, 0x080b -> "SHA-512"
+                else -> throw e
+            }
+            val saltLength = when (digest) { "SHA-256" -> 32; "SHA-384" -> 48; else -> 64 }
+            Signature.getInstance("RSASSA-PSS").apply {
+                setParameter(
+                    java.security.spec.PSSParameterSpec(
+                        digest, "MGF1", java.security.spec.MGF1ParameterSpec(digest), saltLength, 1
+                    )
+                )
+            }
+        }
+    }
+
     fun javaSignatureAlgorithm(tlsAlgorithm: Int): String = when (tlsAlgorithm) {
         0x0403 -> "SHA256withECDSA"
         0x0503 -> "SHA384withECDSA"

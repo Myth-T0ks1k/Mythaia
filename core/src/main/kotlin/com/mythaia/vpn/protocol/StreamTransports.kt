@@ -38,7 +38,7 @@ object StreamTransports {
             "ws" -> {
                 val ws = configuration.websocket
                     ?: throw ProxyError.ConnectionFailed("ws transport with no WebSocket configuration")
-                val inner = stream(configuration, tls, tunnel)
+                val inner = stream(configuration, tls?.let(::http11Only), tunnel)
                 wrap(inner) {
                     val connection = WebSocketConnection(transport = inner.transport, configuration = ws)
                     connection.performUpgrade()
@@ -53,7 +53,7 @@ object StreamTransports {
             "httpupgrade" -> {
                 val hu = configuration.httpUpgrade
                     ?: throw ProxyError.ConnectionFailed("httpupgrade transport with no configuration")
-                val inner = stream(configuration, tls, tunnel)
+                val inner = stream(configuration, tls?.let(::http11Only), tunnel)
                 wrap(inner) {
                     val connection = HttpUpgradeConnection(transport = inner.transport, configuration = hu)
                     connection.performUpgrade()
@@ -105,11 +105,7 @@ object StreamTransports {
         }
         val sanitizedTls = tls?.let { base ->
             val wanted = if (useHTTP2) listOf("h2", "http/1.1") else listOf("http/1.1")
-            TlsConfiguration(
-                serverName = base.serverName, alpn = wanted, allowInsecure = base.allowInsecure,
-                fingerprint = base.fingerprint, minVersion = base.minVersion, maxVersion = base.maxVersion,
-                fragment = base.fragment, echConfig = base.echConfig
-            )
+            base.copy(alpn = wanted)
         }
         val mode = if (xhttp.mode == XHttpMode.AUTO) XHttpMode.PACKET_UP else xhttp.mode
         val sessionId = if (mode == XHttpMode.PACKET_UP || mode == XHttpMode.STREAM_UP) UUID.randomUUID().toString() else ""
@@ -147,6 +143,14 @@ object StreamTransports {
     }
 
     /** Runs the transport handshake; the inner stream is closed if it fails, since no one else holds it. */
+    /**
+     * WebSocket and HTTPUpgrade are HTTP/1.1 upgrades. Offering h2 lets a
+     * server that prefers it (any CDN, Xray with the default ALPN) select h2,
+     * after which the upgrade request arrives as a bogus HTTP/2 preface and the
+     * server hangs up — what VLESS already avoids by pinning the same ALPN.
+     */
+    private fun http11Only(tls: TlsConfiguration): TlsConfiguration = tls.copy(alpn = listOf("http/1.1"))
+
     private inline fun wrap(inner: Opened, build: () -> Transport): Opened = try {
         Opened(build(), inner.tlsVersion)
     } catch (e: Exception) {

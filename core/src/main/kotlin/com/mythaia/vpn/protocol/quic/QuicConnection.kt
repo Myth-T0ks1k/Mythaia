@@ -88,7 +88,7 @@ class QuicConnection(
      * TUIC turns its password into a token this way, so a token captured on one
      * connection proves nothing on another. Null before the handshake finishes.
      */
-    fun exportKeyingMaterial(label: String, context: ByteArray, length: Int): ByteArray? =
+    fun exportKeyingMaterial(label: ByteArray, context: ByteArray, length: Int): ByteArray? =
         tls.exportKeyingMaterial(label, context, length)
 
     /** What the peer advertised, once the handshake has got that far. */
