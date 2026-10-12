@@ -140,6 +140,19 @@ object Http3Framer {
     )
 
     /**
+     * SETTINGS without HTTP Datagrams or extended CONNECT, for protocols that
+     * use HTTP/3 only to authenticate and then carry their own framing in raw
+     * QUIC datagrams (Hysteria2). Announcing H3_DATAGRAM there makes the
+     * server's HTTP/3 layer claim every QUIC datagram as an HTTP datagram,
+     * and the protocol's UDP never sees them.
+     */
+    val PLAIN_CLIENT_SETTINGS: List<Pair<Long, Long>> = listOf(
+        Http3SettingsId.QPACK_MAX_TABLE_CAPACITY.code to 0L,
+        Http3SettingsId.QPACK_BLOCKED_STREAMS.code to 0L,
+        Http3SettingsId.MAX_FIELD_SECTION_SIZE.code to FIELD_SECTION_SIZE_LIMIT
+    )
+
+    /**
      * One frame off the wire.
      *
      * [type] stays a raw code rather than an [Http3FrameType] so that a frame
@@ -256,7 +269,7 @@ object Http3Framer {
     }
 
     /** The SETTINGS frame this client sends first on its control stream. */
-    fun clientSettingsFrame(): ByteArray = settingsFrame(CLIENT_SETTINGS)
+    fun clientSettingsFrame(settings: List<Pair<Long, Long>> = CLIENT_SETTINGS): ByteArray = settingsFrame(settings)
 
     /**
      * Reads a SETTINGS payload back into identifier/value pairs.

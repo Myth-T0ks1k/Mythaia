@@ -14,6 +14,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.mythaia.vpn.protocol.quic.QuicUdpFlow
+import com.mythaia.vpn.protocol.quic.UdpReassembler
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 private val logger = MythaiaLogger("Tuic")
 
@@ -38,6 +42,10 @@ class TuicClient(private val configuration: ProxyConfiguration) {
     private val lock = Mutex()
     private var quic: QuicConnection? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val udpFlows = ConcurrentHashMap<Int, QuicUdpFlow>()
+    private val nextAssociation = AtomicInteger((System.nanoTime() and 0xFFFF).toInt())
+    private val nextPacketId = AtomicInteger(0)
+    private val reassembler = UdpReassembler()
 
     /**
      * Opens a relayed TCP stream.
@@ -58,10 +66,80 @@ class TuicClient(private val configuration: ProxyConfiguration) {
         return stream
     }
 
-    fun close() {
-        scope.cancel()
+    /**
+     * Opens a UDP flow to [host]:[port]: a TUIC association, relayed in QUIC
+     * datagrams (the "native" relay mode every server speaks). There is no
+     * setup message; the first packet opens it and `Dissociate` ends it.
+     */
+    suspend fun connectUDP(host: String, port: Int): ProxyConnection {
+        ensureSession()
+        var id: Int
+        do {
+            id = nextAssociation.incrementAndGet() and 0xFFFF
+        } while (udpFlows.containsKey(id))
+        val association = id
+        val flow = QuicUdpFlow(
+            scope = scope,
+            transmit = { payload -> sendUdp(association, host, port, payload) },
+            onClose = {
+                udpFlows.remove(association)
+                dissociate(association)
+            }
+        )
+        udpFlows[association] = flow
+        return flow
+    }
+
+    private suspend fun sendUdp(association: Int, host: String, port: Int, payload: ByteArray) {
+        val session = ensureSession()
+        val overhead = TuicProtocol.HEADER_SIZE + TuicProtocol.PACKET_HEADER_SIZE +
+            TuicProtocol.encodeAddress(host, port).size
+        val room = MAX_UDP_DATAGRAM - overhead
+        val packetId = nextPacketId.getAndIncrement() and 0xFFFF
+        val count = maxOf(1, (payload.size + room - 1) / room)
+        if (count > 255) throw ProxyError.ProtocolError("TUIC: UDP payload too large")
+        for (index in 0 until count) {
+            val piece = if (count == 1) payload
+            else payload.copyOfRange(index * room, minOf(payload.size, (index + 1) * room))
+            session.sendDatagram(
+                TuicProtocol.packet(TuicProtocol.Packet(association, packetId, count, index, host, port, piece))
+            )
+        }
+    }
+
+    /** Routes a datagram from the server to its association, reassembling fragments. */
+    private fun onDatagram(bytes: ByteArray) {
+        val packet = TuicProtocol.parsePacket(bytes) ?: return
+        val flow = udpFlows[packet.associationId] ?: return
+        val key = (packet.associationId.toLong() shl 16) or packet.packetId.toLong()
+        val whole = reassembler.add(key, packet.fragmentId, packet.fragmentTotal, packet.payload) ?: return
+        flow.deliver(whole)
+    }
+
+    /** Tells the server an association is over, so it can free the socket now rather than on timeout. */
+    private fun dissociate(association: Int) {
+        val session = quic?.takeIf { it.isConnected } ?: return
+        scope.launch {
+            runCatching {
+                val stream = session.openUniStream() ?: return@runCatching
+                stream.send(TuicProtocol.dissociate(association))
+                stream.finish()
+            }
+        }
+    }
+
+    /** Drops the QUIC session; the next dial brings a new one up. Flows and the scope survive. */
+    private fun resetSession() {
         quic?.close()
         quic = null
+    }
+
+    /** Ends everything: the session, the heartbeat, every UDP flow. */
+    fun close() {
+        resetSession()
+        udpFlows.values.toList().forEach { it.cancel() }
+        udpFlows.clear()
+        scope.cancel()
     }
 
     // MARK: - Session
@@ -69,7 +147,9 @@ class TuicClient(private val configuration: ProxyConfiguration) {
     private suspend fun ensureSession(): QuicConnection = lock.withLock {
         quic?.takeIf { it.isConnected }?.let { return it }
 
-        close()
+        // Not close(): that cancels the scope the heartbeat runs in, so after
+        // the first reconnect the session went silent and the server dropped it.
+        resetSession()
 
         val tls = configuration.tls
         val connection = QuicConnection(
@@ -83,6 +163,7 @@ class TuicClient(private val configuration: ProxyConfiguration) {
             pinnedCertSha256 = tls?.pinnedCertSha256,
             verifyName = tls?.verifyName
         )
+        connection.onDatagramReceived = ::onDatagram
         if (!connection.connect()) {
             connection.close()
             throw ProxyError.ProtocolError("TUIC: QUIC handshake failed")
@@ -148,5 +229,8 @@ class TuicClient(private val configuration: ProxyConfiguration) {
     private companion object {
         const val ALPN = "h3"
         const val HEARTBEAT_INTERVAL_MS = 10_000L
+
+        /** The largest TUIC packet sent as one datagram; see Hysteria's for the arithmetic. */
+        const val MAX_UDP_DATAGRAM = 1100
     }
 }

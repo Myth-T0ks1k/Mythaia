@@ -31,11 +31,13 @@ object ProxyClientFactory {
             OutboundProtocol.ANYTLS ->
                 com.mythaia.vpn.protocol.anytls.AnyTlsClient(config, tunnel)
                     .connect(host, port, initialData)
+            // One shared client per server: both multiplex every flow onto one
+            // QUIC connection (see QuicClientPool).
             OutboundProtocol.HYSTERIA2 ->
-                com.mythaia.vpn.protocol.hysteria.HysteriaClient(config)
+                com.mythaia.vpn.protocol.quic.QuicClientPool.hysteria(config)
                     .connect(host, port, initialData)
             OutboundProtocol.TUIC ->
-                com.mythaia.vpn.protocol.tuic.TuicClient(config)
+                com.mythaia.vpn.protocol.quic.QuicClientPool.tuic(config)
                     .connect(host, port, initialData)
             // Sudoku and Nowhere follow the Hysteria/TUIC convention: their
             // handshake does not carry the caller's first bytes, so the flow
@@ -90,9 +92,10 @@ object ProxyClientFactory {
             OutboundProtocol.SHADOWSOCKS -> throw ProxyError.ProtocolError(
                 "UDP not supported through TCP factory for Shadowsocks"
             )
-            OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC -> throw ProxyError.ProtocolError(
-                "${config.outboundProtocol.displayName} UDP is not wired to the flow layer yet"
-            )
+            OutboundProtocol.HYSTERIA2 ->
+                com.mythaia.vpn.protocol.quic.QuicClientPool.hysteria(config).connectUDP(host, port)
+            OutboundProtocol.TUIC ->
+                com.mythaia.vpn.protocol.quic.QuicClientPool.tuic(config).connectUDP(host, port)
         }
     }
 }

@@ -165,6 +165,7 @@ object ProtocolProbe {
     }
 
     private suspend fun udpRoundTrip(config: ProxyConfiguration, target: Target): String {
+        if (config.outboundProtocol == OutboundProtocol.SHADOWSOCKS) return shadowsocksUdp(config, target)
         val connection = ProxyClientFactory.connectUDP(config, target.udpHost, target.udpPort)
         try {
             val payload = if (target.udpKind == "dns") dnsQuery("example.com")
@@ -180,6 +181,45 @@ object ProtocolProbe {
             return "echo"
         } finally {
             connection.cancel()
+        }
+    }
+
+    /**
+     * Shadowsocks UDP runs through its own per-server session, as the tunnel
+     * does (see LwipUdpFlow), not through the stream factory. The session
+     * expects one thread for every call, so the probe gives it one.
+     */
+    private suspend fun shadowsocksUdp(config: ProxyConfiguration, target: Target): String {
+        val mode = com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession.modeFor(config)
+            ?: error("no UDP mode for ${config.ssMethod}")
+        val executor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+        val reply = kotlinx.coroutines.CompletableDeferred<ByteArray>()
+        val payload = if (target.udpKind == "dns") dnsQuery("example.com")
+        else "mythaia-echo-${System.nanoTime()}".toByteArray()
+        val session = com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession(
+            mode = mode, serverHost = config.connectAddress, serverPort = config.serverPort.toInt(), executor = executor
+        )
+        try {
+            executor.execute {
+                val token = session.register(
+                    dstHost = target.udpHost, dstPort = target.udpPort,
+                    handler = { reply.complete(it) },
+                    errorHandler = { reply.completeExceptionally(it) }
+                )
+                session.send(token, target.udpHost, target.udpPort, payload) { error ->
+                    if (error != null) reply.completeExceptionally(error)
+                }
+            }
+            val answer = reply.await()
+            if (target.udpKind == "dns") {
+                if (answer.size < 12 || answer[0] != payload[0]) error("bad DNS reply (${answer.size} bytes)")
+                return "dns answers=${((answer[6].toInt() and 0xff) shl 8) or (answer[7].toInt() and 0xff)}"
+            }
+            if (!answer.contentEquals(payload)) error("echo mismatch (${answer.size} bytes)")
+            return "echo"
+        } finally {
+            executor.execute { session.cancel() }
+            executor.shutdown()
         }
     }
 

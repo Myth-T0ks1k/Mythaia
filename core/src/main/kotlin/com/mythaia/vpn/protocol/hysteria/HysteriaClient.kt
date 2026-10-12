@@ -13,6 +13,15 @@ import com.mythaia.vpn.protocol.quic.QuicTuning
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.mythaia.vpn.protocol.quic.QuicUdpFlow
+import com.mythaia.vpn.protocol.quic.UdpReassembler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 private val logger = MythaiaLogger("Hysteria")
 
@@ -47,6 +56,12 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
     var udpEnabled: Boolean = false
         private set
 
+    private val udpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val udpFlows = ConcurrentHashMap<Long, QuicUdpFlow>()
+    private val nextUdpSession = AtomicLong((System.nanoTime() and 0x7FFF_FFFFL))
+    private val nextPacketId = AtomicInteger(0)
+    private val reassembler = UdpReassembler()
+
     // MARK: - Dial
 
     /**
@@ -78,11 +93,77 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         return stream
     }
 
-    fun close() {
+    /**
+     * Opens a UDP flow to [host]:[port], carried in QUIC datagrams.
+     *
+     * Each flow is a Hysteria UDP session of its own: a 32-bit id the server
+     * answers under, with no setup message — the first datagram opens it, and
+     * the server forgets it after its idle timeout.
+     */
+    suspend fun connectUDP(host: String, port: Int): ProxyConnection {
+        ensureSession()
+        if (!udpEnabled) throw ProxyError.ProtocolError("Hysteria: the server does not relay UDP")
+        val id = nextUdpSession.incrementAndGet() and 0xFFFF_FFFFL
+        val address = HysteriaProtocol.formatAddress(host, port)
+        val flow = QuicUdpFlow(
+            scope = udpScope,
+            transmit = { payload -> sendUdp(id, address, payload) },
+            onClose = { udpFlows.remove(id) }
+        )
+        udpFlows[id] = flow
+        return flow
+    }
+
+    /**
+     * One UDP payload as one datagram, or as numbered fragments when it does
+     * not fit — QUIC Initial packets from an app are 1200+ bytes on their own.
+     */
+    private suspend fun sendUdp(sessionId: Long, address: String, payload: ByteArray) {
+        val session = ensureSession()
+        val room = MAX_UDP_DATAGRAM - HysteriaProtocol.udpHeaderSize(address)
+        val packetId = nextPacketId.getAndIncrement() and 0xFFFF
+        if (payload.size <= room) {
+            if (!session.sendDatagram(HysteriaProtocol.UdpMessage(sessionId, packetId, 0, 1, address, payload).encode())) {
+                logger.debug("[Hysteria] UDP datagram refused by QUIC (${payload.size} bytes to $address)")
+            }
+            return
+        }
+        val count = (payload.size + room - 1) / room
+        if (count > HysteriaProtocol.MAX_FRAGMENTS) throw ProxyError.ProtocolError("Hysteria: UDP payload too large")
+        for (index in 0 until count) {
+            val piece = payload.copyOfRange(index * room, minOf(payload.size, (index + 1) * room))
+            session.sendDatagram(
+                HysteriaProtocol.UdpMessage(sessionId, packetId, index, count, address, piece).encode()
+            )
+        }
+    }
+
+    /** Routes a datagram from the server to its flow, reassembling fragments. */
+    private fun onDatagram(bytes: ByteArray) {
+        val message = HysteriaProtocol.decodeUdpMessage(bytes) ?: run {
+            logger.debug("[Hysteria] undecodable datagram (${bytes.size} bytes)")
+            return
+        }
+        val flow = udpFlows[message.sessionId] ?: return
+        val key = (message.sessionId shl 16) or message.packetId.toLong()
+        val whole = reassembler.add(key, message.fragId, message.fragCount, message.payload) ?: return
+        flow.deliver(whole)
+    }
+
+    /** Drops the QUIC session; the next dial brings a new one up. Flows survive. */
+    private fun resetSession() {
         http3?.close()
         http3 = null
         quic?.close()
         quic = null
+    }
+
+    /** Ends everything: the session, every UDP flow, and the flows' scope. */
+    fun close() {
+        resetSession()
+        udpFlows.values.toList().forEach { it.cancel() }
+        udpFlows.clear()
+        udpScope.cancel()
     }
 
     // MARK: - Session
@@ -90,7 +171,7 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
     private suspend fun ensureSession(): QuicConnection = lock.withLock {
         quic?.takeIf { it.isConnected }?.let { return it }
 
-        close()
+        resetSession()
 
         // NAIVE grants the unidirectional stream credit HTTP/3 needs for the
         // server's control stream, which is what the authentication rides on.
@@ -114,12 +195,17 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             verifyName = tls?.verifyName,
             obfuscator = obfuscation?.let { HysteriaObfuscator.of(it) }
         )
+        // Registered before the handshake so no reply to a UDP flow is lost
+        // to a session that is still coming up.
+        connection.onDatagramReceived = ::onDatagram
         if (!connection.connect()) {
             connection.close()
             throw ProxyError.ProtocolError("Hysteria: QUIC handshake failed")
         }
 
-        val h3 = Http3Connection(connection)
+        // Plain SETTINGS: with H3_DATAGRAM announced, the server's HTTP/3 layer
+        // takes every QUIC datagram for itself and UDP relaying goes silent.
+        val h3 = Http3Connection(connection, com.mythaia.vpn.protocol.http3.Http3Framer.PLAIN_CLIENT_SETTINGS)
         if (!h3.start()) {
             connection.close()
             throw ProxyError.ProtocolError("Hysteria: could not start HTTP/3")
@@ -239,5 +325,12 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
     private companion object {
         const val ALPN = "h3"
         const val MAX_RESPONSE = 8192
+
+        /**
+         * The largest Hysteria UDP message sent as one datagram. A QUIC
+         * DATAGRAM frame has to fit one packet on a 1280-byte path after the
+         * packet header, AEAD tag and frame header; anything over is split.
+         */
+        const val MAX_UDP_DATAGRAM = 1100
     }
 }

@@ -27,7 +27,11 @@ private val logger = MythaiaLogger("Http3")
  * Derived from the Anywhere reference implementation (GPL-3.0),
  * Copyright (C) 2026 NodePassProject.
  */
-class Http3Connection(private val quic: QuicConnection) {
+class Http3Connection(
+    private val quic: QuicConnection,
+    /** What goes in our SETTINGS; see [Http3Framer.PLAIN_CLIENT_SETTINGS]. */
+    private val settings: List<Pair<Long, Long>> = Http3Framer.CLIENT_SETTINGS
+) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val started = AtomicBoolean(false)
@@ -62,7 +66,7 @@ class Http3Connection(private val quic: QuicConnection) {
         // separated by a lost packet into something the server reads as a
         // stream of unknown type.
         val opening = Http3Framer.uniStreamType(Http3Framer.STREAM_TYPE_CONTROL) +
-            Http3Framer.clientSettingsFrame()
+            Http3Framer.clientSettingsFrame(settings)
         control.send(opening)
 
         return true
