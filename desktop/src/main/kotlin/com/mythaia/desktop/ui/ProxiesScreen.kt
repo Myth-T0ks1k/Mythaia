@@ -327,7 +327,11 @@ private fun ServersTab(state: AppState) {
             state = rememberDialogState(size = DpSize(560.dp, 720.dp))
         ) {
             MaterialTheme(colorScheme = scheme) {
-                ServerEditor(configuration = config, onSave = { state.saveConfiguration(it); editor = null }, onDismiss = { editor = null })
+                if (config == null) {
+                    NewServerFlow(onSave = { state.saveConfiguration(it); editor = null }, onDismiss = { editor = null })
+                } else {
+                    ServerEditor(configuration = config, onSave = { state.saveConfiguration(it); editor = null }, onDismiss = { editor = null })
+                }
             }
         }
     }

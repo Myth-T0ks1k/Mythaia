@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.mythaia.data.model.FragmentSettings
 import com.mythaia.data.model.HttpUpgradeConfiguration
 import com.mythaia.data.model.NaiveProtocol
 import com.mythaia.data.model.OutboundProtocol
@@ -52,7 +53,6 @@ import com.mythaia.data.model.TlsVersion
 import com.mythaia.data.model.WebSocketConfiguration
 import com.mythaia.data.model.XHttpConfiguration
 import com.mythaia.data.model.XHttpMode
-import com.mythaia.desktop.tr
 import com.mythaia.vpn.protocol.grpc.GrpcConfiguration
 import com.mythaia.vpn.protocol.sudoku.SudokuAeadMethod
 import com.mythaia.vpn.protocol.sudoku.SudokuAsciiMode
@@ -63,6 +63,7 @@ import com.mythaia.vpn.util.hexToByteArrayOrNull
 import com.mythaia.vpn.util.toBase64Url
 import com.mythaia.vpn.util.toHex
 import java.util.UUID
+import com.mythaia.desktop.tr
 
 // Wing form language: 18dp fields inside soft 24dp panels.
 private val EditorFieldShape = RoundedCornerShape(18.dp)
@@ -97,12 +98,14 @@ private val EditorEDITABLE_PROTOCOLS = listOf(
 fun ServerEditor(
     configuration: ProxyConfiguration?,
     onSave: (ProxyConfiguration) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** For a new server: the protocol picked on the protocol picker. */
+    initialProtocol: OutboundProtocol? = null
 ) {
     // Every field starts from the configuration being edited, so the sheet
     // opens on the right values instead of flashing defaults for a frame.
     val c = configuration
-    var selectedProtocol by remember { mutableStateOf(c?.outboundProtocol ?: OutboundProtocol.VLESS) }
+    var selectedProtocol by remember { mutableStateOf(c?.outboundProtocol ?: initialProtocol ?: OutboundProtocol.VLESS) }
     var name by remember { mutableStateOf(c?.name ?: "") }
     var serverAddress by remember { mutableStateOf(c?.serverAddress ?: "") }
     var serverPort by remember { mutableStateOf(c?.serverPort?.toString() ?: "") }
@@ -110,7 +113,17 @@ fun ServerEditor(
     var encryption by remember { mutableStateOf(c?.encryption ?: "none") }
     var transport by remember { mutableStateOf(c?.transport ?: "tcp") }
     var flow by remember { mutableStateOf(c?.flow ?: "") }
-    var security by remember { mutableStateOf(c?.security ?: "none") }
+    var security by remember {
+        mutableStateOf(
+            c?.security ?: when (initialProtocol) {
+                OutboundProtocol.TROJAN, OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC,
+                OutboundProtocol.ANYTLS, OutboundProtocol.NOWHERE -> "tls"
+                // A new VLESS server is far more often Reality or TLS than bare.
+                OutboundProtocol.VLESS -> "reality"
+                else -> "none"
+            }
+        )
+    }
 
     var wsHost by remember { mutableStateOf(c?.websocket?.host ?: "") }
     var wsPath by remember { mutableStateOf(c?.websocket?.path ?: "/") }
@@ -132,6 +145,39 @@ fun ServerEditor(
     var tlsAllowInsecure by remember { mutableStateOf(existingTls?.allowInsecure ?: false) }
     var tlsMinVersion by remember { mutableStateOf<TlsVersion?>(existingTls?.minVersion) }
     var tlsMaxVersion by remember { mutableStateOf<TlsVersion?>(existingTls?.maxVersion) }
+    // Xray 26's replacements for allowInsecure, and ECH.
+    var tlsPins by remember { mutableStateOf(existingTls?.pinnedCertSha256?.joinToString(", ") ?: "") }
+    var tlsVerifyName by remember { mutableStateOf(existingTls?.verifyName ?: "") }
+    var tlsEch by remember { mutableStateOf(existingTls?.echConfig ?: "") }
+
+    // Per-server ClientHello fragmentation: follow the global setting, off, or its own.
+    val existingFragment = existingTls?.fragment
+    var fragmentMode by remember {
+        mutableStateOf(
+            when {
+                existingFragment == null -> "default"
+                !existingFragment.isEnabled -> "off"
+                else -> "custom"
+            }
+        )
+    }
+    var fragmentLengths by remember {
+        mutableStateOf(
+            existingFragment?.takeIf { it.isEnabled }?.let { f ->
+                f.lengthSteps.ifEmpty { listOf(rangeText(f.lengthRange)) }.joinToString(", ")
+            } ?: "3"
+        )
+    }
+    var fragmentDelays by remember {
+        mutableStateOf(
+            existingFragment?.takeIf { it.isEnabled }?.let { f ->
+                f.delaySteps.ifEmpty { listOf(rangeText(f.intervalRange)) }.joinToString(", ")
+            } ?: "1"
+        )
+    }
+    var fragmentMaxSplit by remember {
+        mutableStateOf(existingFragment?.takeIf { it.isEnabled }?.maxSplit?.toString() ?: "2")
+    }
 
     var muxEnabled by remember { mutableStateOf(c?.muxEnabled ?: true) }
     var xudpEnabled by remember { mutableStateOf(c?.xudpEnabled ?: true) }
@@ -203,6 +249,14 @@ fun ServerEditor(
     val publicKeyValid = publicKeyBytes != null && publicKeyBytes.size == 32
     val shortIdBytes = shortId.trim().hexToByteArrayOrNull()
     val shortIdValid = shortIdBytes != null && shortIdBytes.size <= 8
+    val pinsList = tlsPins.split(',', ' ', ';').map { it.trim().replace(":", "").lowercase() }.filter { it.isNotEmpty() }
+    val pinsValid = pinsList.all { pin -> pin.length == 64 && pin.all { it in '0'..'9' || it in 'a'..'f' } }
+    val fragmentLengthSteps = rangeSteps(fragmentLengths)
+    val fragmentDelaySteps = rangeSteps(fragmentDelays)
+    val fragmentMaxSplitValue = fragmentMaxSplit.trim().ifEmpty { "0" }.toIntOrNull()
+    val fragmentValid = fragmentMode != "custom" ||
+        (fragmentLengthSteps != null && fragmentLengthSteps.isNotEmpty() && fragmentDelaySteps != null &&
+            fragmentMaxSplitValue != null && fragmentMaxSplitValue >= 0)
     val xhttpExtraValid = xhttpExtra.isBlank() ||
         runCatching { org.json.JSONObject(xhttpExtra) }.isSuccess
     // Brutal needs both directions; BBR needs neither.
@@ -213,6 +267,7 @@ fun ServerEditor(
     val isValid = name.isNotBlank() &&
             serverAddress.isNotBlank() &&
             portValid &&
+            pinsValid && fragmentValid &&
             (!fullEditor || when {
                 isNaive -> naiveUsername.isNotEmpty() && naivePassword.isNotEmpty()
                 isShadowsocks -> ssPassword.isNotEmpty()
@@ -293,6 +348,31 @@ fun ServerEditor(
                             tlsConfiguration = baseTls.copy(serverName = sniOrAddress, alpn = alpnList)
                         }
 
+                        val fragmentSetting: FragmentSettings? = when (fragmentMode) {
+                            "off" -> FragmentSettings(isEnabled = false)
+                            "custom" -> {
+                                val lengths = fragmentLengthSteps.orEmpty()
+                                val delays = fragmentDelaySteps.orEmpty()
+                                val firstLength = parseStep(lengths.firstOrNull() ?: "3") ?: (3..3)
+                                val firstDelay = parseStep(delays.firstOrNull() ?: "0") ?: (0..0)
+                                FragmentSettings(
+                                    isEnabled = true,
+                                    minLength = firstLength.first, maxLength = firstLength.last,
+                                    minInterval = firstDelay.first, maxInterval = firstDelay.last,
+                                    lengthSteps = lengths, delaySteps = delays,
+                                    maxSplit = fragmentMaxSplitValue ?: 0
+                                )
+                            }
+                            else -> null
+                        }
+                        fun TlsConfiguration.withExtras(): TlsConfiguration = copy(
+                            pinnedCertSha256 = pinsList.takeIf { it.isNotEmpty() },
+                            verifyName = tlsVerifyName.trim().ifEmpty { null },
+                            echConfig = tlsEch.trim().ifEmpty { null },
+                            fragment = if (fragmentApplies(selectedProtocol, security)) fragmentSetting else fragment
+                        )
+                        tlsConfiguration = tlsConfiguration?.withExtras()
+
                         var trojanTlsConfiguration: TlsConfiguration? = null
                         if (isTrojan) {
                             trojanTlsConfiguration = (configuration?.trojanTls ?: TlsConfiguration(serverName = bareAddress)).copy(
@@ -300,7 +380,7 @@ fun ServerEditor(
                                 alpn = alpnList,
                                 allowInsecure = tlsAllowInsecure,
                                 fingerprint = fingerprint
-                            )
+                            ).withExtras()
                             tlsConfiguration = trojanTlsConfiguration
                         }
 
@@ -744,6 +824,21 @@ fun ServerEditor(
                         if (!isNowhere) {
                             EditorSwitchRow(tr("allow_insecure"), tlsAllowInsecure) { tlsAllowInsecure = it }
                             EditorFingerprintDropdown(selected = fingerprint, onSelect = { fingerprint = it })
+                            OutlinedTextField(
+                                value = tlsPins,
+                                onValueChange = { tlsPins = it },
+                                label = { Text(tr("pinned_cert")) },
+                                isError = !pinsValid,
+                                supportingText = {
+                                    Text(tr(if (pinsValid) "pinned_cert_hint" else "invalid_pins"))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = EditorFieldShape,
+                                colors = wingTextFieldColors()
+                            )
+                            EditorWingField(tlsVerifyName, { tlsVerifyName = it }, tr("verify_name"))
+                            EditorWingField(tlsEch, { tlsEch = it }, tr("ech_config"))
                         }
                         if (isVless) {
                             EditorDropdownField(
@@ -803,6 +898,49 @@ fun ServerEditor(
                         )
                         EditorFingerprintDropdown(selected = fingerprint, onSelect = { fingerprint = it })
                     }
+                }
+            }
+
+            if (fullEditor && fragmentApplies(selectedProtocol, security)) {
+                EditorSectionCard(title = tr("fragment_section")) {
+                    EditorDropdownField(
+                        label = tr("fragment_mode"),
+                        selectedValue = fragmentMode,
+                        options = listOf(
+                            "default" to tr("fragment_default"),
+                            "off" to tr("fragment_off"),
+                            "custom" to tr("fragment_custom")
+                        ),
+                        onSelect = { fragmentMode = it }
+                    )
+                    if (fragmentMode == "custom") {
+                        OutlinedTextField(
+                            value = fragmentLengths,
+                            onValueChange = { fragmentLengths = it },
+                            label = { Text(tr("fragment_lengths")) },
+                            isError = fragmentLengthSteps == null || fragmentLengthSteps.isEmpty(),
+                            supportingText = { Text(tr("fragment_steps_hint")) },
+                            modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            shape = EditorFieldShape, colors = wingTextFieldColors()
+                        )
+                        OutlinedTextField(
+                            value = fragmentDelays,
+                            onValueChange = { fragmentDelays = it },
+                            label = { Text(tr("fragment_delays")) },
+                            isError = fragmentDelaySteps == null,
+                            modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            shape = EditorFieldShape, colors = wingTextFieldColors()
+                        )
+                        EditorWingField(
+                            fragmentMaxSplit, { fragmentMaxSplit = it },
+                            tr("fragment_max_split"), keyboardType = KeyboardType.Number
+                        )
+                    }
+                    Text(
+                        text = tr("fragment_server_hint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -977,3 +1115,34 @@ private fun EditorFingerprintDropdown(
         }
     }
 }
+
+/**
+ * Whether the ClientHello fragment setting reaches the wire for this server:
+ * it applies to a TLS handshake dialled directly, which is VLESS, VMess and
+ * Trojan over TLS and AnyTLS. Reality builds its own hello and QUIC protocols
+ * have no TCP hello to split.
+ */
+private fun fragmentApplies(protocol: OutboundProtocol, security: String): Boolean = when (protocol) {
+    OutboundProtocol.VLESS, OutboundProtocol.VMESS -> security == "tls"
+    OutboundProtocol.TROJAN, OutboundProtocol.ANYTLS -> true
+    else -> false
+}
+
+/** `3` or `100-200`, as FinalMask writes a step. */
+private fun parseStep(text: String): IntRange? {
+    val ends = text.trim().split("-").map { it.trim() }
+    if (ends.size !in 1..2 || ends.any { it.isEmpty() }) return null
+    val low = ends[0].toIntOrNull() ?: return null
+    val high = (if (ends.size == 2) ends[1].toIntOrNull() else low) ?: return null
+    if (low < 0 || high < low) return null
+    return low..high
+}
+
+/** A comma-separated list of steps, or null when any of them does not parse. Empty text is an empty list. */
+private fun rangeSteps(text: String): List<String>? {
+    val items = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    return if (items.all { parseStep(it) != null }) items else null
+}
+
+private fun rangeText(range: IntRange): String =
+    if (range.first == range.last) range.first.toString() else "${range.first}-${range.last}"
