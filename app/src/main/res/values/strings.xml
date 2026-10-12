@@ -413,8 +413,8 @@
     <string name="ascii_mode">ASCII mode</string>
     <string name="aead_method">AEAD</string>
     <string name="proto_pick_title">Choose a protocol</string>
-    <string name="proto_group_xray">V2Ray / Xray</string>
-    <string name="proto_group_quic">QUIC (UDP)</string>
+    <string name="proto_group_xray" translatable="false">V2Ray / Xray</string>
+    <string name="proto_group_quic" translatable="false">QUIC (UDP)</string>
     <string name="proto_group_vpn">VPN tunnels</string>
     <string name="proto_group_tls">TLS camouflage</string>
     <string name="proto_group_other">Other</string>
@@ -447,15 +447,15 @@
     <string name="invalid_pins">Each fingerprint is 64 hex characters</string>
     <string name="verify_name">Verify certificate for name (vcn)</string>
     <string name="ech_config">ECH config (base64)</string>
-    <string name="amneziawg_configuration">AmneziaWG</string>
+    <string name="amneziawg_configuration" translatable="false">AmneziaWG</string>
     <string name="wg_interface">Interface</string>
     <string name="wg_peer">Peer (server)</string>
     <string name="wg_private_key">Private key</string>
     <string name="wg_generate">Generate</string>
     <string name="wg_public_key_is">Your public key: %1$s</string>
     <string name="wg_addresses">Addresses</string>
-    <string name="wg_dns">DNS</string>
-    <string name="wg_mtu">MTU</string>
+    <string name="wg_dns" translatable="false">DNS</string>
+    <string name="wg_mtu" translatable="false">MTU</string>
     <string name="wg_endpoint">Endpoint (host:port)</string>
     <string name="wg_peer_public_key">Server public key</string>
     <string name="wg_preshared_key">Preshared key</string>

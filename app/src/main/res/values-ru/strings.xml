@@ -393,8 +393,6 @@
     <string name="ascii_mode">Режим ASCII</string>
     <string name="aead_method">AEAD</string>
     <string name="proto_pick_title">Выберите протокол</string>
-    <string name="proto_group_xray">V2Ray / Xray</string>
-    <string name="proto_group_quic">QUIC (UDP)</string>
     <string name="proto_group_vpn">VPN-туннели</string>
     <string name="proto_group_tls">Маскировка под TLS</string>
     <string name="proto_group_other">Другие</string>
@@ -427,15 +425,12 @@
     <string name="invalid_pins">Каждый отпечаток — 64 шестнадцатеричных символа</string>
     <string name="verify_name">Проверять сертификат по имени (vcn)</string>
     <string name="ech_config">ECH-конфигурация (base64)</string>
-    <string name="amneziawg_configuration">AmneziaWG</string>
     <string name="wg_interface">Интерфейс</string>
     <string name="wg_peer">Пир (сервер)</string>
     <string name="wg_private_key">Приватный ключ</string>
     <string name="wg_generate">Создать</string>
     <string name="wg_public_key_is">Ваш публичный ключ: %1$s</string>
     <string name="wg_addresses">Адреса</string>
-    <string name="wg_dns">DNS</string>
-    <string name="wg_mtu">MTU</string>
     <string name="wg_endpoint">Адрес сервера (хост:порт)</string>
     <string name="wg_peer_public_key">Публичный ключ сервера</string>
     <string name="wg_preshared_key">Общий ключ (PSK)</string>
