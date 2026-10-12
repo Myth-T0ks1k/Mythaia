@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Subscriptions from self-hosted panels (3x-ui, Marzban on an IP and port) are
+  often plain http://. Refusing cleartext made the app unable to import what
+  every other client imports. Proxy traffic never goes through this stack:
+  the tunnel speaks its own protocols over its own sockets.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
