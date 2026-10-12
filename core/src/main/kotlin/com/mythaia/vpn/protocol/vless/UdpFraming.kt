@@ -41,6 +41,11 @@ class UdpBufferState {
 
     fun append(data: ByteArray) {
         buffer = if (buffer.isEmpty() || offset >= buffer.size) {
+            // Everything before was consumed: the new chunk starts at 0. Leaving
+            // the old offset here read every later frame from the middle of the
+            // chunk — the first few UDP replies of a flow arrived and the rest
+            // were lost, which is what broke voice calls over VLESS and VMess.
+            offset = 0
             data
         } else {
             val remaining = buffer.copyOfRange(offset, buffer.size)
