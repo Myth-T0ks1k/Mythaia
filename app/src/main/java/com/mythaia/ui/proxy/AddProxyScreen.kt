@@ -137,8 +137,16 @@ fun AddProxyScreen(
         if (selectedMethod == ImportMethod.LINK && linkURL.isEmpty()) {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = clipboard.primaryClip?.getItemAt(0)?.text?.toString()?.trim()
-            if (clip != null && (ProxyConfiguration.canParseUrl(clip) || clip.startsWith("http://"))) {
-                linkURL = clip
+            if (clip != null) {
+                // A whole message, a list, or another client's import link: take
+                // the links out of it. JSON and WireGuard INI go in as they are.
+                val links = com.mythaia.data.network.LinkExtractor.extract(clip)
+                linkURL = when {
+                    com.mythaia.data.network.XrayJsonImporter.looksLikeJson(clip) -> clip
+                    ProxyConfiguration.looksLikeWireGuardConfig(clip) -> clip
+                    links.isNotEmpty() -> links.joinToString("\n")
+                    else -> linkURL
+                }
             }
         }
     }
@@ -200,6 +208,31 @@ fun AddProxyScreen(
                 linkErrorMessage = e.message ?: context.getString(R.string.invalid_url)
                 showLinkError = true
             }
+            return
+        }
+
+        // Several links at once (a pasted list or message): every proxy link is
+        // added, and the first subscription URL, if any, is fetched.
+        val extracted = com.mythaia.data.network.LinkExtractor.extract(trimmed)
+        if (extracted.size > 1) {
+            val proxies = extracted.filter { !it.startsWith("http://") && !it.startsWith("https://") }
+            var failures = 0
+            proxies.forEach { link ->
+                runCatching { ProxyConfiguration.fromUrl(link) }
+                    .onSuccess { onImport(it) }
+                    .onFailure { failures++ }
+            }
+            val subscription = extracted.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
+            if (subscription != null) {
+                importFromString(subscription, fromQr)
+            } else if (failures > 0 && failures == proxies.size) {
+                linkErrorMessage = context.getString(R.string.invalid_url)
+                showLinkError = true
+            }
+            return
+        }
+        if (extracted.size == 1 && extracted[0] != trimmed) {
+            importFromString(extracted[0], fromQr)
             return
         }
 
@@ -366,7 +399,8 @@ fun AddProxyScreen(
                 onValueChange = { linkURL = it },
                 label = { Text(stringResource(R.string.link)) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
+                // Several links can come in at once from a pasted message.
+                maxLines = 4,
                 shape = RoundedCornerShape(14.dp),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                 colors = wingTextFieldColors()

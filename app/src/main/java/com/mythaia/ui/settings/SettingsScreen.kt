@@ -29,6 +29,9 @@ import com.mythaia.ui.components.WingIconTile
 import com.mythaia.ui.components.WingSectionTitle
 import androidx.compose.material.icons.automirrored.filled.CallMerge
 import androidx.compose.material.icons.automirrored.filled.AltRoute
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Shield
@@ -343,6 +346,11 @@ private fun SettingsRoot(
                     onClick = onOpenTrustedCertificates
                 )
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            SectionHeader(stringResource(R.string.system_section))
+            SystemSettingsCard()
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -688,5 +696,54 @@ private fun CountryBypassPicker(
                 }
             }
         }
+    }
+}
+
+/**
+ * Rows that open Android's own screens: the kill switch (Always-on VPN and
+ * "Block connections without VPN" are enforced by the OS, so the app can only
+ * point at them), the app language, notifications — plus a diagnostics copy
+ * for support.
+ */
+@Composable
+private fun SystemSettingsCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val copied = stringResource(R.string.diagnostics_copied)
+    SettingsGroupCard {
+        SettingsNavRow(
+            icon = Icons.Filled.Shield,
+            iconTint = MaterialTheme.colorScheme.primary,
+            label = stringResource(R.string.always_on_vpn),
+            onClick = { SystemShortcuts.openVpnSettings(context) }
+        )
+        if (SystemShortcuts.supportsAppLanguage) {
+            SettingsRowDivider()
+            SettingsNavRow(
+                icon = Icons.Filled.Language,
+                iconTint = MaterialTheme.colorScheme.primary,
+                label = stringResource(R.string.app_language),
+                onClick = { SystemShortcuts.openAppLanguage(context) }
+            )
+        }
+        SettingsRowDivider()
+        SettingsNavRow(
+            icon = Icons.Filled.Notifications,
+            iconTint = MaterialTheme.colorScheme.primary,
+            label = stringResource(R.string.notification_settings),
+            onClick = { SystemShortcuts.openNotificationSettings(context) }
+        )
+        SettingsRowDivider()
+        SettingsNavRow(
+            icon = Icons.Filled.ContentCopy,
+            iconTint = MaterialTheme.colorScheme.primary,
+            label = stringResource(R.string.copy_diagnostics),
+            onClick = {
+                val protocol = com.mythaia.vpn.MythaiaVpnService.activeConfigId
+                    ?.let { com.mythaia.data.repository.ConfigRepository.get(context).get(it) }
+                    ?.let { com.mythaia.data.network.ProtocolProbe.describe(it) }
+                SystemShortcuts.copyToClipboard(context, "Mythaia diagnostics", SystemShortcuts.diagnosticsReport(context, protocol))
+                android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 }

@@ -219,6 +219,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val scheme = uri.scheme?.lowercase() ?: return
         when (scheme) {
             "mythaia" -> {
+                // mythaia://connect | disconnect | toggle: for launchers,
+                // automation apps (Tasker, Shortcuts) and NFC tags.
+                when (uri.host) {
+                    "connect" -> { if (_vpnStatus.value == VpnStatus.DISCONNECTED) connect(); return }
+                    "disconnect" -> { if (_vpnStatus.value != VpnStatus.DISCONNECTED) disconnect(); return }
+                    "toggle" -> {
+                        if (_vpnStatus.value == VpnStatus.DISCONNECTED) connect() else disconnect()
+                        return
+                    }
+                }
                 if (uri.host != "add-proxy") return
                 val full = uri.toString()
                 val marker = "?link="
@@ -230,7 +240,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     com.mythaia.data.model.percentDecode(raw)
                 }.getOrDefault(raw)
             }
-            "vless", "trojan", "ss", "socks5", "socks", "vmess", "hysteria2", "hy2", "anytls" -> {
+            "vless", "trojan", "ss", "socks5", "socks", "vmess", "hysteria2", "hy2", "anytls",
+            "tuic", "wireguard", "wg" -> {
                 _pendingDeepLinkUrl.value = uri.toString()
             }
             else -> {}
@@ -379,6 +390,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private var probeJob: Job? = null
 
+    /** Where the tunnel comes out — address and country — once a probe got through. */
+    private val _exitInfo = MutableStateFlow<com.mythaia.data.network.ExitIpProbe.ExitInfo?>(null)
+    val exitInfo: StateFlow<com.mythaia.data.network.ExitIpProbe.ExitInfo?> = _exitInfo.asStateFlow()
+    private var exitInfoFor: UUID? = null
+
+    /** Looks the exit up again, e.g. on a tap after the user changed something upstream. */
+    fun refreshExitInfo() {
+        val liveId = MythaiaVpnService.activeConfigId ?: return
+        val live = configRepository.get(liveId) ?: selectedConfiguration ?: return
+        exitInfoFor = live.id
+        viewModelScope.launch { _exitInfo.value = lookupExit(live) }
+    }
+
+    private suspend fun lookupExit(live: ProxyConfiguration): com.mythaia.data.network.ExitIpProbe.ExitInfo? =
+        com.mythaia.data.network.ExitIpProbe.throughServer(applyGlobalAllowInsecure(live))
+            ?: com.mythaia.data.network.ExitIpProbe.throughDefaultRoute()
+
     /** A real request through the live server, shortly after connecting and then every minute. */
     private fun startConnectivityProbe() {
         probeJob?.cancel()
@@ -395,6 +423,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 _latencyResults.value = _latencyResults.value + (live.id to result)
                 val ok = result is LatencyResult.Success
                 _connectivityOk.value = ok
+                // Once per server and session: where does this one come out?
+                if (ok && exitInfoFor != live.id) {
+                    exitInfoFor = live.id
+                    _exitInfo.value = lookupExit(live)
+                }
                 // Dead on the wire while on Auto: find one that answers.
                 if (!ok && activeIsAuto && !_autoSelecting.value) {
                     autoSelectFastest(_activeGroupId.value)
@@ -407,6 +440,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         probeJob?.cancel()
         probeJob = null
         _connectivityOk.value = null
+        _exitInfo.value = null
+        exitInfoFor = null
     }
 
     fun clearLastConnectFailed() {

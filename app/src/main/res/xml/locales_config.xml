@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The languages Android 13+ offers in the per-app language picker. Keep in step with res/values-*. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="ru" />
+    <locale android:name="tk" />
+    <locale android:name="ar" />
+    <locale android:name="es" />
+    <locale android:name="fa" />
+    <locale android:name="my" />
+    <locale android:name="vi" />
+    <locale android:name="zh-CN" />
+</locale-config>

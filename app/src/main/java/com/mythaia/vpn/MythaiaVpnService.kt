@@ -120,9 +120,14 @@ class MythaiaVpnService : VpnService() {
                     return START_NOT_STICKY
                 }
 
+                SessionResume.setDesired(this, true)
                 startVpn(config)
             }
-            ACTION_STOP -> stopVpn()
+            ACTION_STOP -> {
+                // The user's own stop: a later restart by the system must not undo it.
+                SessionResume.setDesired(this, false)
+                stopVpn()
+            }
             ACTION_SWITCH_CONFIG -> {
                 val configJson = intent.getStringExtra(EXTRA_CONFIG) ?: return START_NOT_STICKY
                 val config = runCatching {
@@ -150,12 +155,28 @@ class MythaiaVpnService : VpnService() {
                 }
             }
             SERVICE_INTERFACE, null -> {
-                // Always-on VPN: the system starts us with no configuration
-                // (after a reboot, or when the user turns the toggle on).
-                // Bring up whatever the app has selected, the same way the
-                // tile and the watch do.
-                if (isRunning) return START_NOT_STICKY
-                logger.info("[VPN] Started by the system; connecting the selected server")
+                // Always-on VPN (SERVICE_INTERFACE): the system starts us with
+                // no configuration after a reboot or when the toggle goes on.
+                // A null intent is the other case: the process was killed and
+                // START_STICKY brought the service back — reconnect only if the
+                // user had the tunnel on, and not when restarts keep failing.
+                if (isRunning) return START_STICKY
+                if (intent?.action == null) {
+                    if (!SessionResume.isDesired(this)) {
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
+                    if (!SessionResume.allowRestart(this)) {
+                        logger.warning("[VPN] Restarted three times in a minute; staying off")
+                        SessionResume.setDesired(this, false)
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
+                    logger.info("[VPN] Restarted after the process was killed; reconnecting")
+                } else {
+                    SessionResume.setDesired(this, true)
+                    logger.info("[VPN] Started by the system; connecting the selected server")
+                }
                 Thread({
                     val refusal = TunnelLauncher.startSelected(this)
                     if (refusal != null) {
@@ -178,7 +199,8 @@ class MythaiaVpnService : VpnService() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        // Sticky while the user wants the tunnel: a killed process comes back.
+        return if (SessionResume.isDesired(this)) START_STICKY else START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -187,8 +209,10 @@ class MythaiaVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        // VPN permission revoked by user or system
+        // VPN permission revoked by user or system — another VPN took over, or
+        // the user did it in Settings. Either way, not something to undo.
         logger.debug("[VPN] Permission revoked, stopping")
+        SessionResume.setDesired(this, false)
         stopVpn()
     }
 
@@ -207,6 +231,11 @@ class MythaiaVpnService : VpnService() {
         // Invalidate any deferred finishStopVpn() from a previous stop so it
         // can't tear down the session we are about to start.
         sessionGeneration++
+
+        // Foreground first. Everything below may wait up to ten seconds for a
+        // previous session to drain, and Android kills a service started with
+        // startForegroundService() that has not called startForeground() in time.
+        enterForeground(config.name)
 
         // A stop from a moment ago may still be draining its lwIP executor;
         // nativeInit() before that nativeShutdown() completes trips the
@@ -260,13 +289,7 @@ class MythaiaVpnService : VpnService() {
         // Create foreground notification. It reads "Connecting" until the
         // stack is actually up; claiming Connected before the TUN exists
         // would be a lie for the seconds a failure takes to show.
-        val connectingNotification = buildNotification(effectiveConfig.name, connected = false)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, connectingNotification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFICATION_ID, connectingNotification)
-        }
+        enterForeground(effectiveConfig.name)
 
         if (effectiveConfig.outboundProtocol.isLayer3) {
             startWireGuard(effectiveConfig)
@@ -333,6 +356,7 @@ class MythaiaVpnService : VpnService() {
         }
 
         updateNotification(effectiveConfig.name)
+        startStatsTicker()
 
         // Begin observing the underlying physical network so we can restart
         // the stack when the user roams between Wi-Fi and Cellular.
@@ -372,6 +396,7 @@ class MythaiaVpnService : VpnService() {
     private var failureStop = false
 
     private fun stopVpn() {
+        stopStatsTicker()
         stopNetworkMonitoring()
         stopScreenStateMonitoring()
         SocketProtector.clearProtector()
@@ -510,7 +535,10 @@ class MythaiaVpnService : VpnService() {
         tunnel.onConnected = {
             logger.info("[VPN] WireGuard session established")
             android.os.Handler(mainLooper).post {
-                if (wireGuardTunnel === tunnel) updateNotification(config.name)
+                if (wireGuardTunnel === tunnel) {
+                    updateNotification(config.name)
+                    startStatsTicker()
+                }
             }
         }
         // Left running, the tunnel would keep the TUN's default route while
@@ -990,7 +1018,13 @@ class MythaiaVpnService : VpnService() {
         return if (parts.isEmpty()) "unknown" else parts.joinToString("+")
     }
 
-    private fun buildNotification(configName: String? = null, connected: Boolean = true): Notification {
+    private fun buildNotification(
+        configName: String? = null,
+        connected: Boolean = true,
+        /** Live line ("↓ 1.2 MB/s · ↑ 40 KB/s") and session totals, when the ticker has them. */
+        speedLine: String? = null,
+        totals: String? = null
+    ): Notification {
         val channelId = "mythaia_vpn"
         val channel = NotificationChannel(
             channelId,
@@ -1020,17 +1054,125 @@ class MythaiaVpnService : VpnService() {
         ).build()
 
         val state = getString(if (connected) R.string.connected else R.string.connecting)
-        val contentText = if (configName != null) "$state \u00B7 $configName" else state
+        val stateLine = if (configName != null) "$state \u00B7 $configName" else state
 
-        return Notification.Builder(this, channelId)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(contentText)
+        val builder = Notification.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_stat_wing)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setContentIntent(contentIntent)
             .addAction(disconnectAction)
-            .build()
+        if (speedLine != null) {
+            builder.setContentTitle(stateLine).setContentText(speedLine)
+            totals?.let { builder.setSubText(it) }
+        } else {
+            builder.setContentTitle(getString(R.string.app_name)).setContentText(stateLine)
+        }
+        return builder.build()
     }
+
+    /** Puts the service in the foreground with a "Connecting" notification. Safe to repeat. */
+    private fun enterForeground(configName: String) {
+        val connecting = buildNotification(configName, connected = false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, connecting, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, connecting)
+        }
+    }
+
+    // MARK: - Live statistics and stall watch
+
+    private val statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var lastSample: LongArray? = null
+    private val stallDetector = StallDetector()
+    @Volatile private var stallCheckRunning = false
+
+    private val statsTick = object : Runnable {
+        override fun run() {
+            onStatsTick()
+            statsHandler.postDelayed(this, STATS_INTERVAL_MS)
+        }
+    }
+
+    private fun startStatsTicker() {
+        stopStatsTicker()
+        lastSample = null
+        stallDetector.reset()
+        statsHandler.postDelayed(statsTick, STATS_INTERVAL_MS)
+    }
+
+    private fun stopStatsTicker() {
+        statsHandler.removeCallbacks(statsTick)
+        lastSample = null
+    }
+
+    /**
+     * Every two seconds: the speed and totals in the notification (only while
+     * the screen is on — nobody reads it in a pocket, and each update wakes
+     * the system UI), and a reading for the stall detector.
+     */
+    private fun onStatsTick() {
+        if (!isRunning) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val (down, up) = getStats()
+        val previous = lastSample
+        lastSample = longArrayOf(now, down, up)
+
+        val interactive = getSystemService(android.os.PowerManager::class.java)?.isInteractive ?: true
+        if (interactive && previous != null && now > previous[0]) {
+            val seconds = (now - previous[0]) / 1000.0
+            val downRate = ((down - previous[1]).coerceAtLeast(0) / seconds).toLong()
+            val upRate = ((up - previous[2]).coerceAtLeast(0) / seconds).toLong()
+            val speed = "\u2193 ${formatRate(downRate)}  \u2191 ${formatRate(upRate)}"
+            val totals = "\u2193 ${formatAmount(down)} \u2191 ${formatAmount(up)}"
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, buildNotification(activeServerName, true, speed, totals))
+        }
+
+        if (stallDetector.sample(now, down, up)) onSuspectedStall()
+    }
+
+    /**
+     * Sent a lot, heard nothing for half a minute. Confirm with a real request
+     * through the tunnel's server before touching anything — a long upload
+     * looks the same from the counters — and only then recover: under Auto,
+     * move to a server that answers; on a pinned server, drop the outbound
+     * sockets so every flow redials.
+     */
+    private fun onSuspectedStall() {
+        val config = currentConfig ?: return
+        if (stallCheckRunning || config.outboundProtocol.isLayer3) return
+        stallCheckRunning = true
+        Thread({
+            try {
+                val dead = (1..2).all {
+                    kotlinx.coroutines.runBlocking {
+                        com.mythaia.data.network.LatencyTester.test(config, com.mythaia.data.network.LatencyKind.HTTP)
+                    } !is com.mythaia.data.network.LatencyResult.Success
+                }
+                if (!dead) return@Thread
+                logger.warning("[VPN] ${config.name} stopped answering; recovering")
+                android.os.Handler(mainLooper).post {
+                    if (currentConfig?.id != config.id) return@post
+                    lwipStack?.handleWake()
+                    AutoSelectEngine.onTunnelFailed(this, config.id)
+                }
+            } finally {
+                stallCheckRunning = false
+            }
+        }, "stall-check").apply { isDaemon = true }.start()
+    }
+
+    private fun formatAmount(bytes: Long): String = when {
+        bytes >= 1L shl 30 -> String.format(java.util.Locale.US, "%.2f GB", bytes / 1073741824.0)
+        bytes >= 1L shl 20 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576.0)
+        bytes >= 1L shl 10 -> String.format(java.util.Locale.US, "%.0f KB", bytes / 1024.0)
+        else -> "$bytes B"
+    }
+
+    private fun formatRate(bytesPerSecond: Long): String = formatAmount(bytesPerSecond) + "/s"
 
     /** Updates the notification text (e.g., after config switch). */
     private fun updateNotification(configName: String) {
@@ -1075,6 +1217,7 @@ class MythaiaVpnService : VpnService() {
     companion object {
         private const val TAG = "MythaiaVPN"
         private const val NOTIFICATION_ID = 1
+        private const val STATS_INTERVAL_MS = 2_000L
         const val ACTION_START = "com.mythaia.START"
         const val ACTION_STOP = "com.mythaia.STOP"
         const val ACTION_SWITCH_CONFIG = "com.mythaia.SWITCH_CONFIG"

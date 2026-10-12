@@ -466,4 +466,13 @@
     <string name="wg_amnezia">AmneziaWG obfuscation</string>
     <string name="wg_text_mode">Edit as text</string>
     <string name="wg_form_mode">Edit as form</string>
+    <string name="system_section">System</string>
+    <string name="always_on_vpn">Always-on VPN and kill switch</string>
+    <string name="app_language">App language</string>
+    <string name="notification_settings">Notifications</string>
+    <string name="copy_diagnostics">Copy diagnostics</string>
+    <string name="diagnostics_copied">Diagnostics copied</string>
+    <string name="exit_ip">Exit: %1$s</string>
+    <string name="private_dns_banner">Private DNS (%1$s) is on: Android sends lookups straight to it, so domain rules and ad blocking cannot see them.</string>
+    <string name="private_dns_open">Open network settings</string>
 </resources>

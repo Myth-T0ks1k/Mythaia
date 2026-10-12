@@ -141,6 +141,13 @@ fun HomeScreen(
     val isGlobalMode by viewModel.isGlobalMode.collectAsState()
     val lastConnectFailed by viewModel.lastConnectFailed.collectAsState()
     val connectivityOk by viewModel.connectivityOk.collectAsState()
+    val exitInfo by viewModel.exitInfo.collectAsState()
+    val homeContext = androidx.compose.ui.platform.LocalContext.current
+    // Re-read on every connect: the user may have changed it in between.
+    var strictPrivateDns by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(vpnStatus) {
+        strictPrivateDns = com.mythaia.ui.settings.SystemShortcuts.strictPrivateDns(homeContext)
+    }
 
     val isConnected = vpnStatus == VpnStatus.CONNECTED
     val isTransitioning = vpnStatus == VpnStatus.CONNECTING ||
@@ -309,6 +316,30 @@ fun HomeScreen(
                         contentColor = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    exitInfo?.let { exit ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.exit_ip,
+                                listOfNotNull(
+                                    exit.countryCode?.let { com.mythaia.ui.components.flagForCountryCode(it) },
+                                    exit.country,
+                                    exit.ip
+                                ).joinToString(" ")
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.refreshExitInfo() }
+                                .padding(vertical = 4.dp)
+                        )
+                    }
+                    strictPrivateDns?.let { host ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        PrivateDnsBanner(host = host, onOpen = { com.mythaia.ui.settings.SystemShortcuts.openNetworkSettings(homeContext) })
+                    }
                     activeSubscription?.let { subscription ->
                         Spacer(modifier = Modifier.height(12.dp))
                         SubscriptionUsageCard(subscription = subscription)
@@ -920,6 +951,31 @@ private fun PickerRow(
             if (trailing != null) {
                 Spacer(modifier = Modifier.width(8.dp))
                 trailing()
+            }
+        }
+    }
+}
+
+/**
+ * Android's strict Private DNS sends every lookup over TLS to its own host,
+ * past the tunnel's DNS: domain rules, ad blocking and per-domain routing go
+ * blind. The app cannot switch it off, so it says so and opens the screen.
+ */
+@Composable
+private fun PrivateDnsBanner(host: String, onOpen: () -> Unit) {
+    androidx.compose.material3.Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = stringResource(R.string.private_dns_banner, host),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            androidx.compose.material3.TextButton(onClick = onOpen, contentPadding = PaddingValues(0.dp)) {
+                Text(stringResource(R.string.private_dns_open))
             }
         }
     }

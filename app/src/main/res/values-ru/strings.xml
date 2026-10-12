@@ -446,4 +446,13 @@
     <string name="wg_amnezia">Обфускация AmneziaWG</string>
     <string name="wg_text_mode">Редактировать как текст</string>
     <string name="wg_form_mode">Редактировать формой</string>
+    <string name="system_section">Система</string>
+    <string name="always_on_vpn">Постоянная VPN и блокировка без VPN</string>
+    <string name="app_language">Язык приложения</string>
+    <string name="notification_settings">Уведомления</string>
+    <string name="copy_diagnostics">Скопировать диагностику</string>
+    <string name="diagnostics_copied">Диагностика скопирована</string>
+    <string name="exit_ip">Выход: %1$s</string>
+    <string name="private_dns_banner">Включён частный DNS (%1$s): Android отправляет запросы прямо ему, и правила по доменам и блокировка рекламы их не видят.</string>
+    <string name="private_dns_open">Открыть настройки сети</string>
 </resources>
