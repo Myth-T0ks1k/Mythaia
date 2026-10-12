@@ -346,7 +346,7 @@
     <string name="proxy_chain">Chuỗi proxy</string>
     <string name="group_default">Mặc định</string>
     <string name="auto_mode">Tự động · ping tốt nhất</string>
-    <string name="auto_mode_hint">Kết nối ngay, sau đó đo nhóm bằng ping thật và chuyển sang máy chủ nhanh nhất; kiểm tra lại mỗi 2 phút khi đang kết nối.</string>
+    <string name="auto_mode_hint">Kết nối ngay, sau đó đo nhóm bằng ping thật và chuyển sang máy chủ nhanh hơn rõ rệt; khi đang kết nối, kiểm tra lại mỗi 10 phút lúc màn hình bật.</string>
     <string name="auto_prefix">Tự động · %1$s</string>
     <string name="pinned">Đã ghim</string>
     <string name="auto_picked">Do Tự động chọn</string>

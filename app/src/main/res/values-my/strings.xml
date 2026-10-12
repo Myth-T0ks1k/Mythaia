@@ -346,7 +346,7 @@
     <string name="proxy_chain">ပရောက်စီကွင်းဆက်</string>
     <string name="group_default">မူလ</string>
     <string name="auto_mode">အလိုအလျောက် · ping အမြန်ဆုံး</string>
-    <string name="auto_mode_hint">ချက်ချင်း ချိတ်ဆက်ပြီး အုပ်စုကို တကယ့် ping ဖြင့် တိုင်းတာ၍ အမြန်ဆုံးသို့ ပြောင်းသည်။ ချိတ်ဆက်စဉ် ၂ မိနစ်တစ်ခါ ပြန်စစ်သည်။</string>
+    <string name="auto_mode_hint">ချက်ချင်း ချိတ်ဆက်ပြီး အုပ်စုကို တကယ့် ping ဖြင့် တိုင်းတာ၍ သိသိသာသာ ပိုမြန်သော ဆာဗာသို့ ပြောင်းသည်။ ချိတ်ဆက်ထားစဉ် မျက်နှာပြင် ဖွင့်ထားလျှင် ၁၀ မိနစ်တိုင်း ပြန်စစ်သည်။</string>
     <string name="auto_prefix">အလိုအလျောက် · %1$s</string>
     <string name="pinned">ပင်ထိုးထား</string>
     <string name="auto_picked">အလိုအလျောက် ရွေးချယ်ထား</string>

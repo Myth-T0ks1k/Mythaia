@@ -390,6 +390,24 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private var probeJob: Job? = null
 
+    /**
+     * Whether the activity is on screen (between onStart and onStop). The view
+     * model outlives a hidden activity, and its loops kept running behind it:
+     * the per-second stats recomposed the home screen in the background, and
+     * the per-minute probe and the Auto rounds woke the radio with the screen
+     * off. They now do their work only while this is true; the service keeps
+     * its own watch on the tunnel.
+     */
+    @Volatile
+    private var uiVisible = true
+
+    fun setUiVisible(visible: Boolean) {
+        uiVisible = visible
+        // Periodic Auto rounds belong to whoever can see the screen: this
+        // view model while the activity shows, the service's engine otherwise.
+        com.mythaia.vpn.AutoSelectEngine.uiVisible = visible
+    }
+
     /** Where the tunnel comes out — address and country — once a probe got through. */
     private val _exitInfo = MutableStateFlow<com.mythaia.data.network.ExitIpProbe.ExitInfo?>(null)
     val exitInfo: StateFlow<com.mythaia.data.network.ExitIpProbe.ExitInfo?> = _exitInfo.asStateFlow()
@@ -416,6 +434,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 delay(delayMs)
                 delayMs = PROBE_INTERVAL_MS
                 if (_vpnStatus.value != VpnStatus.CONNECTED) break
+                if (!uiVisible) continue
                 val liveId = MythaiaVpnService.activeConfigId ?: continue
                 val live = configRepository.get(liveId) ?: selectedConfiguration ?: continue
                 val result = LatencyTester.test(applyGlobalAllowInsecure(live), LatencyKind.HTTP)
@@ -775,16 +794,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         else if (result !is LatencyResult.Testing) liveFailed = true
                     }
 
-                    // Real-time: as soon as a server proves faster than the one
-                    // on the wire (by the margin), or the wire is dead, move to
-                    // it. Each move raises the bar for the next, so the tunnel
-                    // only ever steps to something better, never sideways.
+                    // Real-time only when the wire is dead: move to the first
+                    // server that answers. A live server that works waits for
+                    // the end of the round, so a round moves the tunnel at
+                    // most once (each move drops every open connection).
                     val canSwitch = groupId == _activeGroupId.value && activeIsAuto &&
                         _vpnStatus.value == VpnStatus.CONNECTED
                     if (canSwitch && result is LatencyResult.Success && id != liveId) {
-                        val currentMs = liveMs
-                        val better = liveFailed || liveId == null ||
-                            (currentMs != null && currentMs - result.ms >= AUTO_SWITCH_MARGIN_MS)
+                        val better = liveFailed || liveId == null
                         if (better) {
                             configRepository.get(id)?.let { next ->
                                 logger.info("[AutoSelect] ${next.name} at ${result.ms}ms beats the live server; switching")
@@ -817,7 +834,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     val live = liveId ?: MythaiaVpnService.activeConfigId
                     val liveNow = live?.let { results[it] }
                     val worthIt = live != winner.id &&
-                        (liveNow == null || liveNow - bestEntry.value >= AUTO_SWITCH_MARGIN_MS)
+                        com.mythaia.vpn.AutoPolicy.worthSwitching(liveNow, bestEntry.value)
                     if (worthIt) switchConfig(winner)
                 }
             }
@@ -856,6 +873,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
                 delay(AUTO_RECHECK_MS)
                 if (_vpnStatus.value != VpnStatus.CONNECTED || !activeIsAuto) break
+                // Hidden or screen off: the engine's turn, or nobody's.
+                if (!uiVisible || !com.mythaia.vpn.AutoPolicy.mayMeasure(getApplication())) continue
                 autoSelectFastest(_activeGroupId.value)
             }
         }
@@ -1149,6 +1168,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
             while (true) {
                 delay(STATS_POLL_MS)
+                if (!uiVisible) {
+                    // Nobody is looking: skip the update (each one recomposes
+                    // the home screen) and reseed, so the first reading back
+                    // is not the whole hidden stretch counted as one second.
+                    lastIn = -1L
+                    lastOut = -1L
+                    continue
+                }
                 val service = vpnService
                 if (service != null && service.isRunning) {
                     val (bytesIn, bytesOut) = service.getStats()
@@ -1234,6 +1261,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         com.mythaia.vpn.AutoSelectEngine.uiAlive = false
+        com.mythaia.vpn.AutoSelectEngine.uiVisible = false
         MythaiaVpnService.removeStateListener(serviceStateListener)
         MythaiaVpnService.removeStartFailureListener(serviceFailureListener)
         stopStatsPolling()
@@ -1745,8 +1773,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         /** How long a stop may take to be confirmed before the UI gives up waiting. */
         const val DISCONNECT_WATCHDOG_MS = 3000L
 
-        /** How often Auto re-measures a live group. */
-        const val AUTO_RECHECK_MS = 2 * 60 * 1000L
+        /** How often Auto re-measures a live group; see [com.mythaia.vpn.AutoPolicy]. */
+        const val AUTO_RECHECK_MS = com.mythaia.vpn.AutoPolicy.RECHECK_MS
 
         /** Head start the connect gets before the first measurement round. */
         const val AUTO_FIRST_ROUND_DELAY_MS = 1500L
@@ -1754,9 +1782,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         /** Connectivity probe: first check after the tunnel is up, then the cadence. */
         const val PROBE_FIRST_DELAY_MS = 2500L
         const val PROBE_INTERVAL_MS = 60 * 1000L
-
-        /** A new best has to beat the current server by this much to be worth a switch. */
-        const val AUTO_SWITCH_MARGIN_MS = 50
 
         /** At most this many unattended reconnects per window. */
         const val AUTO_RECONNECT_MAX = 4

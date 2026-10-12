@@ -366,7 +366,7 @@
     <string name="proxy_chain">سلسلة الوكلاء</string>
     <string name="group_default">الافتراضي</string>
     <string name="auto_mode">تلقائي · أفضل ping</string>
-    <string name="auto_mode_hint">يتصل فوراً ثم يقيس المجموعة بالـ ping الحقيقي وينتقل إلى الأسرع؛ يعيد الفحص كل دقيقتين أثناء الاتصال.</string>
+    <string name="auto_mode_hint">يتصل فوراً ثم يقيس المجموعة بالـ ping الحقيقي وينتقل إلى خادم أسرع بوضوح؛ أثناء الاتصال يعيد الفحص كل 10 دقائق والشاشة مضاءة.</string>
     <string name="auto_prefix">تلقائي · %1$s</string>
     <string name="pinned">مثبّت</string>
     <string name="auto_picked">اختير تلقائياً</string>

@@ -354,7 +354,7 @@
     <string name="proxy_chain">Cadena de proxies</string>
     <string name="group_default">Predeterminado</string>
     <string name="auto_mode">Auto · mejor ping</string>
-    <string name="auto_mode_hint">Conecta al instante, luego mide el grupo por ping real y pasa al más rápido; vuelve a comprobar cada 2 minutos mientras está conectado.</string>
+    <string name="auto_mode_hint">Conecta al instante, luego mide el grupo por ping real y pasa a un servidor claramente más rápido; mientras está conectado, vuelve a comprobar cada 10 minutos con la pantalla encendida.</string>
     <string name="auto_prefix">Auto · %1$s</string>
     <string name="pinned">Fijado</string>
     <string name="auto_picked">Elegido por Auto</string>

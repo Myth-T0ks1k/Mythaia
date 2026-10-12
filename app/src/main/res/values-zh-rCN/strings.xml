@@ -346,7 +346,7 @@
     <string name="proxy_chain">代理链</string>
     <string name="group_default">默认</string>
     <string name="auto_mode">自动 · 延迟最低</string>
-    <string name="auto_mode_hint">立即连接，然后按真实延迟测量该组并切换到最快的服务器；连接期间每 2 分钟重新检查。</string>
+    <string name="auto_mode_hint">立即连接，然后按真实延迟测量该组，并切换到明显更快的服务器；连接期间，屏幕亮起时每 10 分钟重新检查。</string>
     <string name="auto_prefix">自动 · %1$s</string>
     <string name="pinned">已固定</string>
     <string name="auto_picked">由自动模式选择</string>

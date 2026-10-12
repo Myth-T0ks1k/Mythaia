@@ -358,7 +358,7 @@
     <string name="proxy_chain">Цепь прокси</string>
     <string name="group_default">Default</string>
     <string name="auto_mode">Авто · лучший по пингу</string>
-    <string name="auto_mode_hint">Подключается сразу, затем замеряет группу по настоящему пингу и переходит на самый быстрый; при подключении перепроверяет каждые 2 минуты.</string>
+    <string name="auto_mode_hint">Подключается сразу, затем замеряет группу по настоящему пингу и переходит на заметно более быстрый сервер; при подключении перепроверяет каждые 10 минут, пока экран включён.</string>
     <string name="auto_prefix">Авто · %1$s</string>
     <string name="pinned">Закреплён</string>
     <string name="auto_picked">Выбран автоматически</string>

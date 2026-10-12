@@ -350,7 +350,7 @@
     <string name="proxy_chain">Proksi zynjyry</string>
     <string name="group_default">Adaty</string>
     <string name="auto_mode">Awto · iň gowy ping</string>
-    <string name="auto_mode_hint">Dessine birigýär, soňra topary hakyky ping bilen ölçeýär we iň çaltyna geçýär; baglanan wagty her 2 minutdan gaýtadan barlaýar.</string>
+    <string name="auto_mode_hint">Dessine birigýär, soňra topary hakyky ping bilen ölçeýär we has çalt serwere geçýär; baglanan wagty ekran açyk bolsa her 10 minutdan gaýtadan barlaýar.</string>
     <string name="auto_prefix">Awto · %1$s</string>
     <string name="pinned">Berkidildi</string>
     <string name="auto_picked">Awto saýlady</string>

@@ -40,9 +40,13 @@ private val logger = MythaiaLogger("AutoSelect")
  */
 object AutoSelectEngine {
 
-    /** The view model sets this while it exists; the engine then stays quiet. */
+    /** The view model sets this while it exists; failure recovery is then its job. */
     @Volatile
     var uiAlive: Boolean = false
+
+    /** The view model sets this while its activity is on screen; periodic rounds are then its job. */
+    @Volatile
+    var uiVisible: Boolean = false
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
@@ -50,14 +54,16 @@ object AutoSelectEngine {
 
     private val reconnectTimes = ArrayDeque<Long>()
 
-    /** Called when a tunnel comes up; starts the two-minute cycle. */
+    /** Called when a tunnel comes up; starts the cycle of [AutoPolicy.RECHECK_MS]. */
     fun onTunnelUp(context: Context) {
         val app = context.applicationContext
         loop?.cancel()
         loop = scope.launch {
             while (isActive) {
-                delay(RECHECK_MS)
-                if (uiAlive || !MythaiaVpnService.isActive) continue
+                delay(AutoPolicy.RECHECK_MS)
+                // Screen off: no rounds (a dead server is caught by onTunnelFailed
+                // and the service's stall watch, not by measuring every server).
+                if (uiVisible || !MythaiaVpnService.isActive || !AutoPolicy.mayMeasure(app)) continue
                 runCatching { tick(app) }
                     .onFailure { logger.warning("Background tick failed: ${it.message ?: it}") }
             }
@@ -121,7 +127,7 @@ object AutoSelectEngine {
 
         val live = MythaiaVpnService.activeConfigId
         val liveMs = live?.let { results[it] }
-        val worthIt = live != best.id && (liveMs == null || liveMs - bestEntry.value >= SWITCH_MARGIN_MS)
+        val worthIt = live != best.id && AutoPolicy.worthSwitching(liveMs, bestEntry.value)
         if (worthIt) {
             logger.info("Switching to ${best.name} (${bestEntry.value}ms)")
             TunnelLauncher.switchTo(app, best)
@@ -178,8 +184,6 @@ object AutoSelectEngine {
         EncryptedDnsPolicy.reload(app)
     }
 
-    private const val RECHECK_MS = 2 * 60 * 1000L
-    private const val SWITCH_MARGIN_MS = 50
     private const val RECONNECT_MAX = 4
     private const val RECONNECT_WINDOW_MS = 10 * 60 * 1000L
 }

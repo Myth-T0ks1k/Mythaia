@@ -131,6 +131,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.setUiVisible(true)
+    }
+
+    override fun onStop() {
+        viewModel.setUiVisible(false)
+        super.onStop()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         viewModel.onRequestVpnPermission = null

@@ -350,7 +350,7 @@
     <string name="proxy_chain">زنجیره پراکسی</string>
     <string name="group_default">پیش‌فرض</string>
     <string name="auto_mode">خودکار · بهترین پینگ</string>
-    <string name="auto_mode_hint">فوراً وصل می‌شود، سپس گروه را با پینگ واقعی می‌سنجد و به سریع‌ترین می‌رود؛ هنگام اتصال هر ۲ دقیقه دوباره بررسی می‌کند.</string>
+    <string name="auto_mode_hint">فوراً وصل می‌شود، سپس گروه را با پینگ واقعی می‌سنجد و به سروری که به‌وضوح سریع‌تر است می‌رود؛ هنگام اتصال، وقتی صفحه روشن است هر ۱۰ دقیقه دوباره بررسی می‌کند.</string>
     <string name="auto_prefix">خودکار · %1$s</string>
     <string name="pinned">سنجاق‌شده</string>
     <string name="auto_picked">انتخاب خودکار</string>
