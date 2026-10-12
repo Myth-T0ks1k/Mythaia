@@ -76,7 +76,8 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
     private val tcpConnections = ConcurrentHashMap<Long, LwipTcpConnection>()
     private val udpFlows = ConcurrentHashMap<String, LwipUdpFlow>()
     private val nextConnId = AtomicLong(1)
-    private val ssUDPSessions = HashMap<UUID, ShadowsocksUdpSession>()
+    /** Shadowsocks UDP sessions by configuration id and local socket; see [LwipHost.shadowsocksUDPSession]. */
+    private val ssUDPSessions = HashMap<String, ShadowsocksUdpSession>()
 
     /** Every proxy server address (names and resolved IPs), which must never be routed into the tunnel. */
     @Volatile
@@ -281,10 +282,11 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
         }
     }
 
-    override fun shadowsocksUDPSession(config: ProxyConfiguration): ShadowsocksUdpSession? {
-        ssUDPSessions[config.id]?.let { existing ->
+    override fun shadowsocksUDPSession(config: ProxyConfiguration, source: String): ShadowsocksUdpSession? {
+        val key = "${config.id}|$source"
+        ssUDPSessions[key]?.let { existing ->
             if (existing.isUsable) return existing
-            ssUDPSessions.remove(config.id)
+            ssUDPSessions.remove(key)
         }
         val mode = ShadowsocksUdpSession.modeFor(config) ?: return null
         val session = ShadowsocksUdpSession(
@@ -293,8 +295,14 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
             serverPort = config.serverPort.toInt(),
             executor = lwipExecutor
         )
-        ssUDPSessions[config.id] = session
+        ssUDPSessions[key] = session
         return session
+    }
+
+    override fun releaseShadowsocksUDPSession(session: ShadowsocksUdpSession) {
+        if (!session.isIdle) return
+        session.cancel()
+        ssUDPSessions.values.remove(session)
     }
 
     override fun removeConnection(connId: Long) {

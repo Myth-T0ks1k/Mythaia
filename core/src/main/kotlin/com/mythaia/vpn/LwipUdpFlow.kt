@@ -423,10 +423,10 @@ class LwipUdpFlow(
     private fun connectShadowsocksUdp() {
         if (closed) return
 
-        // The shared per-config session connects lazily on its first send;
-        // there's no async TCP/TLS handshake to wait for, so flows bind
+        // The session of this flow's local socket connects lazily on its first
+        // send; there's no async TCP/TLS handshake to wait for, so flows bind
         // synchronously on the lwipExecutor and start sending immediately.
-        val session = host.shadowsocksUDPSession(configuration)
+        val session = host.shadowsocksUDPSession(configuration, "$srcHost:$srcPort")
         if (session == null) {
             logTransportFailure(
                 "SS UDP session",
@@ -601,10 +601,11 @@ class LwipUdpFlow(
         relay?.cancel()
         connection?.cancel()
         session?.close()
-        // Unregister our flow from the shared SS UDP session — the session
-        // itself is owned by the host stack and stays alive for other flows.
+        // Unregister our flow from the SS UDP session; the host stack owns the
+        // session and ends it once no other flow of this local socket uses it.
         if (ssSess != null && ssTok != null) {
             ssSess.unregister(ssTok)
+            host.releaseShadowsocksUDPSession(ssSess)
         }
     }
 

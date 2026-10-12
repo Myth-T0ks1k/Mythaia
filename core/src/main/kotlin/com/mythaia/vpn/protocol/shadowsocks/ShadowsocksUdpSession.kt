@@ -19,14 +19,15 @@ private const val HEADER_TYPE_CLIENT: Byte = 0
 private const val HEADER_TYPE_SERVER: Byte = 1
 
 /**
- * Shared Shadowsocks UDP session over a single datagram socket. Multiplexes every
- * destination flow from one client configuration through one UDP socket, one
- * SS 2022 sessionID, and one monotonic packetID.
+ * Shadowsocks UDP session over a single datagram socket. Multiplexes the
+ * destination flows of one local socket through one UDP socket, one SS 2022
+ * sessionID, and one monotonic packetID; the tunnel keeps one session per local
+ * socket (see `LwipHost.shadowsocksUDPSession`).
  *
  * Replies are demultiplexed by (host, port) from the reply's decrypted SS header.
  * When the server resolved a domain to an IP the client did not pre-seed, the exact
- * match fails and a port-only match is used as fallback — safe in practice because
- * a single source port typically talks to a single destination.
+ * match fails and a port-only match is used as fallback — safe because every flow
+ * here belongs to one local socket, which rarely talks to two hosts on one port.
  *
  * Threading: state mutations and registered handlers run on [executor]. The blocking
  * receive loop runs on a dedicated daemon thread; decoded datagrams hop back to
@@ -158,6 +159,9 @@ class ShadowsocksUdpSession(
             State.IDLE, State.CONNECTING, State.READY -> true
             State.FAILED, State.CANCELLED -> false
         }
+
+    /** True once no flow is registered; the owner may then end the session. Read on [executor]. */
+    val isIdle: Boolean get() = registrations.isEmpty()
 
     /**
      * Registers interest in replies whose SS address matches (dstHost, dstPort) or any

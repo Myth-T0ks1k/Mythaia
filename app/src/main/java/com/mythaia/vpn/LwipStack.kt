@@ -113,10 +113,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     /** Mux manager for multiplexing UDP flows (created when Vision+Mux is active). */
     override var muxManager: MuxManager? = null
 
-    /** Shared Shadowsocks UDP sessions keyed by configuration id. One session
-     *  services every UDP flow for a given SS configuration so all
-     *  destinations share a sessionID + upstream socket. Only mutated on [lwipExecutor]. */
-    private val ssUDPSessions = HashMap<java.util.UUID, com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession>()
+    /** Shadowsocks UDP sessions keyed by configuration id and local socket; see
+     *  [LwipHost.shadowsocksUDPSession]. Only mutated on [lwipExecutor]. */
+    private val ssUDPSessions = HashMap<String, com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession>()
 
     /**
      * True while a deliberate TCP teardown is in progress (stack shutdown,
@@ -350,25 +349,26 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     }
 
     /**
-     * Returns the shared SS UDP session for [config], creating one on first
-     * use. Must be called on [lwipExecutor].
+     * Returns the SS UDP session for [config] and the local socket [source],
+     * creating one on first use. Must be called on [lwipExecutor].
      *
-     * The session lives across individual UDP flows so that one sessionID
-     * and one upstream socket serve every destination — which is what
-     * restores full-cone NAT and avoids per-flow session churn. A session
-     * that has reached a terminal (failed/cancelled) state is evicted and
-     * replaced transparently.
+     * Every flow of one local socket shares the session, so one sessionID
+     * and one upstream socket serve all of that socket's destinations, which
+     * keeps its NAT mapping full-cone. A session that has reached a terminal
+     * (failed/cancelled) state is evicted and replaced transparently.
      *
      * @return The session, or `null` if [config] is missing / has malformed
      *   Shadowsocks credentials. Caller should treat null as a fatal flow
      *   misconfiguration.
      */
     override fun shadowsocksUDPSession(
-        config: ProxyConfiguration
+        config: ProxyConfiguration,
+        source: String
     ): com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession? {
-        ssUDPSessions[config.id]?.let { existing ->
+        val key = "${config.id}|$source"
+        ssUDPSessions[key]?.let { existing ->
             if (existing.isUsable) return existing
-            ssUDPSessions.remove(config.id)
+            ssUDPSessions.remove(key)
         }
 
         val mode = com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession.modeFor(config)
@@ -380,8 +380,15 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             serverPort = config.serverPort.toInt(),
             executor = lwipExecutor
         )
-        ssUDPSessions[config.id] = session
+        ssUDPSessions[key] = session
         return session
+    }
+
+    /** Ends [session] once its last flow has let go of it. Must be called on [lwipExecutor]. */
+    override fun releaseShadowsocksUDPSession(session: com.mythaia.vpn.protocol.shadowsocks.ShadowsocksUdpSession) {
+        if (!session.isIdle) return
+        session.cancel()
+        ssUDPSessions.values.remove(session)
     }
 
     /**

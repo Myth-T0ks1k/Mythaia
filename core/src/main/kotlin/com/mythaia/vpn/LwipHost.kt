@@ -52,8 +52,21 @@ interface LwipHost {
     /** The routing verdict for a domain learned from a TLS ClientHello; null when no rule matches. */
     fun routeDomain(domain: String): LwipDomainRoute?
 
-    /** The shared Shadowsocks UDP session for [config], or null when its credentials are unusable. */
-    fun shadowsocksUDPSession(config: ProxyConfiguration): ShadowsocksUdpSession?
+    /**
+     * The Shadowsocks UDP session for [config] and one local socket ([source],
+     * "host:port"), or null when its credentials are unusable.
+     *
+     * One session per local socket, as Xray and sing-box keep: every flow of
+     * that socket shares one upstream socket (and SS 2022 session id), which
+     * keeps its NAT mapping full-cone. Replies are matched to flows by their
+     * remote address, so two local sockets talking to the same server (two
+     * QUIC connections to one host, two call streams to one relay) must not
+     * share a session: the replies of both went to whichever came first.
+     */
+    fun shadowsocksUDPSession(config: ProxyConfiguration, source: String): ShadowsocksUdpSession?
+
+    /** A flow let go of [session]; the host ends the session once no flow uses it. */
+    fun releaseShadowsocksUDPSession(session: ShadowsocksUdpSession)
 
     /** A TCP connection closed or aborted itself. */
     fun removeConnection(connId: Long)
