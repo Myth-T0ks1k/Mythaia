@@ -113,16 +113,43 @@ class NioSocket : Transport {
 
         private const val MAX_PENDING_SEND_BYTES = 4_194_304
 
+        /**
+         * Consecutive selects that returned with nothing selected and no queued op.
+         *
+         * poll(2) reports a hang-up or error on a socket even when no event was
+         * asked for, and the selector then drops it because the key's interest
+         * set is empty: the state of a socket nobody is reading (its reader
+         * paused, or gone) after the server reset it. `select()` then returns at
+         * once with nothing selected, forever, a 100% CPU loop that lasts until
+         * the socket is read or closed. Past [SPIN_LIMIT] such returns in a row,
+         * the loop sleeps [SPIN_BACKOFF_MS] before each select.
+         */
+        private var emptySelects = 0
+        private const val SPIN_LIMIT = 64
+        private const val SPIN_BACKOFF_MS = 2L
+
         private val selectorThread = Thread({
             while (true) {
                 try {
-                    sharedSelector.select()
+                    val selected = sharedSelector.select()
 
+                    var ranOps = false
                     while (true) {
                         val op = pendingOps.poll() ?: break
+                        ranOps = true
                         try { op() } catch (e: Exception) {
                             logger.debug("Pending op error: ${e.message}")
                         }
+                    }
+
+                    if (selected == 0 && !ranOps) {
+                        emptySelects++
+                        if (emptySelects == SPIN_LIMIT) {
+                            logger.debug("Selector returns with nothing ready; backing off")
+                        }
+                        if (emptySelects >= SPIN_LIMIT) Thread.sleep(SPIN_BACKOFF_MS)
+                    } else {
+                        emptySelects = 0
                     }
 
                     val iter = sharedSelector.selectedKeys().iterator()
