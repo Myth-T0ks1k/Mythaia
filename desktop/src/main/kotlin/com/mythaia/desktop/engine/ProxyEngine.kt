@@ -64,6 +64,7 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
     fun stop() {
         server.stop()
         com.mythaia.vpn.protocol.quic.QuicClientPool.closeAll()
+        com.mythaia.vpn.protocol.grpc.GrpcMux.closeAll()
         configuration = null
         DnsCache.setActiveProxyDomain(null)
         setSystemProxy(false, null)

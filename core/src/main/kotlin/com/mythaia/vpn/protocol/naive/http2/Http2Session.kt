@@ -15,17 +15,32 @@ import java.io.ByteArrayOutputStream
 private val logger = MythaiaLogger("HTTP2Session")
 
 /**
- * One TLS connection with multiple concurrent CONNECT streams. Owns the persistent
- * read loop that routes frames to per-stream [Http2Stream] instances, the 128 MB
- * connection receive window, and serializes writes through a [Mutex]. The first
- * caller to [ensureReady] performs the handshake; concurrent callers queue on
- * [CompletableDeferred].
+ * The byte stream an [Http2Session] runs over: a TLS (or Reality) connection to
+ * the server, already through its handshake.
+ */
+interface Http2Wire {
+    suspend fun send(data: ByteArray)
+    suspend fun receive(): ByteArray?
+    fun cancel()
+}
+
+/**
+ * One TLS connection with multiple concurrent streams: NaiveProxy's CONNECT
+ * tunnels, or ordinary requests ([Http2Stream.openRequest]) such as gRPC's. Owns
+ * the persistent read loop that routes frames to per-stream [Http2Stream]
+ * instances, the 128 MB connection receive window, and serializes writes through
+ * a [Mutex]. The first caller to [ensureReady] performs the handshake; concurrent
+ * callers wait for it.
+ *
+ * [dial] opens the connection when given; otherwise the session dials the
+ * NaiveProxy server of [configuration] itself.
  */
 class Http2Session(
-    private val configuration: NaiveConfiguration,
+    private val configuration: NaiveConfiguration?,
     private val scope: CoroutineScope,
     private val tunnel: ProxyConnection? = null,
-    var onClose: (() -> Unit)? = null
+    var onClose: (() -> Unit)? = null,
+    private val dial: (suspend () -> Http2Wire)? = null
 ) {
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
@@ -43,8 +58,24 @@ class Http2Session(
     private var goawayReceived = false
     private var goawayLastStreamID = Int.MAX_VALUE
 
-    private var transport: NaiveTlsTransport? = null
+    private var transport: Http2Wire? = null
     private val receiveBuffer = Http2Buffer()
+
+    /** The server's SETTINGS_MAX_CONCURRENT_STREAMS, when lower than ours. */
+    @Volatile
+    private var streamLimit = MAX_CONCURRENT_STREAMS
+
+    /** When the last stream ended or the last frame arrived; see [idleNanos]. */
+    @Volatile
+    private var lastActivityNanos = System.nanoTime()
+
+    /** How long the session has carried no stream at all; 0 while one is open. */
+    val idleNanos: Long
+        get() = if (synchronized(streamsLock) { streams.isNotEmpty() }) 0L
+        else System.nanoTime() - lastActivityNanos
+
+    /** Not dialled yet, or still in its handshake: a caller may join and wait. */
+    val isStarting: Boolean get() = state == State.IDLE || state == State.CONNECTING
 
     private val streams = mutableMapOf<Int, Http2Stream>()
     private var nextStreamID = 1
@@ -63,12 +94,12 @@ class Http2Session(
 
     private val writeMutex = Mutex()
 
-    private var connecting = false
-    private val pendingReady = mutableListOf<CompletableDeferred<Unit>>()
+    /** One dial at a time: concurrent first callers wait here for the handshake. */
+    private val readyMutex = Mutex()
 
     val hasCapacity: Boolean
         get() = state == State.READY && !goawayReceived &&
-            synchronized(streamsLock) { streams.size < MAX_CONCURRENT_STREAMS }
+            synchronized(streamsLock) { streams.size < streamLimit }
 
     val isClosed: Boolean get() = state == State.CLOSED
 
@@ -83,6 +114,7 @@ class Http2Session(
             nextStreamID += 2
             val stream = Http2Stream(streamID, this, destination)
             streams[streamID] = stream
+            lastActivityNanos = System.nanoTime()
             stream
         }
     }
@@ -96,7 +128,8 @@ class Http2Session(
     fun tryReserveStream(destination: String): Http2Stream? {
         if (state != State.READY || goawayReceived) return null
         return synchronized(streamsLock) {
-            if (streams.size >= MAX_CONCURRENT_STREAMS) return@synchronized null
+            if (streams.size >= streamLimit) return@synchronized null
+            lastActivityNanos = System.nanoTime()
             val streamID = nextStreamID
             nextStreamID += 2
             val stream = Http2Stream(streamID, this, destination)
@@ -107,6 +140,7 @@ class Http2Session(
 
     fun removeStream(streamID: Int) {
         synchronized(streamsLock) { streams.remove(streamID) }
+        lastActivityNanos = System.nanoTime()
         if (goawayReceived && synchronized(streamsLock) { streams.isEmpty() }) {
             close()
         }
@@ -151,55 +185,48 @@ class Http2Session(
         if (state == State.READY) return
         if (state == State.CLOSED) throw Http2Error.ConnectionFailed("Session closed")
 
-        if (connecting) {
-            val deferred = CompletableDeferred<Unit>()
-            pendingReady.add(deferred)
-            deferred.await()
-            return
-        }
+        // A mutex rather than a flag: callers on several threads used to be able
+        // to see "not connecting" at once and both dial.
+        readyMutex.withLock {
+            if (state == State.READY) return
+            if (state == State.CLOSED) throw Http2Error.ConnectionFailed("Session closed")
+            try {
+                state = State.CONNECTING
 
-        connecting = true
+                val t: Http2Wire = dial?.invoke() ?: run {
+                    val naive = configuration
+                        ?: throw Http2Error.ConnectionFailed("No dialer and no NaiveProxy configuration")
+                    NaiveTlsTransport(
+                        host = naive.proxyHost,
+                        port = naive.proxyPort,
+                        sni = naive.effectiveSNI,
+                        alpn = listOf("h2"),
+                        tunnel = tunnel
+                    ).also {
+                        transport = it
+                        it.connect()
+                    }
+                }
+                transport = t
 
-        try {
-            state = State.CONNECTING
+                sendConnectionPreface(t)
+                processHandshake(t)
 
-            val t = NaiveTlsTransport(
-                host = configuration.proxyHost,
-                port = configuration.proxyPort,
-                sni = configuration.effectiveSNI,
-                alpn = listOf("h2"),
-                tunnel = tunnel
-            )
-            transport = t
-            t.connect()
+                state = State.READY
+                lastActivityNanos = System.nanoTime()
 
-            sendConnectionPreface(t)
-            processHandshake(t)
-
-            state = State.READY
-            connecting = false
-
-            scope.launch { readLoop() }
-
-            val pending = pendingReady.toList()
-            pendingReady.clear()
-            for (deferred in pending) {
-                deferred.complete(Unit)
+                scope.launch { readLoop() }
+            } catch (e: Exception) {
+                state = State.CLOSED
+                transport?.cancel()
+                transport = null
+                onClose?.invoke()
+                throw e
             }
-        } catch (e: Exception) {
-            state = State.CLOSED
-            connecting = false
-            val pending = pendingReady.toList()
-            pendingReady.clear()
-            for (deferred in pending) {
-                deferred.completeExceptionally(e)
-            }
-            onClose?.invoke()
-            throw e
         }
     }
 
-    private suspend fun sendConnectionPreface(t: NaiveTlsTransport) {
+    private suspend fun sendConnectionPreface(t: Http2Wire) {
         val buf = ByteArrayOutputStream()
         buf.write(CONNECTION_PREFACE)
 
@@ -223,7 +250,7 @@ class Http2Session(
     }
 
     /** Processes frames until server SETTINGS is received and ACK'd; CONNECT is per-stream. */
-    private suspend fun processHandshake(t: NaiveTlsTransport) {
+    private suspend fun processHandshake(t: Http2Wire) {
         while (true) {
             val frame = Http2Framer.deserialize(receiveBuffer)
             if (frame == null) {
@@ -282,6 +309,7 @@ class Http2Session(
     }
 
     private fun routeFrame(frame: Http2Frame) {
+        lastActivityNanos = System.nanoTime()
         when (frame.type) {
             Http2FrameType.DATA -> {
                 if (frame.streamID == 0) return
@@ -308,6 +336,11 @@ class Http2Session(
                     stream.deliverHeaders(headers)
                 } else {
                     stream.deliverError(Http2Error.ProtocolError("Failed to decode headers"))
+                }
+                // Trailers (gRPC's grpc-status) end the stream on a HEADERS frame.
+                if (frame.hasFlag(Http2FrameFlags.END_STREAM)) {
+                    stream.deliverEndStream()
+                    synchronized(streamsLock) { streams.remove(frame.streamID) }
                 }
             }
 
@@ -374,7 +407,7 @@ class Http2Session(
     suspend fun sendConnectRequest(streamID: Int, destination: String) {
         val extraHeaders = mutableListOf<Pair<String, String>>()
 
-        configuration.basicAuth?.let { auth ->
+        configuration?.basicAuth?.let { auth ->
             extraHeaders.add("proxy-authorization" to "Basic $auth")
         }
         extraHeaders.add("user-agent" to USER_AGENT)
@@ -396,14 +429,51 @@ class Http2Session(
         }
     }
 
-    suspend fun sendData(streamID: Int, data: ByteArray, streamFlowControl: Http2StreamFlowControl) {
+    /**
+     * Opens [streamID] as an ordinary request with [headerBlock] (HPACK); the
+     * body, if any, follows through [sendData]. [endStream] for a request with
+     * no body, such as a GET.
+     */
+    suspend fun sendRequestHeaders(streamID: Int, headerBlock: ByteArray, endStream: Boolean) {
+        val headersFrame = Http2Framer.headersFrame(
+            streamID = streamID,
+            headerBlock = headerBlock,
+            endStream = endStream
+        )
+        writeMutex.withLock {
+            transport?.send(Http2Framer.serialize(headersFrame))
+                ?: throw Http2Error.ConnectionFailed("Transport closed")
+        }
+    }
+
+    suspend fun sendData(
+        streamID: Int,
+        data: ByteArray,
+        streamFlowControl: Http2StreamFlowControl,
+        endStream: Boolean = false
+    ) {
         val maxPayload = Http2Framer.MAX_DATA_PAYLOAD
         var currentOffset = 0
 
+        if (data.isEmpty()) {
+            if (endStream) {
+                writeMutex.withLock {
+                    transport?.send(Http2Framer.serialize(Http2Framer.dataFrame(streamID, ByteArray(0), endStream = true)))
+                        ?: throw Http2Error.ConnectionFailed("Transport closed")
+                }
+            }
+            return
+        }
+
         while (currentOffset < data.size) {
             val remaining = data.size - currentOffset
-            val maxAllowed = minOf(connectionSendWindow, streamFlowControl.sendWindow)
-            val chunkSize = minOf(remaining, minOf(maxPayload, maxAllowed))
+            // Taken under the lock: with many streams sending at once, an
+            // unlocked read-then-subtract let two of them spend the same window.
+            val chunkSize = synchronized(flowLock) {
+                val allowed = minOf(remaining, maxPayload, connectionSendWindow, streamFlowControl.sendWindow)
+                if (allowed > 0) connectionSendWindow -= allowed
+                allowed
+            }
             if (chunkSize <= 0) {
                 // Flow-control blocked. Suspend until a WINDOW_UPDATE arrives
                 // for the exhausted scope (connection or stream). Mirrors iOS
@@ -424,11 +494,11 @@ class Http2Session(
                 continue
             }
 
-            connectionSendWindow -= chunkSize
             streamFlowControl.consumeSend(chunkSize)
 
             val chunk = data.copyOfRange(currentOffset, currentOffset + chunkSize)
-            val frame = Http2Framer.dataFrame(streamID = streamID, payload = chunk)
+            val last = currentOffset + chunkSize >= data.size
+            val frame = Http2Framer.dataFrame(streamID = streamID, payload = chunk, endStream = endStream && last)
 
             writeMutex.withLock {
                 transport?.send(Http2Framer.serialize(frame))
@@ -443,6 +513,9 @@ class Http2Session(
         val settings = Http2Framer.parseSettings(frame.payload)
         for ((id, value) in settings) {
             when (id) {
+                0x3 -> { // SETTINGS_MAX_CONCURRENT_STREAMS
+                    streamLimit = minOf(MAX_CONCURRENT_STREAMS, value.coerceAtLeast(1))
+                }
                 0x4 -> { // SETTINGS_INITIAL_WINDOW_SIZE
                     val delta = value - serverInitialWindowSize
                     serverInitialWindowSize = value
@@ -473,7 +546,7 @@ class Http2Session(
         }
     }
 
-    private suspend fun readFromTransport(t: NaiveTlsTransport) {
+    private suspend fun readFromTransport(t: Http2Wire) {
         val data = t.receive()
         if (data == null || data.isEmpty()) {
             throw Http2Error.ConnectionFailed("Connection closed")

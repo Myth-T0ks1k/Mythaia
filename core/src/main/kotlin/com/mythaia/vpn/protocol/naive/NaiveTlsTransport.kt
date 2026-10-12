@@ -28,7 +28,7 @@ class NaiveTlsTransport(
     private val sni: String?,
     private val alpn: List<String> = listOf("h2"),
     private val tunnel: ProxyConnection? = null
-) {
+) : com.mythaia.vpn.protocol.naive.http2.Http2Wire {
     private var tlsConnection: TlsRecordConnection? = null
     var isReady = false
         private set
@@ -54,19 +54,19 @@ class NaiveTlsTransport(
         }
     }
 
-    suspend fun send(data: ByteArray) {
+    override suspend fun send(data: ByteArray) {
         val conn = tlsConnection
         if (conn == null || !isReady) throw NaiveTlsError.NotConnected()
         conn.send(data)
     }
 
-    suspend fun receive(): ByteArray? {
+    override suspend fun receive(): ByteArray? {
         val conn = tlsConnection
         if (conn == null || !isReady) throw NaiveTlsError.NotConnected()
         return conn.receive()
     }
 
-    fun cancel() {
+    override fun cancel() {
         isReady = false
         tlsConnection?.cancel()
         tlsConnection = null

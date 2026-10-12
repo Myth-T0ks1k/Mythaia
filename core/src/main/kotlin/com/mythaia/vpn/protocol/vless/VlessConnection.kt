@@ -262,7 +262,7 @@ open class VlessRealityConnection(
 }
 
 open class VlessGrpcConnection(
-    private val grpcConnection: GrpcConnection
+    private val grpcConnection: com.mythaia.vpn.protocol.grpc.GrpcTunnel
 ) : VlessConnection() {
 
     override val isConnected: Boolean get() = grpcConnection.isConnected

@@ -31,4 +31,24 @@ object GrpcClient {
         realityServerName = configuration.reality?.serverName,
         serverAddress = configuration.serverAddress
     )
+
+    private val keyJson = kotlinx.serialization.json.Json { encodeDefaults = true }
+
+    /**
+     * What makes two tunnels able to share a [GrpcMux] connection: the same
+     * server, reached the same way. Serialized rather than toString'd, so array
+     * fields compare by content and an edited server never reuses the old
+     * connection.
+     */
+    fun muxKey(configuration: ProxyConfiguration, grpc: GrpcConfiguration, authority: String): String =
+        listOf(
+            configuration.serverAddress,
+            configuration.serverPort.toString(),
+            configuration.tls?.let { keyJson.encodeToString(TlsConfiguration.serializer(), it) },
+            configuration.reality?.let {
+                keyJson.encodeToString(com.mythaia.data.model.RealityConfiguration.serializer(), it)
+            },
+            authority,
+            grpc.userAgent
+        ).joinToString("|")
 }

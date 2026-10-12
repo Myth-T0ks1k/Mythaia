@@ -69,20 +69,22 @@ object StreamTransports {
                 val grpc = configuration.grpc
                     ?: throw ProxyError.ConnectionFailed("grpc transport with no configuration")
                 val authority = GrpcClient.resolveAuthority(grpc, configuration)
-                val inner = stream(configuration, tls?.let { GrpcClient.sanitizedTlsConfiguration(it) }, tunnel)
+                val h2Tls = tls?.let { GrpcClient.sanitizedTlsConfiguration(it) }
+                if (tunnel == null) {
+                    // A stream on the pooled connection to this server; see GrpcMux.
+                    val key = GrpcClient.muxKey(configuration, grpc, authority)
+                    val pooled = com.mythaia.vpn.protocol.grpc.GrpcMux.open(key, grpc, authority, secure = h2Tls != null) {
+                        val inner = stream(configuration, h2Tls, null)
+                        inner.tlsVersion?.let { pooledTlsVersions[key] = it }
+                        com.mythaia.vpn.protocol.grpc.TransportWire(inner.transport)
+                    }
+                    return Opened(grpcTransport(pooled), pooledTlsVersions[key] ?: h2Tls?.let { TlsVersion.TLS13 })
+                }
+                val inner = stream(configuration, h2Tls, tunnel)
                 wrap(inner) {
                     val connection = GrpcConnection(inner.transport, grpc, authority)
                     connection.performSetup()
-                    object : Transport {
-                        override suspend fun send(data: ByteArray) = connection.send(data)
-                        override fun sendAsync(data: ByteArray) {
-                            // gRPC frames carry sequence state, so the write goes
-                            // through the ordered suspend path.
-                            kotlinx.coroutines.runBlocking { connection.send(data) }
-                        }
-                        override suspend fun receive(): ByteArray? = connection.receive()
-                        override fun forceCancel() = connection.cancel()
-                    }
+                    grpcTransport(connection)
                 }
             }
             "xhttp" -> openXHttp(configuration, tls, tunnel)
@@ -150,6 +152,20 @@ object StreamTransports {
      * server hangs up — what VLESS already avoids by pinning the same ALPN.
      */
     private fun http11Only(tls: TlsConfiguration): TlsConfiguration = tls.copy(alpn = listOf("http/1.1"))
+
+    /** The TLS version each pooled gRPC connection was dialled with, for [Opened.tlsVersion]. */
+    private val pooledTlsVersions = java.util.concurrent.ConcurrentHashMap<String, TlsVersion>()
+
+    private fun grpcTransport(connection: com.mythaia.vpn.protocol.grpc.GrpcTunnel): Transport = object : Transport {
+        override suspend fun send(data: ByteArray) = connection.send(data)
+        override fun sendAsync(data: ByteArray) {
+            // gRPC frames carry sequence state, so the write goes
+            // through the ordered suspend path.
+            kotlinx.coroutines.runBlocking { connection.send(data) }
+        }
+        override suspend fun receive(): ByteArray? = connection.receive()
+        override fun forceCancel() = connection.cancel()
+    }
 
     private inline fun wrap(inner: Opened, build: () -> Transport): Opened = try {
         Opened(build(), inner.tlsVersion)

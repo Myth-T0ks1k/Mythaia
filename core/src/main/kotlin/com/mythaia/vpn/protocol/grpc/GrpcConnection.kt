@@ -33,7 +33,7 @@ class GrpcConnection private constructor(
     private val transportSend: suspend (ByteArray) -> Unit,
     private val transportReceive: suspend () -> ByteArray?,
     private val transportCancel: () -> Unit
-) {
+) : GrpcTunnel {
     private val lock = ReentrantLock()
     private var _isConnected: Boolean = true
 
@@ -73,7 +73,7 @@ class GrpcConnection private constructor(
         CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
 
-    val isConnected: Boolean
+    override val isConnected: Boolean
         get() = lock.withLock { _isConnected }
 
     init {
@@ -257,14 +257,14 @@ class GrpcConnection private constructor(
     }
 
     /** Sends a raw byte chunk as one gRPC `Hunk` message. */
-    suspend fun send(data: ByteArray) {
+    override suspend fun send(data: ByteArray) {
         val hunk = encodeHunk(data)
         val framed = wrapGrpcMessage(hunk)
         sendH2Data(framed)
     }
 
     /** Reads the next application payload, decoding gRPC / protobuf framing as needed. */
-    suspend fun receive(): ByteArray? {
+    override suspend fun receive(): ByteArray? {
         lock.withLock {
             if (decodedBufferLen > 0) {
                 val out = decodedBuffer.copyOfRange(0, decodedBufferLen)
@@ -277,7 +277,7 @@ class GrpcConnection private constructor(
         return readAndDecode()
     }
 
-    fun cancel() {
+    override fun cancel() {
         val waiters: List<CancellableContinuation<Unit>>
         lock.withLock {
             _isConnected = false

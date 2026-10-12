@@ -558,6 +558,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             // The kernel dropped the QUIC sockets during sleep too; a pooled
             // Hysteria/TUIC session would otherwise be reused dead.
             com.mythaia.vpn.protocol.quic.QuicClientPool.closeAll()
+            // So did the pooled gRPC connections.
+            com.mythaia.vpn.protocol.grpc.GrpcMux.closeAll()
 
             for (flow in udpFlows.values) {
                 flow.close()
@@ -634,6 +636,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
         com.mythaia.vpn.protocol.naive.http2.Http2SessionPool.closeAll()
         com.mythaia.vpn.protocol.quic.QuicClientPool.closeAll()
+        com.mythaia.vpn.protocol.grpc.GrpcMux.closeAll()
 
         // Close every shared Nowhere QUIC session and forget its identities, so a
         // fresh tunnel presents fresh session ids rather than reviving a portal's

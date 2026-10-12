@@ -17,6 +17,10 @@ import com.mythaia.vpn.protocol.TunneledTransport
 import com.mythaia.vpn.protocol.grpc.GrpcClient
 import com.mythaia.vpn.protocol.grpc.GrpcConfiguration
 import com.mythaia.vpn.protocol.grpc.GrpcConnection
+import com.mythaia.vpn.protocol.grpc.GrpcMux
+import com.mythaia.vpn.protocol.grpc.GrpcTunnel
+import com.mythaia.vpn.protocol.grpc.SocketWire
+import com.mythaia.vpn.protocol.grpc.TlsRecordWire
 import com.mythaia.vpn.protocol.httpupgrade.HttpUpgradeConnection
 import com.mythaia.vpn.protocol.reality.RealityClient
 import com.mythaia.vpn.protocol.tls.TlsClient
@@ -1335,14 +1339,18 @@ class VlessClient(
             }
 
             try {
-                val grpcConn = if (tunnel != null) {
-                    GrpcConnection(requireTunnelTransport(), grpcConfig, authority)
-                } else {
-                    val socket = NioSocket()
-                    this.connection = socket
-                    socket.connect(configuration.serverAddress, configuration.serverPort.toInt())
-                    GrpcConnection(socket, grpcConfig, authority)
+                if (tunnel == null) {
+                    // A stream on the pooled connection to this server; see GrpcMux.
+                    val pooled = GrpcMux.open(
+                        GrpcClient.muxKey(configuration, grpcConfig, authority), grpcConfig, authority, secure = false
+                    ) {
+                        val socket = NioSocket()
+                        socket.connect(configuration.serverAddress, configuration.serverPort.toInt())
+                        SocketWire(socket)
+                    }
+                    return performGrpcHandshake(pooled, command, destinationHost, destinationPort, initialData)
                 }
+                val grpcConn = GrpcConnection(requireTunnelTransport(), grpcConfig, authority)
                 this.grpcConnection = grpcConn
 
                 grpcConn.performSetup()
@@ -1381,6 +1389,17 @@ class VlessClient(
             try {
                 // gRPC requires HTTP/2 — force ALPN to h2.
                 val tlsConfig = GrpcClient.sanitizedTlsConfiguration(baseTlsConfig)
+                if (tunnel == null) {
+                    // A stream on the pooled connection to this server; see GrpcMux.
+                    val pooled = GrpcMux.open(
+                        GrpcClient.muxKey(configuration, grpcConfig, authority), grpcConfig, authority, secure = true
+                    ) {
+                        TlsRecordWire(
+                            TlsClient(tlsConfig).connect(configuration.serverAddress, configuration.serverPort.toInt())
+                        )
+                    }
+                    return performGrpcHandshake(pooled, command, destinationHost, destinationPort, initialData)
+                }
                 val tlsClient = TlsClient(tlsConfig)
                 val tlsConn = if (tunnel != null) {
                     tlsClient.connect(requireTunnelTransport())
@@ -1428,6 +1447,19 @@ class VlessClient(
 
             try {
                 // Reality handles its own ALPN internally.
+                if (tunnel == null) {
+                    // A stream on the pooled connection to this server; see GrpcMux.
+                    val pooled = GrpcMux.open(
+                        GrpcClient.muxKey(configuration, grpcConfig, authority), grpcConfig, authority, secure = true
+                    ) {
+                        TlsRecordWire(
+                            RealityClient(realityConfig).connect(
+                                configuration.serverAddress, configuration.serverPort.toInt()
+                            )
+                        )
+                    }
+                    return performGrpcHandshake(pooled, command, destinationHost, destinationPort, initialData)
+                }
                 val realityClientLocal = RealityClient(realityConfig)
                 val realityConn = if (tunnel != null) {
                     realityClientLocal.connect(requireTunnelTransport())
@@ -1458,7 +1490,7 @@ class VlessClient(
     }
 
     private suspend fun performGrpcHandshake(
-        grpcConn: GrpcConnection,
+        grpcConn: GrpcTunnel,
         command: VlessCommand,
         destinationHost: String,
         destinationPort: Int,

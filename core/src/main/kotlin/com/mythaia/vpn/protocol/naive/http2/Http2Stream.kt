@@ -48,9 +48,45 @@ class Http2Stream(
         }
     }
 
+    /**
+     * Opens the stream as an ordinary request rather than a CONNECT tunnel:
+     * sends [headerBlock] (HPACK), with [endStream] for a request without a
+     * body. Unless [awaitResponse], the body may follow at once, as gRPC
+     * clients send their first message without waiting for the response
+     * headers; those are checked when they arrive, and a refusal ends the
+     * stream (the reader sees its end).
+     */
+    suspend fun openRequest(headerBlock: ByteArray, endStream: Boolean = false, awaitResponse: Boolean = false) {
+        if (state != State.IDLE) throw Http2Error.ProtocolError("Stream $streamID: invalid state for openRequest")
+        state = if (awaitResponse) State.TUNNEL_PENDING else State.TUNNEL_OPEN
+        try {
+            session.sendRequestHeaders(streamID, headerBlock, endStream)
+            if (awaitResponse) tunnelReady.await()
+        } catch (e: Exception) {
+            state = State.CLOSED
+            dataChannel.close()
+            session.removeStream(streamID)
+            throw e
+        }
+    }
+
+    /** The trailing headers (gRPC's grpc-status), once the server sent them. */
+    @Volatile
+    var trailers: List<Pair<String, String>>? = null
+        private set
+
+    @Volatile
+    private var responseSeen = false
+
     override suspend fun sendData(data: ByteArray) {
         if (state != State.TUNNEL_OPEN) throw Http2Error.NotReady()
         session.sendData(streamID, data, flowControl)
+    }
+
+    /** Sends [data] and ends this side of the stream (an upload's last piece). */
+    suspend fun sendLastData(data: ByteArray) {
+        if (state != State.TUNNEL_OPEN) throw Http2Error.NotReady()
+        session.sendData(streamID, data, flowControl, endStream = true)
     }
 
     override suspend fun receiveData(): ByteArray? {
@@ -82,32 +118,39 @@ class Http2Stream(
         session.removeStream(streamID)
     }
 
-    /** Completes [tunnelReady] on a 200 CONNECT response, fails it on error status. */
+    /**
+     * Completes [tunnelReady] on a 200 response, fails it on error status. A
+     * second HEADERS block, without `:status`, is the trailers.
+     */
     fun deliverHeaders(headers: List<Pair<String, String>>) {
         val statusHeader = headers.firstOrNull { it.first == ":status" }
         if (statusHeader == null) {
-            state = State.CLOSED
-            tunnelReady.completeExceptionally(
-                Http2Error.ProtocolError("Stream $streamID: missing :status")
-            )
+            if (responseSeen) {
+                trailers = headers
+                return
+            }
+            fail(Http2Error.ProtocolError("Stream $streamID: missing :status"))
             return
         }
+        responseSeen = true
 
         when (statusHeader.second) {
             "200" -> {
                 negotiatedPaddingType = NaivePaddingNegotiator.parseResponse(headers)
-                state = State.TUNNEL_OPEN
+                if (state == State.TUNNEL_PENDING) state = State.TUNNEL_OPEN
                 tunnelReady.complete(Unit)
             }
-            "407" -> {
-                state = State.CLOSED
-                tunnelReady.completeExceptionally(Http2Error.AuthenticationRequired())
-            }
-            else -> {
-                state = State.CLOSED
-                tunnelReady.completeExceptionally(Http2Error.TunnelFailed(statusHeader.second))
-            }
+            "407" -> fail(Http2Error.AuthenticationRequired())
+            else -> fail(Http2Error.TunnelFailed(statusHeader.second))
         }
+    }
+
+    /** A refused request: closes the stream, so a request that did not wait for the answer ends too. */
+    private fun fail(error: Http2Error) {
+        state = State.CLOSED
+        dataChannel.close()
+        flowControl.cancelAwaiters(error)
+        tunnelReady.completeExceptionally(error)
     }
 
     fun deliverData(data: ByteArray) {
