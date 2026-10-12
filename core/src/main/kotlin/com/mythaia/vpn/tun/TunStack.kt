@@ -213,7 +213,7 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
         muxManager = null
         com.mythaia.vpn.protocol.naive.http2.Http2SessionPool.closeAll()
         com.mythaia.vpn.protocol.quic.QuicClientPool.closeAll()
-        com.mythaia.vpn.protocol.grpc.GrpcMux.closeAll()
+        com.mythaia.vpn.protocol.naive.http2.Http2StreamPool.closeAll()
         com.mythaia.vpn.protocol.nowhere.NowhereClient.shutdown()
         com.mythaia.vpn.protocol.vless.encryption.VlessEncryption0RttCache.shared.clear()
 

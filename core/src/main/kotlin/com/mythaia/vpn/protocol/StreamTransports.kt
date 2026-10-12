@@ -76,7 +76,7 @@ object StreamTransports {
                     val pooled = com.mythaia.vpn.protocol.grpc.GrpcMux.open(key, grpc, authority, secure = h2Tls != null) {
                         val inner = stream(configuration, h2Tls, null)
                         inner.tlsVersion?.let { pooledTlsVersions[key] = it }
-                        com.mythaia.vpn.protocol.grpc.TransportWire(inner.transport)
+                        com.mythaia.vpn.protocol.naive.http2.TransportWire(inner.transport)
                     }
                     return Opened(grpcTransport(pooled), pooledTlsVersions[key] ?: h2Tls?.let { TlsVersion.TLS13 })
                 }
@@ -113,6 +113,20 @@ object StreamTransports {
         val sessionId = if (mode == XHttpMode.PACKET_UP || mode == XHttpMode.STREAM_UP) UUID.randomUUID().toString() else ""
         val needsUpload = !useHTTP2 && (mode == XHttpMode.PACKET_UP || mode == XHttpMode.STREAM_UP)
 
+        if (tunnel == null && useHTTP2) {
+            // Every request a stream of the pooled connection to this server.
+            val key = "xhttp|" + com.mythaia.vpn.protocol.naive.http2.Http2PoolKey.of(configuration, sanitizedTls, xhttp.host)
+            val connection = XHttpConnection.pooled(xhttp, mode, sessionId) {
+                com.mythaia.vpn.protocol.naive.http2.Http2StreamPool.reserve(key, "xhttp") {
+                    val inner = stream(configuration, sanitizedTls, null)
+                    inner.tlsVersion?.let { pooledTlsVersions[key] = it }
+                    com.mythaia.vpn.protocol.naive.http2.TransportWire(inner.transport)
+                }
+            }
+            connection.performSetup()
+            return Opened(xhttpTransport(connection), pooledTlsVersions[key] ?: TlsVersion.TLS13)
+        }
+
         val inner = stream(configuration, sanitizedTls, tunnel)
         return wrap(inner) {
             val uploadFactory: (suspend () -> TransportClosures)? = if (needsUpload) {
@@ -135,13 +149,15 @@ object StreamTransports {
                 uploadConnectionFactory = uploadFactory
             )
             connection.performSetup()
-            object : Transport {
-                override suspend fun send(data: ByteArray) = connection.send(data)
-                override fun sendAsync(data: ByteArray) = connection.sendAsync(data)
-                override suspend fun receive(): ByteArray? = connection.receive()
-                override fun forceCancel() = connection.cancel()
-            }
+            xhttpTransport(connection)
         }
+    }
+
+    private fun xhttpTransport(connection: XHttpConnection): Transport = object : Transport {
+        override suspend fun send(data: ByteArray) = connection.send(data)
+        override fun sendAsync(data: ByteArray) = connection.sendAsync(data)
+        override suspend fun receive(): ByteArray? = connection.receive()
+        override fun forceCancel() = connection.cancel()
     }
 
     /** Runs the transport handshake; the inner stream is closed if it fails, since no one else holds it. */

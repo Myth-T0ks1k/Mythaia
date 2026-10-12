@@ -13,10 +13,23 @@ private val logger = MythaiaLogger("HTTP2Stream")
  * Lifecycle: IDLE → TUNNEL_PENDING → TUNNEL_OPEN → CLOSED.
  */
 class Http2Stream(
-    val streamID: Int,
     private val session: Http2Session,
     private val destination: String
 ) : NaiveTunnel {
+
+    /**
+     * Given when the stream's HEADERS are written ([Http2Session.openStream]),
+     * not when it is handed out: ids must reach the server in increasing order
+     * (RFC 9113 §5.1.1), and streams handed out together can open in any order.
+     * 0 until then.
+     */
+    @Volatile
+    var streamID: Int = 0
+        private set
+
+    internal fun assignId(id: Int) {
+        streamID = id
+    }
 
     enum class State { IDLE, TUNNEL_PENDING, TUNNEL_OPEN, CLOSED }
 
@@ -39,11 +52,11 @@ class Http2Stream(
         state = State.TUNNEL_PENDING
 
         try {
-            session.sendConnectRequest(streamID, destination)
+            session.sendConnectRequest(this, destination)
             tunnelReady.await()
         } catch (e: Exception) {
             state = State.CLOSED
-            session.removeStream(streamID)
+            release()
             throw e
         }
     }
@@ -60,12 +73,12 @@ class Http2Stream(
         if (state != State.IDLE) throw Http2Error.ProtocolError("Stream $streamID: invalid state for openRequest")
         state = if (awaitResponse) State.TUNNEL_PENDING else State.TUNNEL_OPEN
         try {
-            session.sendRequestHeaders(streamID, headerBlock, endStream)
+            session.sendRequestHeaders(this, headerBlock, endStream)
             if (awaitResponse) tunnelReady.await()
         } catch (e: Exception) {
             state = State.CLOSED
             dataChannel.close()
-            session.removeStream(streamID)
+            release()
             throw e
         }
     }
@@ -112,10 +125,15 @@ class Http2Stream(
         // Send RST_STREAM(CANCEL) so the server reclaims the slot when we
         // close while the stream is still open. Mirrors iOS HTTP2Stream.close
         // (HTTP2Stream.swift:160-184).
-        if (priorState == State.TUNNEL_PENDING || priorState == State.TUNNEL_OPEN) {
+        if ((priorState == State.TUNNEL_PENDING || priorState == State.TUNNEL_OPEN) && streamID != 0) {
             session.sendReset(streamID, Http2Framer.ErrorCode.CANCEL)
         }
-        session.removeStream(streamID)
+        release()
+    }
+
+    /** Gives the stream's place back: its slot if it never opened, its id otherwise. */
+    private fun release() {
+        if (streamID == 0) session.releaseReservation() else session.removeStream(streamID)
     }
 
     /**

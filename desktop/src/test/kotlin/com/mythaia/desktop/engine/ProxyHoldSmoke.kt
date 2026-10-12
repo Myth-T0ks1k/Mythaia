@@ -22,7 +22,10 @@ class ProxyHoldSmoke {
     @Test
     fun `hold one server open as local proxies`() = runBlocking {
         val link = System.getenv("MYTHAIA_HOLD_LINK")
-        assumeTrue("MYTHAIA_HOLD_LINK not set", !link.isNullOrBlank())
+        // Or MYTHAIA_HOLD_CONFIG: a file with one server in the app's own JSON
+        // (an entry of configurations.json), for servers that came as JSON.
+        val configFile = System.getenv("MYTHAIA_HOLD_CONFIG")
+        assumeTrue("MYTHAIA_HOLD_LINK / MYTHAIA_HOLD_CONFIG not set", !link.isNullOrBlank() || !configFile.isNullOrBlank())
         if (System.getenv("MYTHAIA_HOLD_LOG") != null) {
             com.mythaia.vpn.util.MythaiaLogger.debugEnabled = true
             com.mythaia.vpn.util.MythaiaLogger.backend = object : com.mythaia.vpn.util.LogBackend {
@@ -32,9 +35,16 @@ class ProxyHoldSmoke {
                     println("LOG ${System.currentTimeMillis() % 100000} debug [$category] $message")
             }
         }
-        val input = ProtocolProbe.readInput(link!!.toByteArray())
-        val config = ProtocolProbe.configurationsOf("hold", input).first()
-        CertificatePolicy.setAllowInsecure(input.insecure)
+        val config = if (!configFile.isNullOrBlank()) {
+            kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+                com.mythaia.data.model.ProxyConfiguration.serializer(),
+                java.io.File(configFile).readText()
+            )
+        } else {
+            val input = ProtocolProbe.readInput(link!!.toByteArray())
+            CertificatePolicy.setAllowInsecure(input.insecure)
+            ProtocolProbe.configurationsOf("hold", input).first()
+        }
         // The app-wide fragment switch (on by default in both apps), for servers
         // whose link carries no fragment= of its own: MYTHAIA_HOLD_FRAGMENT=off|on.
         val fragment = System.getenv("MYTHAIA_HOLD_FRAGMENT") != "off"

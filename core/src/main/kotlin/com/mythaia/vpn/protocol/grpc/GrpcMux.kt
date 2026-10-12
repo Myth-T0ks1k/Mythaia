@@ -1,19 +1,10 @@
 package com.mythaia.vpn.protocol.grpc
 
 import com.mythaia.vpn.protocol.naive.http2.HpackEncoder
-import com.mythaia.vpn.protocol.naive.http2.Http2Session
+import com.mythaia.vpn.protocol.naive.http2.Http2StreamPool
 import com.mythaia.vpn.protocol.naive.http2.Http2Stream
 import com.mythaia.vpn.protocol.naive.http2.Http2Wire
-import com.mythaia.vpn.util.MythaiaLogger
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
-
-private val logger = MythaiaLogger("GRPC-MUX")
 
 /** What both gRPC transports give the protocol above them: one byte stream per tunnel. */
 interface GrpcTunnel {
@@ -26,34 +17,16 @@ interface GrpcTunnel {
 }
 
 /**
- * gRPC tunnels that share one HTTP/2 connection per server, as Xray's client
- * (grpc-go) does: the first tunnel to a server dials it, every later one opens
- * a stream on that connection.
- *
- * [GrpcConnection] dialled a fresh TLS connection, with its HTTP/2 setup, for
- * every tunnel, so every new connection an app made paid two or three more
- * round trips than through Xray, plus the fragmented ClientHello's pauses. On
- * a real server that was 0.4 to 1.1 s per new request
- * against Xray's 0.19 s; it is what made pages and the shown ping slow.
- *
- * A connection idle for [IDLE_CLOSE_MS] is closed rather than reused: CDNs and
- * mobile NATs drop idle connections without telling anyone, and a stream on a
- * dead connection only fails when its first reply never comes.
+ * gRPC tunnels as streams of the pooled HTTP/2 connections in
+ * [Http2StreamPool], as Xray's client (grpc-go) runs them: the first tunnel to
+ * a server dials it, every later one opens a stream on that connection.
  */
 object GrpcMux {
 
-    private val sessions = HashMap<String, MutableList<Http2Session>>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var reaper: Job? = null
-
-    private const val IDLE_CLOSE_MS = 60_000L
-    private const val REAP_INTERVAL_MS = 15_000L
-
     /**
      * A tunnel to the server [key] identifies (everything that shapes the
-     * connection: address, port, TLS or Reality settings), on a pooled
-     * connection; [dial] opens a new one (TLS or Reality, ALPN h2) when none
-     * has room.
+     * connection: address, port, TLS or Reality settings); [dial] opens a new
+     * connection (TLS or Reality, ALPN h2) when the pool has none with room.
      */
     suspend fun open(
         key: String,
@@ -63,109 +36,15 @@ object GrpcMux {
         dial: suspend () -> Http2Wire
     ): GrpcTunnel {
         val headers = GrpcCodec.requestHeaders(grpc, authority, secure)
-        while (true) {
-            val session: Http2Session
-            val join: Boolean
-            synchronized(this) {
-                val list = sessions.getOrPut(key) { mutableListOf() }
-                list.removeAll { it.isClosed }
-                val ready = list.firstOrNull { it.hasCapacity }
-                val starting = list.firstOrNull { it.isStarting }
-                when {
-                    ready != null -> { session = ready; join = false }
-                    // Several tunnels at once (a page's first requests) wait for
-                    // the connection being dialled instead of dialling their own.
-                    starting != null -> { session = starting; join = true }
-                    else -> {
-                        val fresh = Http2Session(null, scope, null, null, dial)
-                        fresh.onClose = { synchronized(this) { sessions[key]?.remove(fresh) } }
-                        list.add(fresh)
-                        session = fresh
-                        join = true
-                    }
-                }
-                startReaper()
-            }
-
-            val stream: Http2Stream = if (join) {
-                session.acquireStream(grpc.resolvedPath())
-            } else {
-                session.tryReserveStream(grpc.resolvedPath()) ?: continue
-            }
-            try {
-                stream.openRequest(headers, endStream = false, awaitResponse = false)
-            } catch (e: Exception) {
-                stream.close()
-                throw e
-            }
-            return GrpcMuxStream(stream)
+        val stream = Http2StreamPool.reserve("grpc|$key", grpc.resolvedPath(), dial)
+        try {
+            stream.openRequest(headers, endStream = false, awaitResponse = false)
+        } catch (e: Exception) {
+            stream.close()
+            throw e
         }
+        return GrpcMuxStream(stream)
     }
-
-    /** Ends every pooled connection: the tunnel stopped or switched server. */
-    fun closeAll() {
-        val all = synchronized(this) {
-            val snapshot = sessions.values.flatten()
-            sessions.clear()
-            reaper?.cancel()
-            reaper = null
-            snapshot
-        }
-        for (session in all) {
-            session.onClose = null
-            runCatching { session.close() }
-        }
-    }
-
-    private fun startReaper() {
-        if (reaper?.isActive == true) return
-        reaper = scope.launch {
-            while (true) {
-                delay(REAP_INTERVAL_MS)
-                val idle = synchronized(this@GrpcMux) {
-                    val stale = sessions.values.flatten().filter {
-                        !it.isClosed && !it.isStarting && it.idleNanos > IDLE_CLOSE_MS * 1_000_000
-                    }
-                    for (list in sessions.values) list.removeAll { it in stale || it.isClosed }
-                    sessions.entries.removeAll { it.value.isEmpty() }
-                    if (sessions.isEmpty()) {
-                        reaper = null
-                        return@synchronized stale to true
-                    }
-                    stale to false
-                }
-                for (session in idle.first) {
-                    session.onClose = null
-                    runCatching { session.close() }
-                }
-                if (idle.second) {
-                    logger.debug("No pooled gRPC connections left")
-                    return@launch
-                }
-            }
-        }
-    }
-}
-
-/** A TLS or Reality connection as the byte stream a pooled session runs over. */
-class TlsRecordWire(private val connection: com.mythaia.vpn.protocol.tls.TlsRecordConnection) : Http2Wire {
-    override suspend fun send(data: ByteArray) = connection.send(data)
-    override suspend fun receive(): ByteArray? = connection.receive()
-    override fun cancel() = connection.cancel()
-}
-
-/** Any [com.mythaia.vpn.protocol.Transport] as the byte stream a pooled session runs over. */
-class TransportWire(private val transport: com.mythaia.vpn.protocol.Transport) : Http2Wire {
-    override suspend fun send(data: ByteArray) = transport.send(data)
-    override suspend fun receive(): ByteArray? = transport.receive()
-    override fun cancel() = transport.forceCancel()
-}
-
-/** A plain TCP connection (gRPC without TLS) as the byte stream a pooled session runs over. */
-class SocketWire(private val socket: com.mythaia.vpn.util.NioSocket) : Http2Wire {
-    override suspend fun send(data: ByteArray) = socket.send(data)
-    override suspend fun receive(): ByteArray? = socket.receive()
-    override fun cancel() = socket.forceCancel()
 }
 
 /** One gRPC tunnel as a stream of a pooled HTTP/2 connection; see [GrpcMux]. */

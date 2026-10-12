@@ -19,8 +19,10 @@ import com.mythaia.vpn.protocol.grpc.GrpcConfiguration
 import com.mythaia.vpn.protocol.grpc.GrpcConnection
 import com.mythaia.vpn.protocol.grpc.GrpcMux
 import com.mythaia.vpn.protocol.grpc.GrpcTunnel
-import com.mythaia.vpn.protocol.grpc.SocketWire
-import com.mythaia.vpn.protocol.grpc.TlsRecordWire
+import com.mythaia.vpn.protocol.naive.http2.SocketWire
+import com.mythaia.vpn.protocol.naive.http2.TlsRecordWire
+import com.mythaia.vpn.protocol.naive.http2.Http2PoolKey
+import com.mythaia.vpn.protocol.naive.http2.Http2StreamPool
 import com.mythaia.vpn.protocol.httpupgrade.HttpUpgradeConnection
 import com.mythaia.vpn.protocol.reality.RealityClient
 import com.mythaia.vpn.protocol.tls.TlsClient
@@ -730,6 +732,21 @@ class VlessClient(
                 val httpVersion = if (useHTTP2) XHttpHttpVersion.HTTP2 else XHttpHttpVersion.HTTP11
                 val tlsConfig = sanitizedXHttpTlsConfig(baseTlsConfig, httpVersion)
 
+                if (tunnel == null && useHTTP2) {
+                    // Every request a stream of the pooled connection to this server.
+                    val key = "xhttp|" + Http2PoolKey.of(configuration, tlsConfig, xhttpConfig.host)
+                    val pooled = XHttpConnection.pooled(xhttpConfig, mode, sessionId) {
+                        Http2StreamPool.reserve(key, "xhttp") {
+                            TlsRecordWire(
+                                TlsClient(tlsConfig).connect(configuration.serverAddress, configuration.serverPort.toInt())
+                            )
+                        }
+                    }
+                    this.xhttpConnection = pooled
+                    pooled.performSetup()
+                    return performXHttpHandshake(pooled, command, destinationHost, destinationPort, initialData)
+                }
+
                 val tlsClient = TlsClient(tlsConfig)
                 val tlsConn = if (tunnel != null) {
                     tlsClient.connect(requireTunnelTransport())
@@ -807,6 +824,22 @@ class VlessClient(
             }
 
             try {
+                if (tunnel == null) {
+                    // Every request a stream of the pooled connection to this server.
+                    val key = "xhttp|" + Http2PoolKey.of(configuration, null, xhttpConfig.host)
+                    val pooled = XHttpConnection.pooled(xhttpConfig, mode, sessionId) {
+                        Http2StreamPool.reserve(key, "xhttp") {
+                            TlsRecordWire(
+                                RealityClient(realityConfig).connect(
+                                    configuration.serverAddress, configuration.serverPort.toInt()
+                                )
+                            )
+                        }
+                    }
+                    this.xhttpConnection = pooled
+                    pooled.performSetup()
+                    return performXHttpHandshake(pooled, command, destinationHost, destinationPort, initialData)
+                }
                 val realityClient = RealityClient(realityConfig)
                 val realityConn = if (tunnel != null) {
                     realityClient.connect(requireTunnelTransport())
@@ -818,7 +851,7 @@ class VlessClient(
                 this.realityClient = realityClient
                 this.realityConnection = realityConn
 
-                // Reality + xhttp requires HTTP/2.
+                // Reality + xhttp requires HTTP/2 (the pooled path is above).
                 val xhttpConn = XHttpConnection(
                     tlsConnection = realityConn,
                     configuration = xhttpConfig,

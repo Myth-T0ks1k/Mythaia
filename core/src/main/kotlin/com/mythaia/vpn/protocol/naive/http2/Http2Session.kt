@@ -71,7 +71,7 @@ class Http2Session(
 
     /** How long the session has carried no stream at all; 0 while one is open. */
     val idleNanos: Long
-        get() = if (synchronized(streamsLock) { streams.isNotEmpty() }) 0L
+        get() = if (synchronized(streamsLock) { streams.isNotEmpty() || reserved > 0 }) 0L
         else System.nanoTime() - lastActivityNanos
 
     /** Not dialled yet, or still in its handshake: a caller may join and wait. */
@@ -80,6 +80,9 @@ class Http2Session(
     private val streams = mutableMapOf<Int, Http2Stream>()
     private var nextStreamID = 1
     private val streamsLock = Any()
+
+    /** Streams handed out but not opened yet: they hold a slot, not yet an id. */
+    private var reserved = 0
 
     private var connectionSendWindow = Http2FlowControl.DEFAULT_INITIAL_WINDOW_SIZE
     private var connectionRecvConsumed = 0
@@ -99,7 +102,7 @@ class Http2Session(
 
     val hasCapacity: Boolean
         get() = state == State.READY && !goawayReceived &&
-            synchronized(streamsLock) { streams.size < streamLimit }
+            synchronized(streamsLock) { streams.size + reserved < streamLimit }
 
     val isClosed: Boolean get() = state == State.CLOSED
 
@@ -110,12 +113,9 @@ class Http2Session(
         if (goawayReceived) throw Http2Error.Goaway()
 
         return synchronized(streamsLock) {
-            val streamID = nextStreamID
-            nextStreamID += 2
-            val stream = Http2Stream(streamID, this, destination)
-            streams[streamID] = stream
+            reserved += 1
             lastActivityNanos = System.nanoTime()
-            stream
+            Http2Stream(this, destination)
         }
     }
 
@@ -128,13 +128,39 @@ class Http2Session(
     fun tryReserveStream(destination: String): Http2Stream? {
         if (state != State.READY || goawayReceived) return null
         return synchronized(streamsLock) {
-            if (streams.size >= streamLimit) return@synchronized null
+            if (streams.size + reserved >= streamLimit) return@synchronized null
+            reserved += 1
             lastActivityNanos = System.nanoTime()
-            val streamID = nextStreamID
-            nextStreamID += 2
-            val stream = Http2Stream(streamID, this, destination)
-            streams[streamID] = stream
-            stream
+            Http2Stream(this, destination)
+        }
+    }
+
+    /** A stream handed out and closed without ever opening gives its slot back. */
+    fun releaseReservation() {
+        synchronized(streamsLock) { if (reserved > 0) reserved -= 1 }
+        lastActivityNanos = System.nanoTime()
+    }
+
+    /**
+     * Gives [stream] the next id and writes its HEADERS ([headers] builds the
+     * frame for that id) in one step under the write lock, so ids reach the
+     * server in increasing order however the streams' openers interleave
+     * (RFC 9113 §5.1.1: an id lower than one already used is a connection
+     * error, which took every stream on the connection down with it).
+     */
+    private suspend fun openStream(stream: Http2Stream, headers: (Int) -> Http2Frame) {
+        writeMutex.withLock {
+            val t = transport
+            if (t == null || state == State.CLOSED) throw Http2Error.ConnectionFailed("Transport closed")
+            val id = synchronized(streamsLock) {
+                val id = nextStreamID
+                nextStreamID += 2
+                if (reserved > 0) reserved -= 1
+                streams[id] = stream
+                id
+            }
+            stream.assignId(id)
+            t.send(Http2Framer.serialize(headers(id)))
         }
     }
 
@@ -404,7 +430,7 @@ class Http2Session(
         }
     }
 
-    suspend fun sendConnectRequest(streamID: Int, destination: String) {
+    suspend fun sendConnectRequest(stream: Http2Stream, destination: String) {
         val extraHeaders = mutableListOf<Pair<String, String>>()
 
         configuration?.basicAuth?.let { auth ->
@@ -417,33 +443,16 @@ class Http2Session(
             authority = destination,
             extraHeaders = extraHeaders
         )
-        val headersFrame = Http2Framer.headersFrame(
-            streamID = streamID,
-            headerBlock = headerBlock,
-            endStream = false
-        )
-
-        writeMutex.withLock {
-            transport?.send(Http2Framer.serialize(headersFrame))
-                ?: throw Http2Error.ConnectionFailed("Transport closed")
-        }
+        openStream(stream) { id -> Http2Framer.headersFrame(streamID = id, headerBlock = headerBlock, endStream = false) }
     }
 
     /**
-     * Opens [streamID] as an ordinary request with [headerBlock] (HPACK); the
+     * Opens [stream] as an ordinary request with [headerBlock] (HPACK); the
      * body, if any, follows through [sendData]. [endStream] for a request with
      * no body, such as a GET.
      */
-    suspend fun sendRequestHeaders(streamID: Int, headerBlock: ByteArray, endStream: Boolean) {
-        val headersFrame = Http2Framer.headersFrame(
-            streamID = streamID,
-            headerBlock = headerBlock,
-            endStream = endStream
-        )
-        writeMutex.withLock {
-            transport?.send(Http2Framer.serialize(headersFrame))
-                ?: throw Http2Error.ConnectionFailed("Transport closed")
-        }
+    suspend fun sendRequestHeaders(stream: Http2Stream, headerBlock: ByteArray, endStream: Boolean) {
+        openStream(stream) { id -> Http2Framer.headersFrame(streamID = id, headerBlock = headerBlock, endStream = endStream) }
     }
 
     suspend fun sendData(

@@ -117,8 +117,25 @@ class XHttpConnection private constructor(
     private var h2UploadStreamId: UInt = 3u      // Fixed upload stream for stream-up
     private var h2NextPacketStreamId: UInt = 3u  // Next stream ID for packet-up uploads
 
+    /**
+     * Set for a pooled connection ([pooled]): every request is a stream of a
+     * shared HTTP/2 connection ([com.mythaia.vpn.protocol.naive.http2.Http2StreamPool])
+     * instead of this tunnel dialling a connection of its own. Gives a new,
+     * unopened stream per request.
+     */
+    private var pooledStream: (suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream)? = null
+
+    /** Pooled: the download GET, or stream-one's single POST. */
+    @Volatile
+    private var pooledDownload: com.mythaia.vpn.protocol.naive.http2.Http2Stream? = null
+
+    /** Pooled stream-up: the upload POST. */
+    @Volatile
+    private var pooledUpload: com.mythaia.vpn.protocol.naive.http2.Http2Stream? = null
+
     val isConnected: Boolean
-        get() = lock.withLock { _isConnected }
+        get() = lock.withLock { _isConnected } &&
+            (pooledStream == null || pooledDownload?.isConnected != false)
 
     constructor(
         socket: NioSocket,
@@ -271,7 +288,9 @@ class XHttpConnection private constructor(
      *   and establishes the upload connection via the factory.
      */
     suspend fun performSetup() {
-        if (useHTTP2) {
+        if (pooledStream != null) {
+            performPooledSetup()
+        } else if (useHTTP2) {
             performH2Setup()
         } else if (mode == XHttpMode.STREAM_ONE) {
             performStreamOneSetup()
@@ -279,6 +298,31 @@ class XHttpConnection private constructor(
             performStreamUpSetup()
         } else {
             performPacketUpSetup()
+        }
+    }
+
+    /**
+     * Pooled: the same requests [performH2Setup] makes, each as a stream of the
+     * shared connection. Nothing waits for the responses, as there: a CDN that
+     * holds the download's headers until the backend has data would otherwise
+     * wait for an upload that is never sent.
+     */
+    private suspend fun performPooledSetup() {
+        val open = pooledStream ?: return
+        if (mode == XHttpMode.STREAM_ONE) {
+            val stream = open()
+            stream.openRequest(encodeH2RequestHeaders(method = "POST", includeMeta = false))
+            pooledDownload = stream
+            return
+        }
+        // stream-up / packet-up: the download is a GET with no body.
+        val download = open()
+        download.openRequest(encodeH2RequestHeaders(method = "GET", includeMeta = true), endStream = true)
+        pooledDownload = download
+        if (mode == XHttpMode.STREAM_UP) {
+            val upload = open()
+            upload.openRequest(encodeH2UploadHeaders(seq = null))
+            pooledUpload = upload
         }
     }
 
@@ -482,6 +526,13 @@ class XHttpConnection private constructor(
             // Packet-up batches writes through an internal queue (see
             // [enqueuePacketUpSend]). All other modes go directly to the wire.
             enqueuePacketUpSend(data)
+            return
+        }
+        if (pooledStream != null) {
+            // stream-up sends on its upload POST; stream-one on its one stream.
+            val stream = (if (mode == XHttpMode.STREAM_UP) pooledUpload else pooledDownload)
+                ?: throw XHttpError.ConnectionClosed
+            stream.sendData(data)
             return
         }
         if (useHTTP2) {
@@ -753,6 +804,11 @@ class XHttpConnection private constructor(
     }
 
     suspend fun receive(): ByteArray? {
+        if (pooledStream != null) {
+            val data = pooledDownload?.receiveData()
+            if (data == null) lock.withLock { h2StreamClosed = true }
+            return data
+        }
         if (useHTTP2) {
             return receiveH2Data()
         }
@@ -829,9 +885,36 @@ class XHttpConnection private constructor(
         packetUpScope.coroutineContext[Job]?.cancelChildren()
         downloadCancel()
         uploadCancelFn?.invoke()
+        // Pooled: end this tunnel's streams; the shared connection stays for others.
+        pooledDownload?.close()
+        pooledUpload?.close()
     }
 
     companion object {
+        /**
+         * An XHTTP connection whose requests are streams of a pooled HTTP/2
+         * connection, as Xray's client reuses them (its xmux): [stream] gives a
+         * new, unopened stream on it per request. Dialling a connection per
+         * tunnel, as the other constructors do, cost every new connection a TCP
+         * and a TLS handshake more than Xray.
+         */
+        fun pooled(
+            configuration: XHttpConfiguration,
+            mode: XHttpMode,
+            sessionId: String,
+            stream: suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream
+        ): XHttpConnection = XHttpConnection(
+            configuration = configuration,
+            mode = mode,
+            sessionId = sessionId,
+            useHTTP2 = true,
+            downloadSend = { throw XHttpError.ConnectionClosed },
+            downloadSendAsync = {},
+            downloadReceive = { null },
+            downloadCancel = {},
+            uploadConnectionFactory = null
+        ).also { it.pooledStream = stream }
+
         /** HTTP/2 connection preface (RFC 7540 S3.5). */
         private val H2_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".toByteArray(Charsets.UTF_8)
 
@@ -1532,6 +1615,14 @@ class XHttpConnection private constructor(
      * is shared.
      */
     private suspend fun sendH2PacketUp(data: ByteArray, seq: Long) {
+        pooledStream?.let { open ->
+            // One POST, as a stream of the shared connection. Its reply (an
+            // empty 200) ends the stream by itself; nothing waits for it.
+            val post = open()
+            post.openRequest(encodeH2UploadHeaders(seq, contentLength = data.size), endStream = data.isEmpty())
+            if (data.isNotEmpty()) post.sendLastData(data)
+            return
+        }
         val streamId: UInt
         val initialFrames: ByteArray
         var startOffset: Int
