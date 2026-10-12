@@ -369,6 +369,61 @@ class WireGuardHandshakeTest {
         assertTrue(keys.sendKey.contentEquals(responder.receiveKey))
     }
 
+    // MARK: - WARP reserved bytes
+
+    @Test
+    fun `Reserved goes into octets 1-3 of the initiation, after the MACs`() {
+        val (clientPrivate, clientPublic) = WireGuardCrypto.generateKeyPair()
+        val (_, serverPublic) = WireGuardCrypto.generateKeyPair()
+        val reserved = byteArrayOf(0x11, 0x22, 0x33)
+
+        val message = WireGuardHandshake(clientPrivate, clientPublic, serverPublic, reserved = reserved)
+            .buildInitiation(index = 7)
+
+        assertEquals(WireGuardHandshake.INITIATION_SIZE, message.size)
+        assertEquals(1.toByte(), message[0])
+        assertEquals(0x11.toByte(), message[1])
+        assertEquals(0x22.toByte(), message[2])
+        assertEquals(0x33.toByte(), message[3])
+
+        // mac1 is over the message as plain WireGuard would have it, which is
+        // what WARP checks after clearing its reserved octets.
+        val zeroed = message.copyOfRange(0, 116).also { it[1] = 0; it[2] = 0; it[3] = 0 }
+        val expected = WireGuardCrypto.mac(
+            WireGuardCrypto.hash("mac1----".toByteArray(Charsets.US_ASCII), serverPublic),
+            zeroed
+        )
+        assertArrayEquals(expected, message.copyOfRange(116, 132))
+    }
+
+    @Test
+    fun `a WARP-style peer completes the handshake with its own reserved bytes`() {
+        val (clientPrivate, clientPublic) = WireGuardCrypto.generateKeyPair()
+        val (serverPrivate, serverPublic) = WireGuardCrypto.generateKeyPair()
+        val reserved = byteArrayOf(0x11, 0x22, 0x33)
+
+        val client = WireGuardHandshake(clientPrivate, clientPublic, serverPublic, reserved = reserved)
+        val initiation = client.buildInitiation(index = 9)
+        // The server clears the octets before it reads the message...
+        val cleared = initiation.copyOf().also { it[1] = 0; it[2] = 0; it[3] = 0 }
+        val responder = respond(cleared, serverPrivate, serverPublic)
+        // ...and writes its own into the reply.
+        val reply = responder.response.copyOf().also { it[1] = 0x44; it[2] = 0x55; it[3] = 0x66 }
+
+        val keys = client.consumeResponse(reply)
+        assertArrayEquals(responder.receiveKey, keys.sendKey)
+
+        // Without Reserved configured the same reply is not a response.
+        val plain = WireGuardHandshake(clientPrivate, clientPublic, serverPublic)
+        plain.buildInitiation(index = 9)
+        try {
+            plain.consumeResponse(reply)
+            fail("expected the stamped reply to be refused")
+        } catch (_: WireGuardError) {
+            // expected
+        }
+    }
+
     @Test
     fun `little-endian helpers round-trip`() {
         val buffer = ByteArray(8)

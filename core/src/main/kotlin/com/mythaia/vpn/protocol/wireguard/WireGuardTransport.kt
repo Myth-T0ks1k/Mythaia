@@ -12,7 +12,9 @@ import java.util.concurrent.atomic.AtomicLong
  * The paper writes the first field as type(1) ‖ reserved(3), which is the same
  * four bytes: type 4 little-endian is `04 00 00 00`. AmneziaWG replaces the
  * whole word with H4, a value normally well above 255, so it has to be read
- * and written as one 32-bit field rather than a byte.
+ * and written as one 32-bit field rather than a byte. Cloudflare WARP goes the
+ * other way: the type stays a byte and the three reserved octets carry its
+ * client id, so with `Reserved` set only the low octet is compared.
  */
 class WireGuardTransport(
     private val sendKey: ByteArray,
@@ -20,7 +22,12 @@ class WireGuardTransport(
     private val peerIndex: Int,
     private val localIndex: Int,
     /** AmneziaWG renumbers the message types; plain WireGuard leaves them. */
-    private val transportType: Int = WireGuardHandshake.MESSAGE_TRANSPORT
+    private val transportType: Int = WireGuardHandshake.MESSAGE_TRANSPORT,
+    /**
+     * WARP's reserved bytes, stamped into octets 1-3 of every message sent;
+     * with them set, a received message is matched on its low octet only.
+     */
+    private val reserved: ByteArray? = null
 ) {
 
     private val sendCounter = AtomicLong(0)
@@ -61,6 +68,7 @@ class WireGuardTransport(
 
         val out = ByteArray(HEADER_SIZE + sealed.size)
         WireGuardHandshake.writeLe32(out, 0, transportType)
+        WireGuardHandshake.stampReserved(out, 0, reserved)
         WireGuardHandshake.writeLe32(out, 4, peerIndex)
         WireGuardHandshake.writeLe64(out, 8, counter)
         sealed.copyInto(out, HEADER_SIZE)
@@ -79,7 +87,7 @@ class WireGuardTransport(
      */
     fun decapsulate(message: ByteArray): ByteArray? {
         if (message.size < HEADER_SIZE + WireGuardCrypto.TAG_SIZE) return null
-        if (WireGuardHandshake.readLe32(message, 0) != transportType) return null
+        if (!WireGuardHandshake.isType(WireGuardHandshake.readLe32(message, 0), transportType, reserved)) return null
         if (WireGuardHandshake.readLe32(message, 4) != localIndex) return null
 
         val counter = WireGuardHandshake.readLe64(message, 8)
