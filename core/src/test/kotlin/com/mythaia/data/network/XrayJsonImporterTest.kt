@@ -3,6 +3,9 @@ package com.mythaia.data.network
 import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.ProxyError
 import com.mythaia.data.model.TlsFingerprint
+import com.mythaia.vpn.protocol.wireguard.WireGuardConfig
+import com.mythaia.vpn.protocol.wireguard.WireGuardCrypto
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -122,6 +125,111 @@ class XrayJsonImporterTest {
         assertEquals("u", sk.socks5Username)
         assertEquals("p", sk.socks5Password)
         assertEquals(1080, sk.serverPort.toInt())
+    }
+
+    @Test
+    fun `pinned certificates and a verify name map to pcs and vcn`() {
+        val pin = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        val json = """
+        {"outbounds":[
+          {"tag":"a","protocol":"vless","settings":{"vnext":[{"address":"1.2.3.4","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},
+           "streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"serverName":"front.example.com",
+             "pinnedPeerCertSha256":"$pin","verifyPeerCertByName":"real.example.com"}}},
+          {"tag":"b","protocol":"vmess","settings":{"vnext":[{"address":"1.2.3.5","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},
+           "streamSettings":{"network":"ws","security":"tls","tlsSettings":{"serverName":"front.example.com",
+             "pinnedPeerCertSha256":["$pin"]},"wsSettings":{"path":"/w"}}}
+        ]}"""
+        val (vless, vmess) = XrayJsonImporter.parse(json)
+        assertEquals(listOf(pin), vless.tls?.pinnedCertSha256)
+        assertEquals("real.example.com", vless.tls?.verifyName)
+        assertEquals(listOf(pin), vmess.tls?.pinnedCertSha256)
+    }
+
+    @Test
+    fun `a Hysteria2 outbound with servers, a password and bandwidth`() {
+        val json = """
+        {"protocol":"hysteria","tag":"hy","settings":{"version":2,"servers":[{"address":"hy.example.com","port":8443}],"password":"pw"},
+         "streamSettings":{"network":"hysteria","security":"tls",
+           "tlsSettings":{"serverName":"sni.example.com","alpn":["h3"],"allowInsecure":true,"fingerprint":"firefox"},
+           "hysteriaSettings":{"version":2,"up":"50 mbps","down":200}}}"""
+        val c = XrayJsonImporter.parse(json).single()
+        assertEquals(OutboundProtocol.HYSTERIA2, c.outboundProtocol)
+        assertEquals("hy", c.name)
+        assertEquals("hy.example.com", c.serverAddress)
+        assertEquals(8443, c.serverPort.toInt())
+        assertEquals("pw", c.password)
+        assertEquals("sni.example.com", c.tls?.serverName)
+        assertEquals(listOf("h3"), c.tls?.alpn)
+        assertEquals(true, c.tls?.allowInsecure)
+        assertEquals(50, c.hysteriaUpMbps)
+        assertEquals(200, c.hysteriaDownMbps)
+        assertNull(c.obfuscation)
+    }
+
+    @Test
+    fun `Hysteria v1 is refused rather than dialled as v2`() {
+        val json = """{"protocol":"hysteria","settings":{"version":1,"address":"1.2.3.4","port":443},
+            "streamSettings":{"hysteriaSettings":{"version":1,"auth":"x"}}}"""
+        try {
+            XrayJsonImporter.parse(json)
+            fail("expected a refusal")
+        } catch (e: ProxyError.InvalidUrl) {
+            assertTrue(e.message!!.contains("version 1"))
+        }
+    }
+
+    @Test
+    fun `bandwidth reads Hysteria units and bare numbers as Mbps`() {
+        assertEquals(100, XrayJsonImporter.bandwidthMbps("100 mbps"))
+        assertEquals(100, XrayJsonImporter.bandwidthMbps("100Mbps"))
+        assertEquals(1000, XrayJsonImporter.bandwidthMbps("1 gbps"))
+        assertEquals(1, XrayJsonImporter.bandwidthMbps("500 kbps"))
+        assertEquals(30, XrayJsonImporter.bandwidthMbps(30))
+        assertEquals(30, XrayJsonImporter.bandwidthMbps("30"))
+        assertNull(XrayJsonImporter.bandwidthMbps(0))
+        assertNull(XrayJsonImporter.bandwidthMbps("fast"))
+        assertNull(XrayJsonImporter.bandwidthMbps(null))
+    }
+
+    @Test
+    fun `a WireGuard outbound becomes its INI, Reserved included`() {
+        val privateKey = WireGuardCrypto.encodeKey(ByteArray(32) { it.toByte() })
+        val peerKey = WireGuardCrypto.encodeKey(ByteArray(32) { (it * 7).toByte() })
+        val json = """
+        {"outbounds":[{"protocol":"wireguard","tag":"warp",
+          "settings":{"secretKey":"$privateKey","address":["172.16.0.2","2606:4700:110:8a36::2/128"],
+            "peers":[{"publicKey":"$peerKey","endpoint":"engage.cloudflareclient.com:2408","keepAlive":25,
+              "allowedIPs":["0.0.0.0/0","::/0"]}],
+            "mtu":1280,"reserved":[78,135,76]}}]}"""
+        val c = XrayJsonImporter.parse(json).single()
+        assertEquals(OutboundProtocol.WIREGUARD, c.outboundProtocol)
+        assertEquals("warp", c.name)
+        assertEquals("engage.cloudflareclient.com", c.serverAddress)
+        assertEquals(2408, c.serverPort.toInt())
+
+        val ini = WireGuardConfig.parse(c.wireGuardConfig!!)
+        assertArrayEquals(ByteArray(32) { it.toByte() }, ini.privateKey)
+        assertArrayEquals(ByteArray(32) { (it * 7).toByte() }, ini.peer.publicKey)
+        assertEquals(listOf("172.16.0.2/32", "2606:4700:110:8a36::2/128"), ini.addresses)
+        assertEquals(1280, ini.mtu)
+        assertEquals(25, ini.peer.persistentKeepalive)
+        assertArrayEquals(byteArrayOf(78, 135.toByte(), 76), ini.reserved)
+    }
+
+    @Test
+    fun `an HTTPS proxy imports and a server name it cannot carry is refused`() {
+        val ok = """{"protocol":"http","tag":"h","settings":{"servers":[{"address":"proxy.example.com","port":443,
+            "users":[{"user":"u","pass":"p"}]}]},"streamSettings":{"security":"tls","tlsSettings":{"serverName":"proxy.example.com"}}}"""
+        val c = XrayJsonImporter.parse(ok).single()
+        assertEquals("proxy.example.com", c.serverAddress)
+        assertEquals("u", c.naiveUsername)
+
+        try {
+            XrayJsonImporter.parse(ok.replace("\"serverName\":\"proxy.example.com\"", "\"serverName\":\"other.example.com\""))
+            fail("expected a refusal")
+        } catch (e: ProxyError.InvalidUrl) {
+            assertTrue(e.message!!.contains("other.example.com"))
+        }
     }
 
     @Test

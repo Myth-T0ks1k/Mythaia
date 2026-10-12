@@ -159,6 +159,11 @@ data class FragmentSettings(
          * Only the `tcp` fragment mask is read; `udp` (Salamander) and
          * `quicParams` belong to the protocols that use them. Null when there
          * is no fragment mask or it does not parse.
+         *
+         * Panels write the per-piece lists in two spellings: plural arrays
+         * (`"lengths":["3"]`) and a singular value (`"length":"3"`, or a bare
+         * number) that means the same one-entry list. Both are read, since
+         * one provider's JSON subscription uses each in different entries.
          */
         fun fromFinalMask(json: String): FragmentSettings? {
             val root = runCatching { org.json.JSONObject(json) }.getOrNull() ?: return null
@@ -173,8 +178,8 @@ data class FragmentSettings(
         }
 
         private fun fromFinalMaskSettings(settings: org.json.JSONObject): FragmentSettings? {
-            val lengths = rangeTexts(settings.opt("lengths"))
-            val delays = rangeTexts(settings.opt("delays"))
+            val lengths = rangeTexts(settings.opt("lengths") ?: settings.opt("length"))
+            val delays = rangeTexts(settings.opt("delays") ?: settings.opt("delay"))
             if (lengths.isEmpty()) return null
             val first = parseRange(lengths.first()) ?: return null
             val firstDelay = delays.firstOrNull()?.let { parseRange(it) } ?: (0..0)

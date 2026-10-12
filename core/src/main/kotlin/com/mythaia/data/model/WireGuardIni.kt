@@ -83,6 +83,16 @@ internal object WireGuardIni {
         return if (bare.contains(':')) "[$bare]:$port" else "$bare:$port"
     }
 
+    /** `host:port` or `[v6]:port` as host and port; null when there is no usable port. */
+    fun splitEndpoint(text: String): Pair<String, Int>? {
+        val trimmed = text.trim()
+        val colon = if (trimmed.startsWith("[")) trimmed.indexOf("]:").takeIf { it > 0 }?.plus(1) else trimmed.lastIndexOf(':')
+        if (colon == null || colon <= 0) return null
+        val host = trimmed.substring(0, colon).removePrefix("[").removeSuffix("]")
+        val port = trimmed.substring(colon + 1).toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+        return if (host.isEmpty()) null else host to port
+    }
+
     /**
      * Reserved bytes from a JSON value: an array of three numbers (Xray,
      * sing-box) or a string in either form [com.mythaia.vpn.protocol.wireguard.WireGuardConfig.parseReserved]
