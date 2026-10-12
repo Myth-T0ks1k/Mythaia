@@ -328,7 +328,8 @@ fun HomeScreen(
                                 ).joinToString(" ")
                             ),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            // Shown only while connected, on the dark connected gradient.
+                            color = Color.White.copy(alpha = 0.82f),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             modifier = Modifier
                                 .fillMaxWidth()

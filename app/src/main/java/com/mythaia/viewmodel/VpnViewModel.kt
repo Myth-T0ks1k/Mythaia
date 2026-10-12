@@ -448,7 +448,48 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _lastConnectFailed.value = false
     }
 
+    /**
+     * Pings survive a restart for half an hour: the list opens with numbers
+     * instead of blanks, and Auto has a first guess before it measures. Only
+     * successes are kept; a failure from an hour ago says nothing now.
+     */
+    private fun restoreLatencyCache() {
+        val raw = prefs.getString(LATENCY_CACHE_KEY, null) ?: return
+        val now = System.currentTimeMillis()
+        val restored = raw.split(';').mapNotNull { entry ->
+            val parts = entry.split(',')
+            if (parts.size != 3) return@mapNotNull null
+            val id = runCatching { UUID.fromString(parts[0]) }.getOrNull() ?: return@mapNotNull null
+            val ms = parts[1].toIntOrNull() ?: return@mapNotNull null
+            val at = parts[2].toLongOrNull() ?: return@mapNotNull null
+            if (now - at > LATENCY_CACHE_TTL_MS || configRepository.get(id) == null) null
+            else id to (LatencyResult.Success(ms) as LatencyResult)
+        }.toMap()
+        if (restored.isNotEmpty()) _latencyResults.value = restored + _latencyResults.value
+    }
+
+    private fun startLatencyCachePersistence() {
+        viewModelScope.launch {
+            var stamps = HashMap<UUID, Pair<Int, Long>>()
+            _latencyResults.collect { results ->
+                val now = System.currentTimeMillis()
+                val next = HashMap<UUID, Pair<Int, Long>>()
+                for ((id, result) in results) {
+                    if (result !is LatencyResult.Success) continue
+                    val previous = stamps[id]
+                    next[id] = if (previous != null && previous.first == result.ms) previous else result.ms to now
+                }
+                stamps = next
+                prefs.edit {
+                    putString(LATENCY_CACHE_KEY, next.entries.joinToString(";") { (id, v) -> "$id,${v.first},${v.second}" })
+                }
+            }
+        }
+    }
+
     init {
+        restoreLatencyCache()
+        startLatencyCachePersistence()
         com.mythaia.vpn.AutoSelectEngine.uiAlive = true
         MythaiaVpnService.addStateListener(serviceStateListener)
         MythaiaVpnService.addStartFailureListener(serviceFailureListener)
@@ -1695,6 +1736,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private companion object {
+        private const val LATENCY_CACHE_KEY = "latencyCache"
+        private const val LATENCY_CACHE_TTL_MS = 30 * 60_000L
+
         /** One second: fast enough to read as live, slow enough to cost nothing. */
         const val STATS_POLL_MS = 1000L
 
