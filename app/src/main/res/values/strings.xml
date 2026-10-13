@@ -26,6 +26,7 @@
     <string name="disable">Disable</string>
     <string name="disconnected">Disconnected</string>
     <string name="disconnecting">Disconnecting…</string>
+    <string name="power_button">VPN connection</string>
     <string name="edit">Edit</string>
     <string name="edit_configuration">Edit Configuration</string>
     <string name="enable_anyway">Enable Anyway</string>

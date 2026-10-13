@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,16 +108,17 @@ fun ProxyEditorScreen(
 ) {
     // Every field starts from the configuration being edited, so the sheet
     // opens on the right values instead of flashing defaults for a frame.
+    // Saveable, so a rotation or a theme switch mid-edit keeps what was typed.
     val c = configuration
-    var selectedProtocol by remember { mutableStateOf(c?.outboundProtocol ?: initialProtocol ?: OutboundProtocol.VLESS) }
-    var name by remember { mutableStateOf(c?.name ?: "") }
-    var serverAddress by remember { mutableStateOf(c?.serverAddress ?: "") }
-    var serverPort by remember { mutableStateOf(c?.serverPort?.toString() ?: "") }
-    var uuid by remember { mutableStateOf(c?.uuid?.toString() ?: "") }
-    var encryption by remember { mutableStateOf(c?.encryption ?: "none") }
-    var transport by remember { mutableStateOf(c?.transport ?: "tcp") }
-    var flow by remember { mutableStateOf(c?.flow ?: "") }
-    var security by remember {
+    var selectedProtocol by rememberSaveable { mutableStateOf(c?.outboundProtocol ?: initialProtocol ?: OutboundProtocol.VLESS) }
+    var name by rememberSaveable { mutableStateOf(c?.name ?: "") }
+    var serverAddress by rememberSaveable { mutableStateOf(c?.serverAddress ?: "") }
+    var serverPort by rememberSaveable { mutableStateOf(c?.serverPort?.toString() ?: "") }
+    var uuid by rememberSaveable { mutableStateOf(c?.uuid?.toString() ?: "") }
+    var encryption by rememberSaveable { mutableStateOf(c?.encryption ?: "none") }
+    var transport by rememberSaveable { mutableStateOf(c?.transport ?: "tcp") }
+    var flow by rememberSaveable { mutableStateOf(c?.flow ?: "") }
+    var security by rememberSaveable {
         mutableStateOf(
             c?.security ?: when (initialProtocol) {
                 OutboundProtocol.TROJAN, OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC,
@@ -128,34 +130,34 @@ fun ProxyEditorScreen(
         )
     }
 
-    var wsHost by remember { mutableStateOf(c?.websocket?.host ?: "") }
-    var wsPath by remember { mutableStateOf(c?.websocket?.path ?: "/") }
-    var httpUpgradeHost by remember { mutableStateOf(c?.httpUpgrade?.host ?: "") }
-    var httpUpgradePath by remember { mutableStateOf(c?.httpUpgrade?.path ?: "/") }
-    var xhttpHost by remember { mutableStateOf(c?.xhttp?.host ?: "") }
-    var xhttpPath by remember { mutableStateOf(c?.xhttp?.path ?: "/") }
-    var xhttpMode by remember { mutableStateOf(c?.xhttp?.mode?.raw ?: "auto") }
-    var xhttpExtra by remember { mutableStateOf(c?.xhttp?.toExtraJson() ?: "") }
-    var grpcServiceName by remember { mutableStateOf(c?.grpc?.serviceName ?: "") }
-    var grpcAuthority by remember { mutableStateOf(c?.grpc?.authority ?: "") }
-    var grpcMultiMode by remember { mutableStateOf(c?.grpc?.multiMode ?: false) }
-    var grpcUserAgent by remember { mutableStateOf(c?.grpc?.userAgent ?: "") }
+    var wsHost by rememberSaveable { mutableStateOf(c?.websocket?.host ?: "") }
+    var wsPath by rememberSaveable { mutableStateOf(c?.websocket?.path ?: "/") }
+    var httpUpgradeHost by rememberSaveable { mutableStateOf(c?.httpUpgrade?.host ?: "") }
+    var httpUpgradePath by rememberSaveable { mutableStateOf(c?.httpUpgrade?.path ?: "/") }
+    var xhttpHost by rememberSaveable { mutableStateOf(c?.xhttp?.host ?: "") }
+    var xhttpPath by rememberSaveable { mutableStateOf(c?.xhttp?.path ?: "/") }
+    var xhttpMode by rememberSaveable { mutableStateOf(c?.xhttp?.mode?.raw ?: "auto") }
+    var xhttpExtra by rememberSaveable { mutableStateOf(c?.xhttp?.toExtraJson() ?: "") }
+    var grpcServiceName by rememberSaveable { mutableStateOf(c?.grpc?.serviceName ?: "") }
+    var grpcAuthority by rememberSaveable { mutableStateOf(c?.grpc?.authority ?: "") }
+    var grpcMultiMode by rememberSaveable { mutableStateOf(c?.grpc?.multiMode ?: false) }
+    var grpcUserAgent by rememberSaveable { mutableStateOf(c?.grpc?.userAgent ?: "") }
 
     // Trojan keeps its TLS under trojanTls; the shared fields read whichever is set.
     val existingTls = c?.trojanTls ?: c?.tls
-    var tlsSNI by remember { mutableStateOf(existingTls?.serverName ?: "") }
-    var tlsALPN by remember { mutableStateOf(existingTls?.alpn?.joinToString(",") ?: "") }
-    var tlsAllowInsecure by remember { mutableStateOf(existingTls?.allowInsecure ?: false) }
-    var tlsMinVersion by remember { mutableStateOf<TlsVersion?>(existingTls?.minVersion) }
-    var tlsMaxVersion by remember { mutableStateOf<TlsVersion?>(existingTls?.maxVersion) }
+    var tlsSNI by rememberSaveable { mutableStateOf(existingTls?.serverName ?: "") }
+    var tlsALPN by rememberSaveable { mutableStateOf(existingTls?.alpn?.joinToString(",") ?: "") }
+    var tlsAllowInsecure by rememberSaveable { mutableStateOf(existingTls?.allowInsecure ?: false) }
+    var tlsMinVersion by rememberSaveable { mutableStateOf<TlsVersion?>(existingTls?.minVersion) }
+    var tlsMaxVersion by rememberSaveable { mutableStateOf<TlsVersion?>(existingTls?.maxVersion) }
     // Xray 26's replacements for allowInsecure, and ECH.
-    var tlsPins by remember { mutableStateOf(existingTls?.pinnedCertSha256?.joinToString(", ") ?: "") }
-    var tlsVerifyName by remember { mutableStateOf(existingTls?.verifyName ?: "") }
-    var tlsEch by remember { mutableStateOf(existingTls?.echConfig ?: "") }
+    var tlsPins by rememberSaveable { mutableStateOf(existingTls?.pinnedCertSha256?.joinToString(", ") ?: "") }
+    var tlsVerifyName by rememberSaveable { mutableStateOf(existingTls?.verifyName ?: "") }
+    var tlsEch by rememberSaveable { mutableStateOf(existingTls?.echConfig ?: "") }
 
     // Per-server ClientHello fragmentation: follow the global setting, off, or its own.
     val existingFragment = existingTls?.fragment
-    var fragmentMode by remember {
+    var fragmentMode by rememberSaveable {
         mutableStateOf(
             when {
                 existingFragment == null -> "default"
@@ -164,64 +166,64 @@ fun ProxyEditorScreen(
             }
         )
     }
-    var fragmentLengths by remember {
+    var fragmentLengths by rememberSaveable {
         mutableStateOf(
             existingFragment?.takeIf { it.isEnabled }?.let { f ->
                 f.lengthSteps.ifEmpty { listOf(rangeText(f.lengthRange)) }.joinToString(", ")
             } ?: "3"
         )
     }
-    var fragmentDelays by remember {
+    var fragmentDelays by rememberSaveable {
         mutableStateOf(
             existingFragment?.takeIf { it.isEnabled }?.let { f ->
                 f.delaySteps.ifEmpty { listOf(rangeText(f.intervalRange)) }.joinToString(", ")
             } ?: "1"
         )
     }
-    var fragmentMaxSplit by remember {
+    var fragmentMaxSplit by rememberSaveable {
         mutableStateOf(existingFragment?.takeIf { it.isEnabled }?.maxSplit?.toString() ?: "2")
     }
 
-    var muxEnabled by remember { mutableStateOf(c?.muxEnabled ?: true) }
-    var xudpEnabled by remember { mutableStateOf(c?.xudpEnabled ?: true) }
+    var muxEnabled by rememberSaveable { mutableStateOf(c?.muxEnabled ?: true) }
+    var xudpEnabled by rememberSaveable { mutableStateOf(c?.xudpEnabled ?: true) }
 
-    var sni by remember { mutableStateOf(c?.reality?.serverName ?: "") }
-    var publicKey by remember { mutableStateOf(c?.reality?.publicKey?.toBase64Url() ?: "") }
-    var shortId by remember { mutableStateOf(c?.reality?.shortId?.toHex() ?: "") }
-    var fingerprint by remember {
+    var sni by rememberSaveable { mutableStateOf(c?.reality?.serverName ?: "") }
+    var publicKey by rememberSaveable { mutableStateOf(c?.reality?.publicKey?.toBase64Url() ?: "") }
+    var shortId by rememberSaveable { mutableStateOf(c?.reality?.shortId?.toHex() ?: "") }
+    var fingerprint by rememberSaveable {
         mutableStateOf(c?.reality?.fingerprint ?: existingTls?.fingerprint ?: TlsFingerprint.CHROME_133)
     }
 
-    var ssPassword by remember { mutableStateOf(c?.ssPassword ?: "") }
-    var ssMethod by remember { mutableStateOf(c?.ssMethod ?: "aes-128-gcm") }
-    var naiveUsername by remember { mutableStateOf(c?.naiveUsername ?: "") }
-    var naivePassword by remember { mutableStateOf(c?.naivePassword ?: "") }
-    var socks5Username by remember { mutableStateOf(c?.socks5Username ?: "") }
-    var socks5Password by remember { mutableStateOf(c?.socks5Password ?: "") }
-    var trojanPassword by remember { mutableStateOf(c?.trojanPassword ?: "") }
+    var ssPassword by rememberSaveable { mutableStateOf(c?.ssPassword ?: "") }
+    var ssMethod by rememberSaveable { mutableStateOf(c?.ssMethod ?: "aes-128-gcm") }
+    var naiveUsername by rememberSaveable { mutableStateOf(c?.naiveUsername ?: "") }
+    var naivePassword by rememberSaveable { mutableStateOf(c?.naivePassword ?: "") }
+    var socks5Username by rememberSaveable { mutableStateOf(c?.socks5Username ?: "") }
+    var socks5Password by rememberSaveable { mutableStateOf(c?.socks5Password ?: "") }
+    var trojanPassword by rememberSaveable { mutableStateOf(c?.trojanPassword ?: "") }
 
     // Hysteria2, AnyTLS, Nowhere and TUIC authenticate with one password (a
     // key, for Nowhere); TUIC pairs it with a UUID.
-    var password by remember { mutableStateOf(c?.password ?: "") }
-    var vmessSecurity by remember { mutableStateOf(c?.vmessSecurity ?: "auto") }
-    var hyUp by remember { mutableStateOf(c?.hysteriaUpMbps?.toString() ?: "") }
-    var hyDown by remember { mutableStateOf(c?.hysteriaDownMbps?.toString() ?: "") }
-    var obfs by remember { mutableStateOf(c?.obfuscation ?: "none") }
-    var obfsPassword by remember { mutableStateOf(c?.obfuscationPassword ?: "") }
-    var nowhereUp by remember { mutableStateOf(c?.nowhereUplink ?: "udp") }
-    var nowhereDown by remember { mutableStateOf(c?.nowhereDownlink ?: "udp") }
-    var nowhereMux by remember { mutableStateOf(c?.nowhereMultiplex ?: false) }
+    var password by rememberSaveable { mutableStateOf(c?.password ?: "") }
+    var vmessSecurity by rememberSaveable { mutableStateOf(c?.vmessSecurity ?: "auto") }
+    var hyUp by rememberSaveable { mutableStateOf(c?.hysteriaUpMbps?.toString() ?: "") }
+    var hyDown by rememberSaveable { mutableStateOf(c?.hysteriaDownMbps?.toString() ?: "") }
+    var obfs by rememberSaveable { mutableStateOf(c?.obfuscation ?: "none") }
+    var obfsPassword by rememberSaveable { mutableStateOf(c?.obfuscationPassword ?: "") }
+    var nowhereUp by rememberSaveable { mutableStateOf(c?.nowhereUplink ?: "udp") }
+    var nowhereDown by rememberSaveable { mutableStateOf(c?.nowhereDownlink ?: "udp") }
+    var nowhereMux by rememberSaveable { mutableStateOf(c?.nowhereMultiplex ?: false) }
 
-    var sudokuKey by remember { mutableStateOf(c?.sudokuKey ?: "") }
-    var sudokuAead by remember { mutableStateOf(c?.sudokuAeadMethod ?: SudokuAeadMethod.CHACHA20_POLY1305.id) }
-    var sudokuAscii by remember { mutableStateOf(c?.sudokuAsciiMode ?: SudokuAsciiMode.PREFER_ENTROPY.id) }
-    var sudokuPure by remember { mutableStateOf(c?.sudokuEnablePureDownlink ?: true) }
-    var sudokuMux by remember { mutableStateOf(c?.sudokuMultiplex ?: SudokuMultiplex.OFF.id) }
-    var sudokuMaskDisable by remember { mutableStateOf(c?.sudokuHttpMaskDisable ?: false) }
-    var sudokuMaskMode by remember { mutableStateOf(c?.sudokuHttpMaskMode ?: SudokuHttpMaskMode.LEGACY.id) }
-    var sudokuMaskTls by remember { mutableStateOf(c?.sudokuHttpMaskTls ?: false) }
-    var sudokuMaskHost by remember { mutableStateOf(c?.sudokuHttpMaskHost ?: "") }
-    var sudokuMaskPath by remember { mutableStateOf(c?.sudokuHttpMaskPathRoot ?: "") }
+    var sudokuKey by rememberSaveable { mutableStateOf(c?.sudokuKey ?: "") }
+    var sudokuAead by rememberSaveable { mutableStateOf(c?.sudokuAeadMethod ?: SudokuAeadMethod.CHACHA20_POLY1305.id) }
+    var sudokuAscii by rememberSaveable { mutableStateOf(c?.sudokuAsciiMode ?: SudokuAsciiMode.PREFER_ENTROPY.id) }
+    var sudokuPure by rememberSaveable { mutableStateOf(c?.sudokuEnablePureDownlink ?: true) }
+    var sudokuMux by rememberSaveable { mutableStateOf(c?.sudokuMultiplex ?: SudokuMultiplex.OFF.id) }
+    var sudokuMaskDisable by rememberSaveable { mutableStateOf(c?.sudokuHttpMaskDisable ?: false) }
+    var sudokuMaskMode by rememberSaveable { mutableStateOf(c?.sudokuHttpMaskMode ?: SudokuHttpMaskMode.LEGACY.id) }
+    var sudokuMaskTls by rememberSaveable { mutableStateOf(c?.sudokuHttpMaskTls ?: false) }
+    var sudokuMaskHost by rememberSaveable { mutableStateOf(c?.sudokuHttpMaskHost ?: "") }
+    var sudokuMaskPath by rememberSaveable { mutableStateOf(c?.sudokuHttpMaskPathRoot ?: "") }
 
     val isShadowsocks = selectedProtocol == OutboundProtocol.SHADOWSOCKS
     val isSocks5 = selectedProtocol == OutboundProtocol.SOCKS5

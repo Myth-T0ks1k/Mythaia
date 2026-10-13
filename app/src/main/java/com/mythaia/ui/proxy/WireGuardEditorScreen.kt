@@ -29,7 +29,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,12 @@ import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.WireGuardForm
 import com.mythaia.ui.components.wingTextFieldColors
 import com.mythaia.vpn.protocol.wireguard.WireGuardConfig
+
+/** The INI is the form's own storage shape, so it is also how the form survives a rotation. */
+private val WireGuardFormSaver = Saver<WireGuardForm, String>(
+    save = { it.toIni() },
+    restore = { WireGuardForm.fromIni(it) }
+)
 
 /**
  * The editor for a WireGuard or AmneziaWG profile: a form with a field for
@@ -63,8 +70,9 @@ fun WireGuardEditorScreen(
     /** For a new profile: open with the AmneziaWG section shown and filled with typical values. */
     amnezia: Boolean = false
 ) {
-    var name by remember { mutableStateOf(configuration?.name.orEmpty()) }
-    var form by remember {
+    // Saveable, so a rotation or a theme switch mid-edit keeps what was typed.
+    var name by rememberSaveable { mutableStateOf(configuration?.name.orEmpty()) }
+    var form by rememberSaveable(stateSaver = WireGuardFormSaver) {
         mutableStateOf(
             configuration?.wireGuardConfig?.let(WireGuardForm::fromIni)
                 ?: WireGuardForm.blank().let {
@@ -73,10 +81,10 @@ fun WireGuardEditorScreen(
                 }
         )
     }
-    var textMode by remember { mutableStateOf(false) }
-    var text by remember { mutableStateOf("") }
-    var showAmnezia by remember { mutableStateOf(amnezia || form.isAmnezia) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var textMode by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable { mutableStateOf("") }
+    var showAmnezia by rememberSaveable { mutableStateOf(amnezia || form.isAmnezia) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun currentIni(): String = if (textMode) text else form.toIni()
 

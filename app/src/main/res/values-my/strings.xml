@@ -21,6 +21,7 @@
     <string name="disable">ပိတ်ရန်</string>
     <string name="disconnected">ချိတ်ဆက်မှုပြတ်ပြီး</string>
     <string name="disconnecting">ချိတ်ဆက်မှုဖြတ်နေသည်…</string>
+    <string name="power_button">VPN ချိတ်ဆက်မှု</string>
     <string name="edit">တည်းဖြတ်</string>
     <string name="edit_configuration">ဖွဲ့စည်းမှုတည်းဖြတ်</string>
     <string name="enable_anyway">ဘယ်လိုပဲဖြစ်ဖြစ် ဖွင့်ရန်</string>

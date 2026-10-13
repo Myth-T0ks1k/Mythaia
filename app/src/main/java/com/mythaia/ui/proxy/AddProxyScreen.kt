@@ -38,10 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,12 +58,9 @@ import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.network.SubscriptionDomainHelper
-import com.mythaia.data.network.SubscriptionFetcher
 import com.mythaia.ui.components.WingMark
 import com.mythaia.ui.components.wingTextFieldColors
 import com.mythaia.viewmodel.VpnViewModel
-import kotlinx.coroutines.launch
-import java.net.URL
 
 private enum class ImportMethod(val titleResId: Int, val icon: ImageVector) {
     QR_CODE(R.string.qr_code, Icons.Default.QrCodeScanner),
@@ -86,12 +84,12 @@ fun AddProxyScreen(
     initialLink: String? = null
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     // When opened via a deep link, start directly on the Link method with the URL pre-filled.
-    var selectedMethod by remember { mutableStateOf<ImportMethod?>(if (initialLink != null) ImportMethod.LINK else null) }
-    var linkURL by remember { mutableStateOf(initialLink ?: "") }
-    var linkType by remember { mutableStateOf(LinkType.SUBSCRIPTION) }
+    // Saveable, so a rotation or a theme switch keeps what was pasted.
+    var selectedMethod by rememberSaveable { mutableStateOf<ImportMethod?>(if (initialLink != null) ImportMethod.LINK else null) }
+    var linkURL by rememberSaveable { mutableStateOf(initialLink ?: "") }
+    var linkType by rememberSaveable { mutableStateOf(LinkType.SUBSCRIPTION) }
 
     // A deep link that arrives while the sheet is already open replaces
     // whatever was typed; without this it was silently dropped.
@@ -101,10 +99,11 @@ fun AddProxyScreen(
             selectedMethod = ImportMethod.LINK
         }
     }
-    var isLoading by remember { mutableStateOf(false) }
-    var showLinkError by remember { mutableStateOf(false) }
-    var linkErrorMessage by remember { mutableStateOf("") }
-    var showQrScanner by remember { mutableStateOf(false) }
+    // The download runs in the view model, so its spinner is read from there.
+    val isLoading by viewModel.subscriptionImporting.collectAsState()
+    var showLinkError by rememberSaveable { mutableStateOf(false) }
+    var linkErrorMessage by rememberSaveable { mutableStateOf("") }
+    var showQrScanner by rememberSaveable { mutableStateOf(false) }
 
     // A TV has no camera, so offering to scan a QR code there would open a
     // screen that can only fail. Checked by feature rather than by form factor:
@@ -114,14 +113,17 @@ fun AddProxyScreen(
             .hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
         if (hasCamera) ImportMethod.entries else ImportMethod.entries.filter { it != ImportMethod.QR_CODE }
     }
-    var showRemnawaveHWIDAlert by remember { mutableStateOf(false) }
-    var pendingSubscriptionURL by remember { mutableStateOf("") }
+    var showRemnawaveHWIDAlert by rememberSaveable { mutableStateOf(false) }
+    var pendingSubscriptionURL by rememberSaveable { mutableStateOf("") }
+    // Proxy links from a pasted list, held while the HWID prompt for its
+    // subscription is up: importing one closes the sheet, prompt and all.
+    var heldProxyLinks by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
 
     // Fronting for the subscription download: shown only for an http(s)
     // link imported as a subscription, folded away until wanted.
-    var frontingExpanded by remember { mutableStateOf(false) }
-    var frontSni by remember { mutableStateOf("") }
-    var frontTargetsText by remember { mutableStateOf("") }
+    var frontingExpanded by rememberSaveable { mutableStateOf(false) }
+    var frontSni by rememberSaveable { mutableStateOf("") }
+    var frontTargetsText by rememberSaveable { mutableStateOf("") }
     fun frontTargets(): List<String> =
         frontTargetsText.split('\n', ',', ';').map { it.trim() }.filter { it.isNotEmpty() }
 
@@ -151,41 +153,32 @@ fun AddProxyScreen(
         }
     }
 
+    // In the view model's scope, not this sheet's: the host closes the sheet
+    // on the first proxy of a pasted list, and a download launched here was
+    // cancelled with it — and the subscription silently never added.
     fun fetchSubscription(url: String, withRemnawaveHWID: Boolean) {
-        isLoading = true
-        scope.launch {
-            try {
-                val hwid = if (withRemnawaveHWID) viewModel.deviceIdentifier else null
-                val sni = frontSni.trim().takeIf { it.isNotEmpty() }
-                val targets = frontTargets()
-                val result = SubscriptionFetcher.fetch(
-                    url, remnawaveHWID = hwid, frontSni = sni, frontTargets = targets
-                )
-                val name = result.name
-                    ?: runCatching { URL(url).host }.getOrNull()
-                    ?: context.getString(R.string.subscription)
-                val subscription = Subscription(
-                    name = name,
-                    url = url,
-                    lastUpdate = System.currentTimeMillis(),
-                    upload = result.upload,
-                    download = result.download,
-                    total = result.total,
-                    expire = result.expire,
-                    frontSni = sni,
-                    frontTargets = targets,
-                    announce = result.panel.announce,
-                    supportUrl = result.panel.supportUrl,
-                    webPageUrl = result.panel.webPageUrl,
-                    updateIntervalHours = result.panel.updateIntervalHours
-                )
-                onSubscriptionImport(result.configurations, subscription)
-            } catch (e: Exception) {
-                linkErrorMessage = e.message ?: context.getString(R.string.import_failed)
+        viewModel.importSubscription(
+            url = url,
+            withRemnawaveHWID = withRemnawaveHWID,
+            frontSni = frontSni.trim().takeIf { it.isNotEmpty() },
+            frontTargets = frontTargets(),
+            onImported = onSubscriptionImport,
+            onFailed = { message ->
+                linkErrorMessage = message
                 showLinkError = true
             }
-            isLoading = false
+        )
+    }
+
+    /** Adds every link that parses; returns how many did not. */
+    fun importProxyLinks(links: List<String>): Int {
+        var failures = 0
+        links.forEach { link ->
+            runCatching { ProxyConfiguration.fromUrl(link) }
+                .onSuccess { onImport(it) }
+                .onFailure { failures++ }
         }
+        return failures
     }
 
     fun importFromString(string: String, fromQr: Boolean) {
@@ -220,16 +213,18 @@ fun AddProxyScreen(
         val extracted = com.mythaia.data.network.LinkExtractor.extract(trimmed)
         if (extracted.size > 1) {
             val proxies = extracted.filter { !it.startsWith("http://") && !it.startsWith("https://") }
-            var failures = 0
-            proxies.forEach { link ->
-                runCatching { ProxyConfiguration.fromUrl(link) }
-                    .onSuccess { onImport(it) }
-                    .onFailure { failures++ }
-            }
             val subscription = extracted.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
-            if (subscription != null) {
-                importFromString(subscription, fromQr)
-            } else if (failures > 0 && failures == proxies.size) {
+            // The subscription first: its download outlives the sheet, which
+            // the host closes on the first proxy link added below.
+            if (subscription != null) importFromString(subscription, fromQr)
+            if (showRemnawaveHWIDAlert) {
+                // The prompt for it would close with the sheet: the proxies
+                // wait for the answer.
+                heldProxyLinks = proxies
+                return
+            }
+            val failures = importProxyLinks(proxies)
+            if (subscription == null && failures > 0 && failures == proxies.size) {
                 linkErrorMessage = context.getString(R.string.invalid_url)
                 showLinkError = true
             }
@@ -534,8 +529,15 @@ fun AddProxyScreen(
     // Remnawave HWID opt-in prompt for subscription URLs that require a
     // device-bound `x-hwid` header.
     if (showRemnawaveHWIDAlert) {
+        // Either answer lets the proxy links held back for the prompt in.
+        fun dismissAndFlush() {
+            showRemnawaveHWIDAlert = false
+            val held = heldProxyLinks
+            heldProxyLinks = emptyList()
+            importProxyLinks(held)
+        }
         AlertDialog(
-            onDismissRequest = { showRemnawaveHWIDAlert = false },
+            onDismissRequest = { dismissAndFlush() },
             shape = RoundedCornerShape(28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
@@ -544,17 +546,17 @@ fun AddProxyScreen(
             text = { Text(stringResource(R.string.remnawave_hwid_prompt)) },
             confirmButton = {
                 TextButton(onClick = {
-                    showRemnawaveHWIDAlert = false
                     // The dialog is presented as enabling the setting — persist it
                     // so the user isn't re-prompted and later updates send the HWID.
                     viewModel.remnawaveHWIDEnabled = true
                     fetchSubscription(pendingSubscriptionURL, withRemnawaveHWID = true)
+                    dismissAndFlush()
                 }) {
                     Text(stringResource(R.string.enable))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showRemnawaveHWIDAlert = false }) {
+                TextButton(onClick = { dismissAndFlush() }) {
                     Text(stringResource(R.string.cancel))
                 }
             }

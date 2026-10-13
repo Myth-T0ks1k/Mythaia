@@ -13,7 +13,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import com.mythaia.R
 import com.mythaia.ui.theme.Azure
 import com.mythaia.ui.theme.Bone
 
@@ -30,6 +37,8 @@ fun PowerButton(
     isConnected: Boolean,
     isTransitioning: Boolean,
     enabled: Boolean,
+    /** What the tunnel is doing, in words, for a screen reader. */
+    statusText: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -48,6 +57,7 @@ fun PowerButton(
         animationSpec = tween(600),
         label = "powerBorder"
     )
+    val label = stringResource(R.string.power_button)
 
     Box(
         contentAlignment = Alignment.Center,
@@ -58,7 +68,14 @@ fun PowerButton(
             color = containerColor,
             border = BorderStroke(1.dp, borderColor),
             modifier = Modifier
-                .size(140.dp),
+                .size(140.dp)
+                // The state is told by colour alone, so without this
+                // TalkBack announced nothing but "Button".
+                .semantics {
+                    contentDescription = label
+                    stateDescription = statusText
+                    role = Role.Switch
+                },
             onClick = onClick,
             enabled = enabled
         ) {

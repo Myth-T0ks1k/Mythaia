@@ -60,8 +60,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        handleDeepLinkIntent(intent)
-        handleConnectIntent(intent)
+        // Only on a fresh launch. After process death Android hands onCreate
+        // the original intent again, mutation and all, and replaying it
+        // would connect unasked or reopen the Add sheet.
+        if (savedInstanceState == null) {
+            handleDeepLinkIntent(intent)
+            handleConnectIntent(intent)
+        }
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsState()

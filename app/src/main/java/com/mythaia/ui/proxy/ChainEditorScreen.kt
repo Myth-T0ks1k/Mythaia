@@ -37,7 +37,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -67,18 +70,24 @@ fun ChainEditorScreen(
     onDismiss: () -> Unit
 ) {
     val isEditing = chain != null
-    var name by remember { mutableStateOf(chain?.name ?: "") }
+    // Saveable, so a rotation or a theme switch mid-edit keeps the draft.
+    var name by rememberSaveable { mutableStateOf(chain?.name ?: "") }
     // Drop ids whose configuration no longer exists (e.g. an "invalid chain"
     // opened for editing) so row indices always match this list — otherwise
     // remove/move would operate on the wrong (invisible) entries.
-    val selectedProxyIds = remember {
+    val selectedProxyIds = rememberSaveable(
+        saver = listSaver<SnapshotStateList<UUID>, String>(
+            save = { ids -> ids.map { it.toString() } },
+            restore = { saved -> mutableStateListOf<UUID>().apply { addAll(saved.map(UUID::fromString)) } }
+        )
+    ) {
         mutableStateListOf<UUID>().apply {
             chain?.proxyIds
                 ?.filter { id -> configurations.any { it.id == id } }
                 ?.let { addAll(it) }
         }
     }
-    var showingProxyPicker by remember { mutableStateOf(false) }
+    var showingProxyPicker by rememberSaveable { mutableStateOf(false) }
 
     val selectedProxies = remember(selectedProxyIds.toList(), configurations) {
         selectedProxyIds.mapNotNull { id -> configurations.find { it.id == id } }

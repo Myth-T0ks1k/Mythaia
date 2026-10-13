@@ -78,9 +78,13 @@ fun ChainListScreen(viewModel: VpnViewModel, embedded: Boolean = false) {
     val chainLatencyResults by viewModel.chainLatencyResults.collectAsState()
 
     var showingAddSheet by rememberSaveable { mutableStateOf(false) }
-    var showingNotEnoughProxiesAlert by remember { mutableStateOf(false) }
-    var chainToEdit by remember { mutableStateOf<ProxyChain?>(null) }
-    var chainToDelete by remember { mutableStateOf<ProxyChain?>(null) }
+    var showingNotEnoughProxiesAlert by rememberSaveable { mutableStateOf(false) }
+    // Ids rather than the chains: they survive a rotation, and the chain
+    // they name is looked up fresh, so a sheet open mid-edit stays open.
+    var chainToEditId by rememberSaveable { mutableStateOf<String?>(null) }
+    var chainToDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    val chainToEdit = chainToEditId?.let { id -> chains.firstOrNull { it.id.toString() == id } }
+    val chainToDelete = chainToDeleteId?.let { id -> chains.firstOrNull { it.id.toString() == id } }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -189,8 +193,8 @@ fun ChainListScreen(viewModel: VpnViewModel, embedded: Boolean = false) {
                         isSelected = selectedChainId == chain.id,
                         latency = chainLatencyResults[chain.id],
                         onSelect = { viewModel.selectChain(chain) },
-                        onEdit = { chainToEdit = chain },
-                        onDelete = { chainToDelete = chain },
+                        onEdit = { chainToEditId = chain.id.toString() },
+                        onDelete = { chainToDeleteId = chain.id.toString() },
                         onTestLatency = { viewModel.testChainLatency(chain) }
                     )
                 }
@@ -220,7 +224,7 @@ fun ChainListScreen(viewModel: VpnViewModel, embedded: Boolean = false) {
 
     chainToEdit?.let { chain ->
         ModalBottomSheet(
-            onDismissRequest = { chainToEdit = null },
+            onDismissRequest = { chainToEditId = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             shape = SheetShape,
             containerColor = MaterialTheme.colorScheme.surface
@@ -231,27 +235,27 @@ fun ChainListScreen(viewModel: VpnViewModel, embedded: Boolean = false) {
                 subscriptions = subscriptions,
                 onSave = { updated ->
                     viewModel.updateChain(updated)
-                    chainToEdit = null
+                    chainToEditId = null
                 },
-                onDismiss = { chainToEdit = null }
+                onDismiss = { chainToEditId = null }
             )
         }
     }
 
     chainToDelete?.let { chain ->
         AlertDialog(
-            onDismissRequest = { chainToDelete = null },
+            onDismissRequest = { chainToDeleteId = null },
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text(stringResource(R.string.delete)) },
             text = { Text(chain.name) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteChain(chain)
-                    chainToDelete = null
+                    chainToDeleteId = null
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { chainToDelete = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = { chainToDeleteId = null }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }

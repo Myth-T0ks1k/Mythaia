@@ -21,6 +21,7 @@
     <string name="disable">Öçür</string>
     <string name="disconnected">Aýryldy</string>
     <string name="disconnecting">Aýrylýar…</string>
+    <string name="power_button">VPN birikmesi</string>
     <string name="edit">Üýtget</string>
     <string name="edit_configuration">Konfigurasiýany üýtget</string>
     <string name="enable_anyway">Şonda-da aç</string>

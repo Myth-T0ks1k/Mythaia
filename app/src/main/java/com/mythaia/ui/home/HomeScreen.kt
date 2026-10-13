@@ -255,18 +255,6 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            val hasNoConfigurations = configurations.isEmpty() && chains.isEmpty()
-            PowerButton(
-                isConnected = isConnected,
-                isTransitioning = isTransitioning || autoSelecting,
-                enabled = hasNoConfigurations || !viewModel.isButtonDisabled,
-                onClick = {
-                    if (hasNoConfigurations) showingAddSheet = true else viewModel.toggleVPN()
-                }
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
             val statusTextRes = when {
                 autoSelecting && !isConnected -> R.string.measuring
                 noInternet -> R.string.no_connectivity
@@ -278,8 +266,24 @@ fun HomeScreen(
                     VpnStatus.REASSERTING -> R.string.reconnecting
                 }
             }
+            val statusText = stringResource(statusTextRes)
+
+            val hasNoConfigurations = configurations.isEmpty() && chains.isEmpty()
+            // Enabled while connecting too: that tap is the cancel.
+            PowerButton(
+                isConnected = isConnected,
+                isTransitioning = isTransitioning || autoSelecting,
+                enabled = hasNoConfigurations || !viewModel.isButtonDisabled,
+                statusText = statusText,
+                onClick = {
+                    if (hasNoConfigurations) showingAddSheet = true else viewModel.toggleVPN()
+                }
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
             Text(
-                text = stringResource(statusTextRes),
+                text = statusText,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
                 color = when {
                     noInternet -> MaterialTheme.colorScheme.error

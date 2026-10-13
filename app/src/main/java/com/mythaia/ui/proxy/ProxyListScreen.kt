@@ -106,7 +106,6 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ProxyListScreen(viewModel: VpnViewModel) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val configurations by viewModel.configRepository.configurations.collectAsState()
     val subscriptions by viewModel.subscriptionRepository.subscriptions.collectAsState()
@@ -125,12 +124,19 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     var showingAddSheet by rememberSaveable { mutableStateOf(false) }
     var showingManualAddSheet by rememberSaveable { mutableStateOf(false) }
     var deepLinkPrefill by rememberSaveable { mutableStateOf<String?>(null) }
-    var configurationToEdit by remember { mutableStateOf<ProxyConfiguration?>(null) }
-    var configurationToDelete by remember { mutableStateOf<ProxyConfiguration?>(null) }
-    var subscriptionToDelete by remember { mutableStateOf<Subscription?>(null) }
-    var subscriptionToConfigure by remember { mutableStateOf<Subscription?>(null) }
-    var updatingSubscriptionId by remember { mutableStateOf<java.util.UUID?>(null) }
-    var subscriptionErrorMessage by remember { mutableStateOf<String?>(null) }
+    // Ids rather than the objects: they survive a rotation, and what they
+    // name is looked up fresh below, so a sheet open mid-edit stays open.
+    var configurationToEditId by rememberSaveable { mutableStateOf<String?>(null) }
+    var configurationToDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var subscriptionToDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var subscriptionToConfigureId by rememberSaveable { mutableStateOf<String?>(null) }
+    val configurationToEdit = configurationToEditId?.let { id -> configurations.firstOrNull { it.id.toString() == id } }
+    val configurationToDelete = configurationToDeleteId?.let { id -> configurations.firstOrNull { it.id.toString() == id } }
+    val subscriptionToDelete = subscriptionToDeleteId?.let { id -> subscriptions.firstOrNull { it.id.toString() == id } }
+    val subscriptionToConfigure = subscriptionToConfigureId?.let { id -> subscriptions.firstOrNull { it.id.toString() == id } }
+    // The refresh lives in the view model, where a tab switch cannot cancel it.
+    val updatingSubscriptionId by viewModel.updatingSubscriptionId.collectAsState()
+    val subscriptionErrorMessage by viewModel.subscriptionUpdateError.collectAsState()
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var sortByLatency by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -260,27 +266,18 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                                         enabled = updatingSubscriptionId == null,
                                         onClick = {
                                             menuOpen = false
-                                            updatingSubscriptionId = subscription.id
-                                            scope.launch {
-                                                try {
-                                                    viewModel.updateSubscription(subscription)
-                                                } catch (e: Exception) {
-                                                    subscriptionErrorMessage =
-                                                        e.message ?: context.getString(R.string.unknown_error)
-                                                }
-                                                updatingSubscriptionId = null
-                                            }
+                                            viewModel.refreshSubscription(subscription)
                                         }
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.group_settings)) },
                                         leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null) },
-                                        onClick = { menuOpen = false; subscriptionToConfigure = subscription }
+                                        onClick = { menuOpen = false; subscriptionToConfigureId = subscription.id.toString() }
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
                                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                                        onClick = { menuOpen = false; subscriptionToDelete = subscription }
+                                        onClick = { menuOpen = false; subscriptionToDeleteId = subscription.id.toString() }
                                     )
                                 }
                             }
@@ -472,8 +469,8 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                     latency = latencyResults[config.id],
                     editingDisabled = editingDisabled,
                     onSelect = { viewModel.pinConfiguration(config) },
-                    onEdit = { configurationToEdit = config },
-                    onDelete = { configurationToDelete = config },
+                    onEdit = { configurationToEditId = config.id.toString() },
+                    onDelete = { configurationToDeleteId = config.id.toString() },
                     onTestLatency = { viewModel.testLatency(forConfig = config) }
                 )
             }
@@ -532,7 +529,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
 
     configurationToEdit?.let { config ->
         ModalBottomSheet(
-            onDismissRequest = { configurationToEdit = null },
+            onDismissRequest = { configurationToEditId = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.background
@@ -540,14 +537,14 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             if (config.outboundProtocol == OutboundProtocol.WIREGUARD) {
                 WireGuardEditorScreen(
                     configuration = config,
-                    onSave = { updated -> viewModel.updateConfiguration(updated); configurationToEdit = null },
-                    onDismiss = { configurationToEdit = null }
+                    onSave = { updated -> viewModel.updateConfiguration(updated); configurationToEditId = null },
+                    onDismiss = { configurationToEditId = null }
                 )
             } else {
                 ProxyEditorScreen(
                     configuration = config,
-                    onSave = { updated -> viewModel.updateConfiguration(updated); configurationToEdit = null },
-                    onDismiss = { configurationToEdit = null }
+                    onSave = { updated -> viewModel.updateConfiguration(updated); configurationToEditId = null },
+                    onDismiss = { configurationToEditId = null }
                 )
             }
         }
@@ -556,10 +553,10 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     subscriptionToConfigure?.let { sub ->
         SubscriptionSettingsDialog(
             subscription = sub,
-            onDismiss = { subscriptionToConfigure = null },
+            onDismiss = { subscriptionToConfigureId = null },
             onSave = { name, sni, targets ->
                 viewModel.updateSubscriptionSettings(sub, name, sni, targets)
-                subscriptionToConfigure = null
+                subscriptionToConfigureId = null
             }
         )
     }
@@ -569,8 +566,8 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             title = stringResource(R.string.delete_proxy_title),
             text = stringResource(R.string.delete_proxy_message, config.name),
             confirmLabel = stringResource(R.string.delete),
-            onConfirm = { configurationToDelete = null; viewModel.deleteConfiguration(config) },
-            onDismiss = { configurationToDelete = null }
+            onConfirm = { configurationToDeleteId = null; viewModel.deleteConfiguration(config) },
+            onDismiss = { configurationToDeleteId = null }
         )
     }
 
@@ -581,17 +578,17 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             text = stringResource(R.string.delete_subscription_message, sub.name, count),
             confirmLabel = stringResource(R.string.delete),
             onConfirm = {
-                subscriptionToDelete = null
+                subscriptionToDeleteId = null
                 viewModel.deleteSubscription(sub)
                 browsingGroupId = ProxyGroup.DEFAULT_ID
             },
-            onDismiss = { subscriptionToDelete = null }
+            onDismiss = { subscriptionToDeleteId = null }
         )
     }
 
     subscriptionErrorMessage?.let { message ->
         AlertDialog(
-            onDismissRequest = { subscriptionErrorMessage = null },
+            onDismissRequest = { viewModel.clearSubscriptionUpdateError() },
             shape = RoundedCornerShape(28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
@@ -599,7 +596,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             title = { Text(stringResource(R.string.update_failed)) },
             text = { Text(message) },
             confirmButton = {
-                TextButton(onClick = { subscriptionErrorMessage = null }) { Text(stringResource(R.string.ok)) }
+                TextButton(onClick = { viewModel.clearSubscriptionUpdateError() }) { Text(stringResource(R.string.ok)) }
             }
         )
     }

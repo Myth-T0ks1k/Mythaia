@@ -21,6 +21,7 @@
     <string name="disable">تعطيل</string>
     <string name="disconnected">غير متصل</string>
     <string name="disconnecting">جارٍ قطع الاتصال…</string>
+    <string name="power_button">اتصال VPN</string>
     <string name="edit">تعديل</string>
     <string name="edit_configuration">تعديل التكوين</string>
     <string name="enable_anyway">تفعيل على أي حال</string>

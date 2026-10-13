@@ -21,6 +21,7 @@
     <string name="disable">Отключить</string>
     <string name="disconnected">Отключено</string>
     <string name="disconnecting">Отключение…</string>
+    <string name="power_button">VPN-подключение</string>
     <string name="edit">Изменить</string>
     <string name="edit_configuration">Изменить конфигурацию</string>
     <string name="enable_anyway">Всё равно включить</string>

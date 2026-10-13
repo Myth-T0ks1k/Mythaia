@@ -21,6 +21,7 @@
     <string name="disable">禁用</string>
     <string name="disconnected">未连接</string>
     <string name="disconnecting">正在断开…</string>
+    <string name="power_button">VPN 连接</string>
     <string name="edit">编辑</string>
     <string name="edit_configuration">编辑配置</string>
     <string name="enable_anyway">仍然启用</string>

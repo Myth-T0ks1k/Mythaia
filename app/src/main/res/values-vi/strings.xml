@@ -21,6 +21,7 @@
     <string name="disable">Tắt</string>
     <string name="disconnected">Đã ngắt kết nối</string>
     <string name="disconnecting">Đang ngắt kết nối…</string>
+    <string name="power_button">Kết nối VPN</string>
     <string name="edit">Sửa</string>
     <string name="edit_configuration">Sửa cấu hình</string>
     <string name="enable_anyway">Vẫn bật</string>

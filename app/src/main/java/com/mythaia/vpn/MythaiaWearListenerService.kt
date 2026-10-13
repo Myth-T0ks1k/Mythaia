@@ -54,7 +54,8 @@ class MythaiaWearListenerService : WearableListenerService() {
                 Thread({
                     val refusal = TunnelLauncher.startSelected(this)
                     // A clean start is still in progress at this point; the
-                    // state listener pushes "on" once the tunnel is really up.
+                    // state listener pushes "on" once the tunnel is really up,
+                    // and the failure listener "failed" if it never is.
                     if (refusal != null) reply(node, status(refusal = refusal))
                 }, "wear-connect").apply { isDaemon = true }.start()
             }
@@ -83,13 +84,7 @@ class MythaiaWearListenerService : WearableListenerService() {
             MythaiaVpnService.isActive -> STATE_ON
             else -> STATE_OFF
         }
-
-        // The tunnel's own name where it is up, so the watch is not left
-        // showing a selection the running session no longer matches.
-        val name = (MythaiaVpnService.activeServerName ?: TunnelLauncher.selectedName(this))
-            .orEmpty()
-            .replace('|', ' ')
-        return "$state|$name"
+        return statusLine(this, state)
     }
 
     private fun reply(node: String, payload: String) {
@@ -113,18 +108,36 @@ class MythaiaWearListenerService : WearableListenerService() {
                 if (listening) return
                 listening = true
                 MythaiaVpnService.addStateListener {
-                    val target = lastNode ?: return@addStateListener
-                    val state = if (MythaiaVpnService.isActive) STATE_ON else STATE_OFF
-                    val name = (MythaiaVpnService.activeServerName ?: TunnelLauncher.selectedName(context))
-                        .orEmpty().replace('|', ' ')
-                    try {
-                        Wearable.getMessageClient(context)
-                            .sendMessage(target, PATH_STATUS, "$state|$name".toByteArray(StandardCharsets.UTF_8))
-                    } catch (e: Exception) {
-                        logger.warning("[Wear] Could not push status: ${e.message ?: e}")
-                    }
+                    push(context, if (MythaiaVpnService.isActive) STATE_ON else STATE_OFF)
                 }
+                // A start that got past TunnelLauncher and failed before the
+                // tunnel came up (DNS, a refused TUN) never changes the state,
+                // so the listener above stays silent and the watch waited out
+                // its timeout into "No phone".
+                MythaiaVpnService.addStartFailureListener { push(context, STATE_FAILED) }
             }
+        }
+
+        /** Sends [state] to the watch that last spoke to us, if any. */
+        private fun push(context: android.content.Context, state: String) {
+            val target = lastNode ?: return
+            try {
+                Wearable.getMessageClient(context)
+                    .sendMessage(target, PATH_STATUS, statusLine(context, state).toByteArray(StandardCharsets.UTF_8))
+            } catch (e: Exception) {
+                logger.warning("[Wear] Could not push status: ${e.message ?: e}")
+            }
+        }
+
+        /**
+         * [state] with the tunnel's own name where it is up, so the watch is
+         * not left showing a selection the running session no longer matches.
+         */
+        private fun statusLine(context: android.content.Context, state: String): String {
+            val name = (MythaiaVpnService.activeServerName ?: TunnelLauncher.selectedName(context))
+                .orEmpty()
+                .replace('|', ' ')
+            return "$state|$name"
         }
 
         const val PATH_COMMAND = "/mythaia/command"

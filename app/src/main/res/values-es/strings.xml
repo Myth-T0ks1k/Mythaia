@@ -21,6 +21,7 @@
     <string name="disable">Desactivar</string>
     <string name="disconnected">Desconectado</string>
     <string name="disconnecting">Desconectando…</string>
+    <string name="power_button">Conexión VPN</string>
     <string name="edit">Editar</string>
     <string name="edit_configuration">Editar configuración</string>
     <string name="enable_anyway">Activar de todos modos</string>

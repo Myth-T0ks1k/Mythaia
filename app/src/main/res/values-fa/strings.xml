@@ -21,6 +21,7 @@
     <string name="disable">غیرفعال</string>
     <string name="disconnected">قطع شده</string>
     <string name="disconnecting">در حال قطع…</string>
+    <string name="power_button">اتصال VPN</string>
     <string name="edit">ویرایش</string>
     <string name="edit_configuration">ویرایش پیکربندی</string>
     <string name="enable_anyway">فعال‌سازی در هر صورت</string>
