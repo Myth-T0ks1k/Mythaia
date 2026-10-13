@@ -42,6 +42,8 @@ import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun SettingsScreen(state: AppState) {
@@ -182,6 +184,21 @@ fun SettingsScreen(state: AppState) {
                     }) { Text(tr("save")) }
                 }
                 SwitchRow(tr("allow_insecure"), settings.allowInsecure) { v -> state.updateSettings { it.copy(allowInsecure = v) } }
+                // The warning the per-server switch carries, louder: this one
+                // turns the check off for every server at once.
+                Column(modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp)) {
+                    Text(
+                        tr("insecure_caps"),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black, letterSpacing = 1.sp),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        tr("insecure_global_explained"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (settings.allowInsecure) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Section(tr("settings_dns")) {

@@ -74,7 +74,8 @@ class NaiveClient(
             scheme = when (naiveProtocol) {
                 NaiveProtocol.HTTP11 -> NaiveConfiguration.NaiveScheme.HTTP11
                 NaiveProtocol.HTTP2 -> NaiveConfiguration.NaiveScheme.HTTP2
-            }
+            },
+            tls = configuration.tls
         )
 
         val naiveTunnel: NaiveTunnel = when (naiveProtocol) {
@@ -84,7 +85,8 @@ class NaiveClient(
                     port = naiveConfig.proxyPort,
                     sni = naiveConfig.effectiveSNI,
                     alpn = listOf("http/1.1"),
-                    tunnel = tunnel
+                    tunnel = tunnel,
+                    tls = naiveConfig.tls
                 )
                 Http11Tunnel(Http11Connection(transport, naiveConfig, destination))
             }

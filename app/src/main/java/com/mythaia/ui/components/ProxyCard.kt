@@ -112,6 +112,7 @@ fun ProxyCardContent(
                     if (configuration.flow?.contains("vision", ignoreCase = true) == true) {
                         ProtocolPill("Vision")
                     }
+                    if (configuration.skipsCertificateCheck) InsecurePill()
                 }
             }
             Box(modifier = Modifier.padding(end = 14.dp)) {
@@ -119,6 +120,20 @@ fun ProxyCardContent(
             }
         }
     }
+}
+
+/** Red on the row of a server whose certificate is not checked ("allow insecure"). */
+@Composable
+private fun InsecurePill() {
+    Text(
+        text = stringResource(R.string.insecure_caps),
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.onError,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.error)
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    )
 }
 
 /** A tiny label pill for protocol facts. */

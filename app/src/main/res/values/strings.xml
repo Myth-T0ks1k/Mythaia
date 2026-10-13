@@ -172,6 +172,9 @@
 
     <!-- Phase 9: Security -->
     <string name="allow_insecure_warning">This will skip TLS certificate validation, making your connections vulnerable to MITM attacks.</string>
+    <string name="insecure_caps">INSECURE</string>
+    <string name="insecure_explained">The server certificate is not checked. Anyone on the path (your provider, a public Wi-Fi) can pose as the server and read or change your traffic. Turn this on only for your own server with a self-signed certificate. Safer: enter its fingerprint in “Pinned certificate SHA-256 (pcs)”. A pinned certificate is checked even with this switch on.</string>
+    <string name="insecure_global_explained">Applies to every server: no certificate is checked anywhere, except on servers with a pinned certificate (pcs).</string>
     <string name="allow_anyway">Allow Anyway</string>
 
     <!-- Phase 9: Proxy Editor -->

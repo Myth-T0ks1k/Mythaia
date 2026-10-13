@@ -294,7 +294,8 @@ class Http2Session(
                         port = naive.proxyPort,
                         sni = naive.effectiveSNI,
                         alpn = listOf("h2"),
-                        tunnel = tunnel
+                        tunnel = tunnel,
+                        tls = naive.tls
                     ).also {
                         transport = it
                         it.connect()

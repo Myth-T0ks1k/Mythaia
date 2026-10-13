@@ -27,14 +27,19 @@ class NaiveTlsTransport(
     private val port: Int,
     private val sni: String?,
     private val alpn: List<String> = listOf("h2"),
-    private val tunnel: ProxyConnection? = null
+    private val tunnel: ProxyConnection? = null,
+    /** The server's TLS settings (allow insecure, pins); the SNI and ALPN above override theirs. */
+    private val tls: TlsConfiguration? = null
 ) : com.mythaia.vpn.protocol.naive.http2.Http2Wire {
     private var tlsConnection: TlsRecordConnection? = null
     var isReady = false
         private set
 
     suspend fun connect() {
-        val config = TlsConfiguration(
+        // The server's own settings, with the name and ALPN this transport
+        // dials with: ignoring them lost "allow insecure" and the pins, so a
+        // self-signed Naive server could not be used at all.
+        val config = (tls ?: TlsConfiguration(serverName = host)).copy(
             serverName = sni ?: host,
             alpn = alpn
         )

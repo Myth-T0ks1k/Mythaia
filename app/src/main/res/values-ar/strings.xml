@@ -99,6 +99,9 @@
 
     <!-- Phase 9: Security -->
     <string name="allow_insecure_warning">سيؤدي هذا إلى تخطّي التحقق من شهادة TLS، مما يجعل اتصالاتك عرضة لهجمات MITM.</string>
+    <string name="insecure_caps">غير آمن</string>
+    <string name="insecure_explained">لا يتم التحقق من شهادة الخادم. يمكن لأي طرف على المسار (مزوّد الخدمة أو شبكة Wi-Fi عامة) انتحال صفة الخادم وقراءة حركة مرورك أو تغييرها. فعّل هذا الخيار فقط لخادمك الخاص الذي يستخدم شهادة موقّعة ذاتيًا. الأكثر أمانًا: أدخل بصمتها في حقل «SHA-256 للشهادة المثبتة (pcs)». يتم التحقق من الشهادة المثبتة حتى عند تفعيل هذا الخيار.</string>
+    <string name="insecure_global_explained">ينطبق على كل الخوادم: لا يتم التحقق من أي شهادة، باستثناء الخوادم ذات الشهادة المثبتة (pcs).</string>
     <string name="allow_anyway">السماح على أي حال</string>
 
     <!-- Phase 9: Proxy Editor -->

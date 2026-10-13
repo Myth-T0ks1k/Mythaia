@@ -90,6 +90,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.foundation.layout.width
 import com.mythaia.viewmodel.VpnViewModel
 import java.util.Locale
+import androidx.compose.ui.text.font.FontWeight
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -341,11 +342,29 @@ private fun SettingsRoot(
             SettingsGroupCard {
                 SettingsSwitch(
                     icon = Icons.Filled.Warning,
-                    iconTint = MaterialTheme.colorScheme.primary,
+                    iconTint = if (allowInsecure) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                     label = stringResource(R.string.allow_insecure),
                     checked = allowInsecure,
                     onCheckedChange = onAllowInsecureChange
                 )
+                // The same warning the per-server switch carries, louder: this
+                // one turns the check off for every server at once.
+                Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    Text(
+                        text = stringResource(R.string.insecure_caps),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.sp
+                        ),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = stringResource(R.string.insecure_global_explained),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (allowInsecure) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 SettingsRowDivider()
                 SettingsNavRow(
                     icon = Icons.Filled.VerifiedUser,

@@ -855,6 +855,25 @@ data class ProxyConfiguration(
         get() = if (serverAddress.contains(":")) "[$serverAddress]" else serverAddress
 
     /** `host:port` as a user reads it, with an IPv6 literal bracketed. */
+    /**
+     * The TLS this server dials with: Trojan keeps its own, everything else
+     * uses [tls] (VLESS and VMess only when security is "tls").
+     */
+    private val effectiveTls: TlsConfiguration?
+        get() = when (outboundProtocol) {
+            OutboundProtocol.TROJAN -> trojanTls ?: tls
+            OutboundProtocol.VLESS, OutboundProtocol.VMESS -> tls.takeIf { security == "tls" }
+            else -> tls
+        }
+
+    /**
+     * Whether this server's certificate goes unchecked: "allow insecure" on
+     * and no pinned certificate (a pin is checked either way). UNSAFE, which
+     * the server list says on the row.
+     */
+    val skipsCertificateCheck: Boolean
+        get() = effectiveTls?.let { it.allowInsecure && it.pinnedCertSha256.isNullOrEmpty() } ?: false
+
     val displayEndpoint: String
         get() = "$bracketedServerAddress:$serverPort"
 
@@ -1080,6 +1099,10 @@ data class ProxyConfiguration(
         }
         if (tls.serverName != serverAddress) params.add("sni=${urlEncode(tls.serverName)}")
         tls.alpn?.firstOrNull()?.takeIf { it.isNotEmpty() }?.let { params.add("alpn=${urlEncode(it)}") }
+        // Not in the reference exporter, which never skips verification;
+        // other clients ignore what they do not know.
+        if (tls.allowInsecure) params.add("insecure=1")
+        appendPinParams(params, tls)
         val query = "?${params.joinToString("&")}"
         return "nowhere://${urlEncode(password ?: "")}@$bracketedServerAddress:$serverPort" +
             "$query#${urlEncode(name)}"
@@ -1312,9 +1335,16 @@ data class ProxyConfiguration(
         val user = urlEncode(naiveUsername ?: "")
         val pass = urlEncode(naivePassword ?: "")
         val fragment = urlEncode(name)
+        val params = mutableListOf<String>()
         // The bare scheme reads back as HTTP/2, so an HTTPS (HTTP/1.1) proxy
         // has to say so or it changes protocol on the way round.
-        val query = if (outboundProtocol == OutboundProtocol.NAIVE_HTTP11) "?http=1.1" else ""
+        if (outboundProtocol == OutboundProtocol.NAIVE_HTTP11) params.add("http=1.1")
+        tls?.let { tls ->
+            if (tls.serverName != serverAddress) params.add("sni=${urlEncode(tls.serverName)}")
+            if (tls.allowInsecure) params.add("insecure=1")
+            appendPinParams(params, tls)
+        }
+        val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
         return "https://$user:$pass@$bracketedServerAddress:$serverPort$query#$fragment"
     }
 
@@ -1549,7 +1579,10 @@ data class ProxyConfiguration(
             val tls = TlsConfiguration(
                 serverName = sni,
                 alpn = alpn,
-                echConfig = params["ech"]?.takeIf { it.isNotEmpty() }
+                echConfig = params["ech"]?.takeIf { it.isNotEmpty() },
+                allowInsecure = isTruthy(params["insecure"]) || isTruthy(params["allowInsecure"]),
+                pinnedCertSha256 = parsePinnedCerts(params),
+                verifyName = params["vcn"]?.takeIf { it.isNotEmpty() }
             )
 
             return ProxyConfiguration(
@@ -2324,12 +2357,27 @@ data class ProxyConfiguration(
             // other client.
             val proto = protocolOverride
                 ?: if (params["http"] == "1.1") OutboundProtocol.NAIVE_HTTP11 else OutboundProtocol.NAIVE_HTTP2
+            // TLS settings only when the link has any, so a plain link keeps
+            // the defaults it always had.
+            val insecure = isTruthy(params["insecure"]) || isTruthy(params["allowInsecure"])
+            val pins = parsePinnedCerts(params)
+            val verifyName = params["vcn"]?.takeIf { it.isNotEmpty() }
+            val sni = params["sni"]?.takeIf { it.isNotEmpty() }
+            val tls = if (insecure || pins != null || verifyName != null || sni != null) {
+                TlsConfiguration(
+                    serverName = sni ?: host,
+                    allowInsecure = insecure,
+                    pinnedCertSha256 = pins,
+                    verifyName = verifyName
+                )
+            } else null
             return ProxyConfiguration(
                 name = fragmentName ?: "Untitled",
                 serverAddress = host,
                 serverPort = port,
                 uuid = UUID.randomUUID(), // placeholder, not used for naive
                 encryption = "none",
+                tls = tls,
                 outboundProtocol = proto,
                 naiveUsername = username,
                 naivePassword = password,

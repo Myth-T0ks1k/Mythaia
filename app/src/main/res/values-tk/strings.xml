@@ -99,6 +99,9 @@
 
     <!-- Phase 9: Security -->
     <string name="allow_insecure_warning">Bu TLS şahadatnama barlagyny geçer, birikmeleriňizi MITM hüjümlerine garşy ejiz eder.</string>
+    <string name="insecure_caps">HOWPSUZ DÄL</string>
+    <string name="insecure_explained">Serweriň sertifikaty barlanmaýar. Ýoluň ugrundaky islendik biri (prowaýderiňiz, köpçülikleýin Wi-Fi) özüni serwer hökmünde görkezip, trafigiňizi okap ýa-da üýtgedip biler. Muny diňe öz-özüne gol çekilen sertifikatly öz serweriňiz üçin açyň. Has howpsuz: onuň barmak yzyny «Berkidilen sertifikatyň SHA-256-sy (pcs)» meýdançasyna ýazyň. Berkidilen sertifikat bu açar açyk bolanda hem barlanýar.</string>
+    <string name="insecure_global_explained">Ähli serwerler üçin: berkidilen sertifikatly (pcs) serwerlerden başga hiç ýerde sertifikat barlanmaýar.</string>
     <string name="allow_anyway">Şonda-da rugsat ber</string>
 
     <!-- Phase 9: Proxy Editor -->

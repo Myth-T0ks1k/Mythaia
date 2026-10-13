@@ -416,7 +416,11 @@ class QuicTlsHandler(
      * name, the third says the peer actually holds its private key.
      */
     private fun validateCertificate(): Outcome {
-        if (allowInsecure || CertificatePolicy.allowInsecure) return Outcome.OK
+        // "Allow insecure" (UNSAFE) skips the check, unless the server is
+        // pinned: a pin is checked even then, as in TlsClient.
+        if ((allowInsecure || CertificatePolicy.allowInsecure) && pinnedCertSha256.isNullOrEmpty()) {
+            return Outcome.OK
+        }
 
         val chain = try {
             TlsPeerVerifier.parseChain(serverCertificates)

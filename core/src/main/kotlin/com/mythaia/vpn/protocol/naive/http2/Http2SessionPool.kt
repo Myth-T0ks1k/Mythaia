@@ -40,7 +40,10 @@ object Http2SessionPool {
             return session.acquireStream(destination)
         }
 
-        val key = "${config.proxyHost}:${config.proxyPort}:${config.effectiveSNI}"
+        // The TLS settings are part of the key: a server edited to pin its
+        // certificate, or to stop allowing an insecure one, must not reuse a
+        // connection made under the old rules.
+        val key = config.poolKey
 
         // Loop: an existing READY session may race-fill (lose its slot to a
         // concurrent caller) between hasCapacity check and tryReserveStream.

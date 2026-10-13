@@ -143,4 +143,5 @@ curl -x socks5h://127.0.0.1:21080 https://www.speedtest.net/
 ## Особенности Xray 26 для своих серверов
 
 - `allowInsecure` удалён: вместо него `pinnedPeerCertSha256` (в ссылках `pcs=`) и `verifyPeerCertByName` (`vcn=`). Клиент понимает оба.
+- В Mythaia «allow insecure» оставлен у всех протоколов с сертификатом (VLESS/VMess с TLS, Trojan, Hysteria2, TUIC, AnyTLS, Nowhere, Naive), с красной надписью НЕБЕЗОПАСНО в редакторе и меткой на строке сервера. Пин (`pcs=`) проверяется всегда — и при включённом флаге сервера, и при глобальном переключателе; это закреплено тестом `InsecureAndPinTest` (клиент против нашего `TlsServer` в памяти).
 - `freedom` по умолчанию не пускает на приватные и loopback-адреса; для стенда нужен `"settings": {"finalRules": [{"action": "allow"}]}` (`ipsBlocked` тоже удалён).

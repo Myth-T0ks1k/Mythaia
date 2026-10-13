@@ -64,6 +64,11 @@ import com.mythaia.vpn.util.toBase64Url
 import com.mythaia.vpn.util.toHex
 import java.util.UUID
 import com.mythaia.desktop.tr
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 
 // Wing form language: 18dp fields inside soft 24dp panels.
 private val EditorFieldShape = RoundedCornerShape(18.dp)
@@ -238,7 +243,9 @@ fun ServerEditor(
     val tlsMandatory = isTrojan || isHysteria2 || isTuic || isAnyTls || isNowhere
     // Protocols that pick TLS on or off.
     val tlsOptional = isVless || isVmess
-    val showsTls = tlsMandatory || tlsOptional
+    // Naive is always TLS; its section carries the name, "allow insecure"
+    // and the pin, since the scheme fixes the ALPN.
+    val showsTls = tlsMandatory || tlsOptional || isNaive
 
     val fullEditor = selectedProtocol in EditorEDITABLE_PROTOCOLS
 
@@ -345,7 +352,18 @@ fun ServerEditor(
                         }
                         if (isNowhere) {
                             // Nowhere pins neither a fingerprint nor a version.
-                            tlsConfiguration = baseTls.copy(serverName = sniOrAddress, alpn = alpnList)
+                            tlsConfiguration = baseTls.copy(
+                                serverName = sniOrAddress,
+                                alpn = alpnList,
+                                allowInsecure = tlsAllowInsecure
+                            )
+                        }
+                        if (isNaive) {
+                            // The ALPN follows the scheme (h2 or http/1.1), so it is not kept here.
+                            tlsConfiguration = baseTls.copy(
+                                serverName = sniOrAddress,
+                                allowInsecure = tlsAllowInsecure
+                            )
                         }
 
                         val fragmentSetting: FragmentSettings? = when (fragmentMode) {
@@ -818,26 +836,34 @@ fun ServerEditor(
                         )
                     }
 
-                    if (isTLS || tlsMandatory) {
+                    if (isTLS || tlsMandatory || isNaive) {
                         EditorWingField(tlsSNI, { tlsSNI = it }, tr("sni"))
-                        EditorWingField(tlsALPN, { tlsALPN = it }, tr("alpn"), placeholder = "h2,http/1.1")
-                        if (!isNowhere) {
-                            EditorSwitchRow(tr("allow_insecure"), tlsAllowInsecure) { tlsAllowInsecure = it }
+                        if (!isNaive) {
+                            EditorWingField(tlsALPN, { tlsALPN = it }, tr("alpn"), placeholder = "h2,http/1.1")
+                        }
+                        // Every protocol with a certificate to check offers to
+                        // skip the check, as other clients do, with the danger
+                        // spelled out beside the switch.
+                        EditorInsecureSwitch(tlsAllowInsecure) { tlsAllowInsecure = it }
+                        // Nowhere and Naive pin neither a fingerprint nor ECH.
+                        if (!isNowhere && !isNaive) {
                             EditorFingerprintDropdown(selected = fingerprint, onSelect = { fingerprint = it })
-                            OutlinedTextField(
-                                value = tlsPins,
-                                onValueChange = { tlsPins = it },
-                                label = { Text(tr("pinned_cert")) },
-                                isError = !pinsValid,
-                                supportingText = {
-                                    Text(tr(if (pinsValid) "pinned_cert_hint" else "invalid_pins"))
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                shape = EditorFieldShape,
-                                colors = wingTextFieldColors()
-                            )
-                            EditorWingField(tlsVerifyName, { tlsVerifyName = it }, tr("verify_name"))
+                        }
+                        OutlinedTextField(
+                            value = tlsPins,
+                            onValueChange = { tlsPins = it },
+                            label = { Text(tr("pinned_cert")) },
+                            isError = !pinsValid,
+                            supportingText = {
+                                Text(tr(if (pinsValid) "pinned_cert_hint" else "invalid_pins"))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = EditorFieldShape,
+                            colors = wingTextFieldColors()
+                        )
+                        EditorWingField(tlsVerifyName, { tlsVerifyName = it }, tr("verify_name"))
+                        if (!isNowhere && !isNaive) {
                             EditorWingField(tlsEch, { tlsEch = it }, tr("ech_config"))
                         }
                         if (isVless) {
@@ -1028,6 +1054,77 @@ private fun EditorSwitchRow(
             color = MaterialTheme.colorScheme.onSurface
         )
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * "Allow insecure" with the danger in plain sight: INSECURE in red capitals
+ * beside the switch, and once it is on, what it gives away and the safer
+ * way (a pinned certificate, which is checked even with this on).
+ */
+@Composable
+private fun EditorInsecureSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(
+                    text = tr("allow_insecure_server"),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = tr("insecure_caps"),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.error,
+                    checkedThumbColor = MaterialTheme.colorScheme.onError
+                )
+            )
+        }
+        if (checked) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) {
+                Row(modifier = Modifier.padding(12.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(end = 10.dp).size(22.dp)
+                    )
+                    Column {
+                        Text(
+                            text = tr("insecure_caps"),
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Black),
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = tr("insecure_explained"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

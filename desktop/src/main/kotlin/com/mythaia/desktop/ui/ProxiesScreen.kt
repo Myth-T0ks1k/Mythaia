@@ -448,6 +448,20 @@ private fun ServerRow(
             color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(2.2f)
         )
+        // A server whose certificate is not checked says so on its row.
+        if (config.skipsCertificateCheck) {
+            Text(
+                tr("insecure_caps"),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onError,
+                maxLines = 1,
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.error)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
         Text(config.outboundProtocol.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.weight(0.9f))
         Text(transportLabel(config), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.weight(1f))
         Text(config.displayEndpoint, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.6f))

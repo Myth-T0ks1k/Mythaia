@@ -629,8 +629,11 @@ class TlsClient(private val configuration: TlsConfiguration) {
         val processedOffset = offset
         handshakeTranscript = fullTranscript
 
-        // Validate server certificate (unless allowInsecure)
-        if (!configuration.allowInsecure && !CertificatePolicy.allowInsecure) {
+        // Validate the server certificate unless "allow insecure" is on. A
+        // pinned certificate is checked even then: it is the user's own,
+        // narrower trust decision for this one server, and the global switch
+        // must not quietly cancel it.
+        if (pinsCertificate || !skipsCertificateCheck) {
             if (serverCertificates.isEmpty()) {
                 throw TlsError.CertificateValidationFailed("No server certificates received")
             }
@@ -1211,9 +1214,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
             }
         }
 
-        val skipValidation = configuration.allowInsecure || CertificatePolicy.allowInsecure
-
-        if (!skipValidation) {
+        if (pinsCertificate || !skipsCertificateCheck) {
             // RFC 8446 §4.1.3: a server that could have done TLS 1.3 marks a
             // 1.2 ServerHello's random; with 1.3 in our offer, the mark means
             // something on the path rewrote the hello.
@@ -1829,6 +1830,19 @@ class TlsClient(private val configuration: TlsConfiguration) {
     /** Frees handshake-only state to reduce memory after the connection is established. */
     /** How long a server gets to finish its side of the handshake. */
     private val HANDSHAKE_TIMEOUT_MS = 20_000L
+
+    /**
+     * "Allow insecure", for this server or for all of them: the certificate is
+     * not checked at all. UNSAFE — anyone on the path can stand in for the
+     * server. Kept because self-signed servers exist and every other client
+     * offers it; a pin ([pinsCertificate]) is the safe way to trust one.
+     */
+    private val skipsCertificateCheck: Boolean
+        get() = configuration.allowInsecure || CertificatePolicy.allowInsecure
+
+    /** A pinned SHA-256 (`pcs=`) decides on its own, with or without "allow insecure". */
+    private val pinsCertificate: Boolean
+        get() = !configuration.pinnedCertSha256.isNullOrEmpty()
 
     private fun clearHandshakeState() {
         ephemeralPrivateKeyBytes = null

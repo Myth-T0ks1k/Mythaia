@@ -8,7 +8,12 @@ class NaiveConfiguration(
     val password: String?,
     /** TLS SNI override. Defaults to [proxyHost] when null. */
     val sni: String?,
-    val scheme: NaiveScheme
+    val scheme: NaiveScheme,
+    /**
+     * The server's TLS settings: "allow insecure", the pinned certificate,
+     * the name to verify. Null means the defaults (full verification).
+     */
+    val tls: com.mythaia.data.model.TlsConfiguration? = null
 ) {
     enum class NaiveScheme {
         HTTP11,
@@ -16,6 +21,12 @@ class NaiveConfiguration(
     }
 
     val effectiveSNI: String get() = sni ?: proxyHost
+
+    /** What decides whether two Naive streams may share a connection. */
+    val poolKey: String
+        get() = "$proxyHost:$proxyPort:$effectiveSNI:" + (tls?.let {
+            kotlinx.serialization.json.Json.encodeToString(com.mythaia.data.model.TlsConfiguration.serializer(), it)
+        } ?: "")
 
     /** Base64-encoded `user:pass` for Proxy-Authorization, or null if no credentials. */
     val basicAuth: String?

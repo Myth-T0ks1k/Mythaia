@@ -99,6 +99,9 @@
 
     <!-- Phase 9: Security -->
     <string name="allow_insecure_warning">Thao tác này sẽ bỏ qua xác thực chứng chỉ TLS, khiến kết nối của bạn dễ bị tấn công MITM.</string>
+    <string name="insecure_caps">KHÔNG AN TOÀN</string>
+    <string name="insecure_explained">Chứng chỉ của máy chủ không được kiểm tra. Bất kỳ ai trên đường truyền (nhà mạng, Wi-Fi công cộng) đều có thể giả làm máy chủ và đọc hoặc thay đổi lưu lượng của bạn. Chỉ bật cho máy chủ của riêng bạn dùng chứng chỉ tự ký. An toàn hơn: nhập dấu vân tay vào ô “SHA-256 chứng chỉ được ghim (pcs)”. Chứng chỉ được ghim vẫn được kiểm tra ngay cả khi bật tùy chọn này.</string>
+    <string name="insecure_global_explained">Áp dụng cho mọi máy chủ: không kiểm tra chứng chỉ nào, trừ các máy chủ có chứng chỉ được ghim (pcs).</string>
     <string name="allow_anyway">Vẫn cho phép</string>
 
     <!-- Phase 9: Proxy Editor -->

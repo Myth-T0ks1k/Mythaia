@@ -99,6 +99,9 @@
 
     <!-- Phase 9: Security -->
     <string name="allow_insecure_warning">Esto omitirá la validación del certificado TLS, haciendo que tus conexiones sean vulnerables a ataques MITM.</string>
+    <string name="insecure_caps">INSEGURO</string>
+    <string name="insecure_explained">No se comprueba el certificado del servidor. Cualquiera en el camino (tu proveedor, una Wi-Fi pública) puede hacerse pasar por el servidor y leer o alterar tu tráfico. Actívalo solo para tu propio servidor con un certificado autofirmado. Más seguro: indica su huella en «SHA-256 del certificado fijado (pcs)». Un certificado fijado se comprueba incluso con esta opción activada.</string>
+    <string name="insecure_global_explained">Se aplica a todos los servidores: no se comprueba ningún certificado, salvo en los servidores con un certificado fijado (pcs).</string>
     <string name="allow_anyway">Permitir de todos modos</string>
 
     <!-- Phase 9: Proxy Editor -->

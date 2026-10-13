@@ -173,6 +173,54 @@ class ShareLinkTest {
     }
 
     @Test
+    fun `a naive link carries allow insecure, its name and its pin both ways`() {
+        val link = "https://u:p@1.2.3.4:443?sni=proxy.example&insecure=1&pcs=PIN&vcn=cert.example#N"
+            .replace("PIN", "abababababababababababababababababababababababababababababababab")
+        val config = ProxyConfiguration.fromUrl(link)
+        val tls = config.tls!!
+        assertEquals("proxy.example", tls.serverName)
+        assertTrue(tls.allowInsecure)
+        assertEquals(listOf("abababababababababababababababababababababababababababababababab"), tls.pinnedCertSha256)
+        assertEquals("cert.example", tls.verifyName)
+
+        val again = ProxyConfiguration.fromUrl(config.toUrl()).tls!!
+        assertEquals(tls.serverName, again.serverName)
+        assertTrue(again.allowInsecure)
+        assertEquals(tls.pinnedCertSha256, again.pinnedCertSha256)
+        assertEquals(tls.verifyName, again.verifyName)
+
+        // A plain link keeps no TLS settings of its own, as before.
+        assertNull(ProxyConfiguration.fromUrl("https://u:p@example.com:443#P").tls)
+    }
+
+    @Test
+    fun `a nowhere link carries allow insecure and its pin both ways`() {
+        val config = ProxyConfiguration.fromUrl(
+            "nowhere://key@example.com:443?up=udp&down=udp&insecure=1&pcs=abababababababababababababababababababababababababababababababab#W"
+        )
+        assertTrue(config.tls!!.allowInsecure)
+        assertEquals(listOf("abababababababababababababababababababababababababababababababab"), config.tls!!.pinnedCertSha256)
+        val again = ProxyConfiguration.fromUrl(config.toUrl())
+        assertTrue(again.tls!!.allowInsecure)
+        assertEquals(config.tls!!.pinnedCertSha256, again.tls!!.pinnedCertSha256)
+    }
+
+    @Test
+    fun `a server is marked insecure only when its certificate really goes unchecked`() {
+        fun parse(link: String) = ProxyConfiguration.fromUrl(link)
+        val id = "5c8a1b9e-3f7d-4e2a-9b61-0d4c7e8f2a13"
+        assertTrue(parse("vless://$id@example.com:443?security=tls&allowInsecure=1#V").skipsCertificateCheck)
+        assertTrue(parse("trojan://pw@example.com:443?allowInsecure=1#T").skipsCertificateCheck)
+        assertTrue(parse("hysteria2://pw@example.com:443?insecure=1#H").skipsCertificateCheck)
+        assertTrue(parse("https://u:p@example.com:443?insecure=1#N").skipsCertificateCheck)
+        // A pin is checked whatever the flag says.
+        assertTrue(!parse("hysteria2://pw@example.com:443?insecure=1&pcs=abababababababababababababababababababababababababababababababab#H").skipsCertificateCheck)
+        // No TLS in use, nothing to skip.
+        assertTrue(!parse("vless://$id@example.com:443?security=none&allowInsecure=1#V").skipsCertificateCheck)
+        assertTrue(!parse("vless://$id@example.com:443?security=tls#V").skipsCertificateCheck)
+    }
+
+    @Test
     fun `a naive link without a port takes 443 and a query is not part of the port`() {
         val config = ProxyConfiguration.fromUrl("https://u:p@example.com?x=1#P")
         assertEquals(443.toUShort(), config.serverPort)
