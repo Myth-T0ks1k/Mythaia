@@ -19,7 +19,9 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -198,7 +200,14 @@ class NioSocket : Transport {
             host
         }
 
-        val ipStrings = DnsCache.resolveAll(bare)
+        // Resolution blocks (platform lookup, or the DoH/DoT client with 2×4 s
+        // timeouts). `connect` runs on the lwIP executor's dispatcher, and lwIP
+        // is single-threaded, so blocking here would stall every flow's packets,
+        // timers and ACKs until the resolver answers. Hop to IO; the socket
+        // registration/connect that follows runs on the shared selector thread
+        // (see runOnSelector), not here, so it is unaffected by the dispatcher
+        // this coroutine resumes on.
+        val ipStrings = withContext(Dispatchers.IO) { DnsCache.resolveAll(bare) }
         if (ipStrings.isEmpty()) {
             state = State.FAILED
             throw NioSocketError.ResolutionFailed("No addresses returned for $bare")

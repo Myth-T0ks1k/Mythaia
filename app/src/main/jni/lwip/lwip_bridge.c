@@ -43,6 +43,16 @@ static struct udp_pcb *udp_listen_pcb_v6 = NULL;
 static uint16_t s_current_udp_dst_port = 0;
 static ip_addr_t s_current_udp_dst_ip;
 
+/* lwIP contract: after tcp_abort() is called from inside a recv/sent callback,
+ * the callback MUST return ERR_ABRT so tcp_input() takes its `aborted` path and
+ * never dereferences the freed pcb (e.g. the tcp_output() right after the recv
+ * callback). Kotlin can call nativeTcpAbort synchronously from inside the recv/
+ * sent callback (same lwIP thread), so we track which pcb is being dispatched
+ * and whether it was aborted during the call. NO_SYS=1 single-threaded, so these
+ * file-scope flags are safe. */
+static struct tcp_pcb *s_dispatch_pcb = NULL;
+static int             s_dispatch_aborted = 0;
+
 
 static err_t netif_output_ip4(struct netif *netif, struct pbuf *p,
                                const ip4_addr_t *ipaddr) {
@@ -151,12 +161,25 @@ static err_t tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
     if (!p) {
         /* Remote closed connection (graceful FIN). */
         if (s_tcp_recv_fn) {
+            struct tcp_pcb *prev_pcb = s_dispatch_pcb;
+            int prev_aborted = s_dispatch_aborted;
+            s_dispatch_pcb = tpcb;
+            s_dispatch_aborted = 0;
             s_tcp_recv_fn(arg, NULL, 0);
+            int aborted = s_dispatch_aborted;
+            s_dispatch_pcb = prev_pcb;
+            s_dispatch_aborted = prev_aborted;
+            if (aborted) return ERR_ABRT;
         }
         return ERR_OK;
     }
 
     if (s_tcp_recv_fn) {
+        struct tcp_pcb *prev_pcb = s_dispatch_pcb;
+        int prev_aborted = s_dispatch_aborted;
+        s_dispatch_pcb = tpcb;
+        s_dispatch_aborted = 0;
+
         if (p->next != NULL) {
             void *buf = mem_malloc(p->tot_len);
             if (buf) {
@@ -165,12 +188,24 @@ static err_t tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
                 mem_free(buf);
             } else {
                 os_log_error(s_log, "[Bridge] tcp_recv_cb: mem_malloc failed for %u bytes, returning ERR_MEM", p->tot_len);
+                s_dispatch_pcb = prev_pcb;
+                s_dispatch_aborted = prev_aborted;
                 /* Don't free p — lwIP retains ownership when we return an
                  * error and will redeliver the segment later. */
                 return ERR_MEM;
             }
         } else {
             s_tcp_recv_fn(arg, p->payload, p->tot_len);
+        }
+
+        int aborted = s_dispatch_aborted;
+        s_dispatch_pcb = prev_pcb;
+        s_dispatch_aborted = prev_aborted;
+        if (aborted) {
+            /* The callback aborted the pcb (and the Kotlin side consumed the
+             * data). Free our pbuf and tell lwIP the pcb is gone. */
+            pbuf_free(p);
+            return ERR_ABRT;
         }
     }
 
@@ -179,9 +214,16 @@ static err_t tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
 }
 
 static err_t tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-    (void)tpcb;
     if (arg && s_tcp_sent_fn) {
+        struct tcp_pcb *prev_pcb = s_dispatch_pcb;
+        int prev_aborted = s_dispatch_aborted;
+        s_dispatch_pcb = tpcb;
+        s_dispatch_aborted = 0;
         s_tcp_sent_fn(arg, len);
+        int aborted = s_dispatch_aborted;
+        s_dispatch_pcb = prev_pcb;
+        s_dispatch_aborted = prev_aborted;
+        if (aborted) return ERR_ABRT;
     }
     return ERR_OK;
 }
@@ -427,6 +469,14 @@ void lwip_bridge_tcp_close(void *pcb) {
 
 void lwip_bridge_tcp_abort(void *pcb) {
     struct tcp_pcb *tpcb = (struct tcp_pcb *)pcb;
+    /* If this abort is re-entrant — called from inside the recv/sent callback
+     * currently dispatching this same pcb — record it so the callback returns
+     * ERR_ABRT and tcp_input() won't touch the pcb tcp_abort() is about to free.
+     * (tcp_close() does not need this: it guards itself via
+     * tcp_trigger_input_pcb_close() when tcp_input_pcb == pcb.) */
+    if (tpcb == s_dispatch_pcb) {
+        s_dispatch_aborted = 1;
+    }
     tcp_arg(tpcb, NULL);
     tcp_recv(tpcb, NULL);
     tcp_sent(tpcb, NULL);

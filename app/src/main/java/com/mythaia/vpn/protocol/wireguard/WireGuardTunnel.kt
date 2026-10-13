@@ -10,6 +10,8 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.SocketException
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 private val logger = MythaiaLogger("WireGuard")
@@ -114,6 +116,19 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
 
     private val threads = mutableListOf<Thread>()
 
+    /**
+     * Serializes network-path-change work off the caller's thread.
+     *
+     * [handleNetworkPathChange] is invoked from the main thread (the VPN
+     * service's ConnectivityManager callback and screen receiver), and it
+     * resolves the endpoint — a blocking DNS lookup that throws
+     * NetworkOnMainThreadException there, so the endpoint was never actually
+     * re-resolved. A single-thread executor runs it in the background and keeps
+     * overlapping path changes from racing the socket swap. (N12)
+     */
+    private val pathChangeExecutor =
+        Executors.newSingleThreadExecutor { r -> Thread(r, "wg-path").apply { isDaemon = true } }
+
     // The four message types this peer uses. Plain WireGuard leaves them at
     // 1-4; AmneziaWG replaces each with its H1-H4.
     private val amnezia = config.amnezia
@@ -168,6 +183,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
 
         threads.forEach { it.interrupt() }
         threads.clear()
+
+        pathChangeExecutor.shutdownNow()
 
         session = null
         previousSession = null
@@ -224,6 +241,12 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
      * of the wrong interface.
      */
     fun handleNetworkPathChange(reason: String) {
+        if (!running) return
+        // Off the caller's (main) thread: resolveEndpoint below blocks on DNS.
+        runCatching { pathChangeExecutor.execute { doHandleNetworkPathChange(reason) } }
+    }
+
+    private fun doHandleNetworkPathChange(reason: String) {
         if (!running) return
         logger.debug("[WG] Network path changed (" + reason + "), re-establishing")
 
@@ -425,6 +448,14 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
                 datagram.setData(buffer, 0, buffer.size)
                 current.receive(datagram)
             } catch (e: java.net.SocketTimeoutException) {
+                continue
+            } catch (e: SocketException) {
+                // handleNetworkPathChange closes the old socket to wake us, which
+                // surfaces here as a SocketException. While the tunnel is still
+                // up, re-acquire the current socket on the next pass instead of
+                // exiting the downlink forever (which would leave the tunnel
+                // silently dead until it was torn down 90 s later).
+                if (!running) break
                 continue
             } catch (e: Exception) {
                 if (running) logger.warning("[WG] Socket read failed: ${e.message}")

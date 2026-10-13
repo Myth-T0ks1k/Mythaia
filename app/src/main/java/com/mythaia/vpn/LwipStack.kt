@@ -8,12 +8,16 @@ import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.SplitTunnelSettings
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.FragmentPolicy
+import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.tun.FakeIpDns
 import com.mythaia.vpn.util.IcmpPackets
+import com.mythaia.vpn.util.PacketUtil
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.net.InetAddress
+import java.util.concurrent.LinkedBlockingQueue
 import com.mythaia.vpn.protocol.mux.MuxManager
 import kotlinx.coroutines.asCoroutineDispatcher
 import org.json.JSONArray
@@ -47,6 +51,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         Thread(r, "lwip-thread").apply { isDaemon = true }
     }.apply {
         rejectedExecutionHandler = ThreadPoolExecutor.DiscardPolicy()
+        // Without this, a cancelled ScheduledFuture (idle/handshake/sniff timer)
+        // stays queued up to its full delay (≤300 s), pinning the closed
+        // connection it references. Drop cancelled tasks from the queue at once.
+        removeOnCancelPolicy = true
     }
 
     /** Pool of reusable MTU-sized byte arrays to avoid per-packet allocation in the TUN reader. */
@@ -55,6 +63,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     private var tunFd: ParcelFileDescriptor? = null
     private var tunInput: FileInputStream? = null
     private var tunOutput: FileOutputStream? = null
+    /** The current TUN reader thread, tracked so a swap can retire its predecessor. */
+    @Volatile
+    private var tunReaderThread: Thread? = null
     final override var configuration: ProxyConfiguration? = null
         private set
 
@@ -146,11 +157,30 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     private val tcpConnections = ConcurrentHashMap<Long, LwipTcpConnection>()
     private val nextConnId = AtomicLong(1)
 
+    /** Rate-limits the "TCP cap reached" warning (only touched on lwipExecutor). */
+    private var lastTcpCapWarnNanos = 0L
+
+    private fun warnTcpCapReached() {
+        val now = System.nanoTime()
+        if (now - lastTcpCapWarnNanos < TCP_CAP_WARN_INTERVAL_NANOS) return
+        lastTcpCapWarnNanos = now
+        logger.warning("[TCP] Connection cap ($MAX_TCP_CONNECTIONS) reached; refusing new connections (RST)")
+    }
+
     /** Domain-based DNS routing. */
     val domainRouter = DomainRouter(context)
 
     /** Fake-IP pool for mapping domains to synthetic IPs. */
     val fakeIpPool = FakeIpPool()
+
+    /**
+     * Resolves real-answer domains (the proxy servers, the encrypted-DNS
+     * bootstrap, bypass-by-domain names) off the lwIP thread so a blocking
+     * lookup never stalls packet processing.
+     */
+    private val dnsResolver = ThreadPoolExecutor(
+        0, 4, 30L, TimeUnit.SECONDS, LinkedBlockingQueue(64)
+    ) { r -> Thread(r, "lwip-dns").apply { isDaemon = true } }
 
     /** SharedPreferences for settings. */
     private val prefs: SharedPreferences by lazy {
@@ -489,6 +519,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 tunOutput = null
                 tunFd = null
                 configuration = null
+                dnsResolver.shutdownNow()
                 if (instance === this) instance = null
                 onComplete?.invoke()
             }
@@ -596,12 +627,18 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
      * Must be called before [restartStack] so the flag is set.
      */
     fun swapTunFd(newFd: ParcelFileDescriptor) {
+        // Hold on to the previous reader and its input so we can retire it:
+        // closing only the old ParcelFileDescriptor (as the caller does) drops
+        // the fd number but leaves the old reader parked in read(2) forever —
+        // a thread and a kernel tun leaked on every IPv6/DNS/split-tunnel toggle.
+        val oldInput = this.tunInput
+        val oldThread = this.tunReaderThread
+
         this.tunFd = newFd
         this.tunInput = FileInputStream(newFd.fileDescriptor)
         this.tunOutput = FileOutputStream(newFd.fileDescriptor)
 
         // Start reading the new fd here rather than waiting for the restart.
-        // The caller closes the old fd immediately, which kills the old reader;
         // restartStack is throttled to once every two seconds, so coupling the
         // two left a window with no reader at all — every packet an app sent in
         // it was dropped.
@@ -610,6 +647,13 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         } else {
             tunFdSwapped = true
         }
+
+        // Closing the old FileInputStream wakes its blocked read on Android
+        // (libcore signals threads blocked on the fd), so the old reader throws,
+        // sees the stream gone, and exits. Join to confirm it's gone before the
+        // caller closes the old ParcelFileDescriptor.
+        runCatching { oldInput?.close() }
+        oldThread?.let { t -> runCatching { t.join(1000) } }
     }
 
     /**
@@ -974,6 +1018,14 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         dstIp: ByteArray, dstPort: Int,
         isIpv6: Boolean, pcb: Long
     ): Long {
+        // IPv6 is only served when IPv6 DNS is on. When it is off the TUN still
+        // carries a ::/0 route (so IPv6 can't leak outside the tunnel), but any
+        // IPv6 flow that arrives is dropped quietly here. (N4)
+        if (isIpv6 && !ipv6DNSEnabled) {
+            logger.debug("[TCP] Dropping IPv6 connection while IPv6 is disabled")
+            return 0L
+        }
+
         val defaultConfig = configuration ?: run {
             logger.debug("[LWIPStack] tcp_accept: no configuration")
             return 0L
@@ -981,9 +1033,20 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
         // Prevent lwIP resource exhaustion (TCP segment pool, heap) under
         // heavy load.
-        if (tcpConnections.size >= MAX_TCP_CONNECTIONS) return 0L
+        if (tcpConnections.size >= MAX_TCP_CONNECTIONS) {
+            warnTcpCapReached()
+            return 0L
+        }
 
         val dstIpString = NativeBridge.nativeIpToString(dstIp, isIpv6) ?: "?"
+
+        // RST any TCP to the DNS sentinel so Android's Private DNS DoT/DoH probes
+        // (853/443) fail fast and the system falls back to plain Do53, which our
+        // UDP/53 interception handles. (N5)
+        if (dstIpString == TunnelConstants.dnsSentinelV4 || dstIpString == TunnelConstants.dnsSentinelV6) {
+            logger.debug("[TCP] RST to DNS sentinel $dstIpString:$dstPort (DoT/DoH blocked)")
+            return 0L
+        }
         var dstHost = dstIpString
         var connectionConfig = defaultConfig
         var forceBypass = false
@@ -1076,6 +1139,13 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         dstIp: ByteArray, dstPort: Int,
         isIpv6: Boolean, data: ByteArray
     ) {
+        // Drop IPv6 datagrams while IPv6 is disabled — the ::/0 route captures
+        // them only to keep them out of the physical network. (N4)
+        if (isIpv6 && !ipv6DNSEnabled) {
+            logger.debug("[UDP] Dropping IPv6 datagram while IPv6 is disabled")
+            return
+        }
+
         // DNS interception: intercept port-53 queries for matched domains
         if (dstPort == 53) {
             if (handleDnsQuery(data, srcIp, srcPort, dstIp, dstPort, isIpv6)) {
@@ -1226,6 +1296,18 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         dstIp: ByteArray, dstPort: Int,
         isIpv6: Boolean
     ): Boolean {
+        // A/AAAA for a real-answer domain (the proxy server's own name, the
+        // encrypted-DNS bootstrap, a bypass-by-domain name) must resolve to its
+        // real address: fake-IP'ing it would route the app's own direct
+        // connection to it back into the tunnel. Mirrors TunStack.
+        val parsed = PacketUtil.parseDnsQueryExt(payload)
+        if (parsed != null && (parsed.qtype == 1 || parsed.qtype == 28) &&
+            isRealAnswerDomain(parsed.domain.lowercase())
+        ) {
+            answerWithRealAddress(payload, parsed.domain.lowercase(), parsed.qtype, srcIp, srcPort, dstIp, dstPort, isIpv6)
+            return true
+        }
+
         val answer = FakeIpDns.answer(payload, fakeIpPool, ipv6DNSEnabled, encryptedDnsEnabled)
         val reply = answer as? FakeIpDns.Answer.Reply ?: return false
 
@@ -1238,6 +1320,46 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         )
         reply.reason?.let { logger.debug("[FakeIP] Blocked $it query") }
         return true
+    }
+
+    /** Names that must resolve to their real address, never a fake IP. [domain] is lower-case. */
+    private fun isRealAnswerDomain(domain: String): Boolean {
+        if (domain.isEmpty()) return false
+        if (proxyServerAddresses.any { it.equals(domain, ignoreCase = true) } && !DnsCache.isIpAddress(domain)) return true
+        if (EncryptedDnsPolicy.upstream.bootstrapHost?.equals(domain, ignoreCase = true) == true) return true
+        return domainRouter.isBypassDomain(domain)
+    }
+
+    /**
+     * Resolves [domain] to its real address off the lwIP thread and writes the
+     * answer back. Resolution blocks, so it runs on [dnsResolver] and the reply
+     * hops back onto the lwIP executor. If the resolver is saturated or the
+     * lookup fails, NODATA is returned rather than a fake IP — a real name must
+     * never be pinned to the synthetic range. Mirrors TunStack.answerWithRealAddress.
+     */
+    private fun answerWithRealAddress(
+        payload: ByteArray, domain: String, qtype: Int,
+        srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int, isIpv6: Boolean
+    ) {
+        val submitted = runCatching {
+            dnsResolver.execute {
+                val ips = runCatching { DnsCache.resolveAll(domain) }.getOrDefault(emptyList())
+                val wantV6 = qtype == 28
+                val chosen = ips.firstOrNull { it.contains(':') == wantV6 }
+                val bytes = chosen?.let { runCatching { InetAddress.getByName(it).address }.getOrNull() }
+                    ?.takeIf { it.size == (if (wantV6) 16 else 4) }
+                val response = PacketUtil.generateDnsResponse(payload, bytes, qtype) ?: return@execute
+                lwipExecutor.execute {
+                    if (!running) return@execute
+                    NativeBridge.nativeUdpSendto(dstIp, dstPort, srcIp, srcPort, isIpv6, response, response.size)
+                    flushOutputInline()
+                }
+            }
+        }.isSuccess
+        if (!submitted) {
+            val response = PacketUtil.generateDnsResponse(payload, null, qtype) ?: return
+            NativeBridge.nativeUdpSendto(dstIp, dstPort, srcIp, srcPort, isIpv6, response, response.size)
+        }
     }
 
     // ICMP Destination Unreachable (Port Unreachable) is sent when UDP arrives
@@ -1286,12 +1408,16 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     /** Continuously reads IP packets from the TUN fd and feeds them into lwIP.
      *  Batches multiple packets per executor dispatch to reduce task overhead. */
     private fun startReadingPackets() {
-        Thread({
+        val thread = Thread({
             val buffer = ByteArray(1500)  // MTU-sized read buffer
+            // Bind to the stream captured at start: a later swapTunFd installs a
+            // new reader for the new stream and closes this one to wake us.
             val input = tunInput ?: return@Thread
 
             while (running) {
                 try {
+                    // No input.available() probe: the TUN driver returns EINVAL for
+                    // it, which used to raise (and discard) an IOException per packet.
                     val length = input.read(buffer)
                     if (length <= 0) {
                         if (!running) break
@@ -1303,27 +1429,12 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                     val packet = packetPool.poll() ?: ByteArray(1500)
                     System.arraycopy(buffer, 0, packet, 0, length)
 
-                    // Batch: collect more packets if immediately available
-                    val batch = mutableListOf(Pair(packet, length))
-                    while (batch.size < MAX_INPUT_BATCH_SIZE) {
-                        val avail = try { input.available() } catch (_: Exception) { 0 }
-                        if (avail <= 0) break
-                        val len = input.read(buffer)
-                        if (len <= 0) break
-                        totalBytesOut.addAndGet(len.toLong())
-                        val pkt = packetPool.poll() ?: ByteArray(1500)
-                        System.arraycopy(buffer, 0, pkt, 0, len)
-                        batch.add(Pair(pkt, len))
-                    }
-
                     lwipExecutor.execute {
-                        for ((pkt, len) in batch) {
-                            if (running) {
-                                NativeBridge.nativeInput(pkt, len)
-                            }
-                            if (packetPool.size < MAX_PACKET_POOL_SIZE) {
-                                packetPool.offer(pkt)
-                            }
+                        if (running) {
+                            NativeBridge.nativeInput(packet, length)
+                        }
+                        if (packetPool.size < MAX_PACKET_POOL_SIZE) {
+                            packetPool.offer(packet)
                         }
                         // Inline flush: drain output packets accumulated during nativeInput
                         // processing without waiting for a separate executor task,
@@ -1339,7 +1450,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                     break
                 }
             }
-        }, "tun-reader").apply { isDaemon = true }.start()
+        }, "tun-reader").apply { isDaemon = true }
+        tunReaderThread = thread
+        thread.start()
     }
 
     /** Starts the lwIP periodic timeout timer (100ms interval). */
@@ -1379,9 +1492,12 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     companion object {
         private val logger = MythaiaLogger("LWIPStack")
         private const val MAX_PACKET_POOL_SIZE = 256
-        private const val MAX_INPUT_BATCH_SIZE = 64
-        private const val MAX_TCP_CONNECTIONS = 128
+        // Kept in sync with lwipopts.h MEMP_NUM_TCP_PCB (512). A PCB is small,
+        // so a higher ceiling costs little and avoids silently RST'ing the
+        // 129th concurrent connection on a busy device.
+        private const val MAX_TCP_CONNECTIONS = 512
         private const val MAX_UDP_FLOWS = 200
+        private const val TCP_CAP_WARN_INTERVAL_NANOS = 5_000_000_000L
 
         /**
          * Singleton for callback access.

@@ -156,4 +156,23 @@ object TunnelConstants {
      * dictionaries (~200 B per entry × 3 maps) in a long-running tunnel.
      */
     const val fakeIPPoolSize: Int = 16_384
+
+    // -- TUN DNS sentinel --
+
+    /**
+     * The DNS server address advertised on the TUN. Must NOT be a public
+     * resolver: with a public address, Android's opportunistic Private DNS
+     * probes DoT (853) against it through the tunnel, succeeds, and then
+     * bypasses our port-53 interception entirely (fake-IP routing, REJECT
+     * rules and the AAAA gate all stop working). These are routed into the
+     * TUN and answered on UDP/53, while TCP 853/443 to them is RST so DoT/DoH
+     * validation fails fast and the system falls back to Do53.
+     *
+     * [dnsSentinelV4] sits at the base of the fake-IP range (198.18.0.0/15,
+     * which is routed into the TUN) but is never an allocated pool offset, so
+     * it also resolves to "no entry". [dnsSentinelV6] is on-link within the
+     * TUN's own fd00::/64.
+     */
+    const val dnsSentinelV4: String = "198.18.0.0"
+    const val dnsSentinelV6: String = "fd00::1"
 }

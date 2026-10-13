@@ -655,13 +655,21 @@ class MythaiaVpnService : VpnService() {
         val builder = Builder()
             // TUN IP
             .addAddress("10.8.0.2", 24)
-            // DNS servers
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("1.0.0.1")
+            // DNS server: a non-public sentinel routed into the TUN and answered
+            // on UDP/53, so Android's Private DNS can't probe DoT against a public
+            // resolver and escape our port-53 interception (see N5 / TunnelConstants).
+            .addDnsServer(TunnelConstants.dnsSentinelV4)
             // MTU
             .setMtu(1500)
             // Block connections without VPN
             .setBlocking(true)
+
+        // Inherit the underlying network's meteredness (set via
+        // setUnderlyingNetworks) instead of being metered unconditionally on
+        // Q+, which makes apps treat Wi-Fi as cellular (no auto-updates/backups).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setMetered(false)
+        }
 
         // IPv6: add address, routes (excluding fc00::/7 and fe80::/10), and DNS servers.
         // Excluded ranges:
@@ -681,9 +689,22 @@ class MythaiaVpnService : VpnService() {
             builder.addRoute("fe00::", 9)      // fe00::-fe7f::
             builder.addRoute("fec0::", 10)     // fec0::-feff::
             builder.addRoute("ff00::", 8)      // ff00::-ffff:: (multicast)
-            // DNS servers (IPv6 DNS queries go through TUN → lwIP → local interception)
-            builder.addDnsServer("2606:4700:4700::1111")
-            builder.addDnsServer("2606:4700:4700::1001")
+            // IPv6 DNS: a non-public sentinel on-link within fd00::/64, for the
+            // same reason as the IPv4 one above — a public IPv6 resolver would let
+            // Private DNS validate DoT over IPv6 and bypass port-53 interception.
+            builder.addDnsServer(TunnelConstants.dnsSentinelV6)
+        } else {
+            // IPv6 disabled: without an IPv6 route, IPv6 traffic falls through to
+            // the physical network, outside the VPN (a leak). Capture all of it so
+            // it enters the tunnel, where lwIP has no usable IPv6 address for a
+            // global destination and LwipStack drops it (see onTcpAccept/onUdpRecv).
+            // Best-effort: a ROM that refuses an IPv6 route without an IPv6 address
+            // must not fail the whole tunnel — fall back to the old behaviour.
+            try {
+                builder.addRoute("::", 0)
+            } catch (e: Exception) {
+                logger.warning("[VPN] IPv6 capture route refused: ${e.message ?: e}")
+            }
         }
 
         // Apply IPv4 bypass (exclude private/local ranges) via split routing.
@@ -930,7 +951,10 @@ class MythaiaVpnService : VpnService() {
             override fun onReceive(context: Context, intent: Intent) {
                 when (intent.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        sleepTimestampMillis = System.currentTimeMillis()
+                        // Monotonic clock: a wall-clock correction (NTP, timezone,
+                        // manual change) must not make the sleep look like minutes
+                        // and spuriously abort every TCP connection on wake (N17).
+                        sleepTimestampMillis = android.os.SystemClock.elapsedRealtime()
                     }
                     Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
                         // An Auto round skipped while the screen was off runs now.
@@ -938,7 +962,7 @@ class MythaiaVpnService : VpnService() {
                             AutoSelectEngine.onScreenOn(context)
                         }
                         if (sleepTimestampMillis == 0L) return
-                        val sleepSecs = (System.currentTimeMillis() - sleepTimestampMillis) / 1000L
+                        val sleepSecs = (android.os.SystemClock.elapsedRealtime() - sleepTimestampMillis) / 1000L
                         sleepTimestampMillis = 0L
                         logger.info("[VPN] Device woke up after ${sleepSecs}s")
                         if (sleepSecs >= WAKE_RESTART_THRESHOLD_SECS) {

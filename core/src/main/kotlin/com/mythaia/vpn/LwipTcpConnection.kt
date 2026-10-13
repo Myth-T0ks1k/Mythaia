@@ -644,7 +644,10 @@ class LwipTcpConnection(
 
         uplinkDone = true
         if (downlinkDone) {
-            close()
+            // Both directions are done, but if downlink bytes are still queued
+            // for a slow client, draining them first avoids truncating a
+            // close-delimited response (N9); the close follows once empty.
+            if (pendingWrite.size() == 0) close() else drainPendingWrite()
         } else {
             activityTimer?.setTimeout(TunnelConstants.downlinkOnlyTimeoutMs)
         }
@@ -1060,7 +1063,7 @@ class LwipTcpConnection(
         if (pendingWrite.size() > 0) {
             val data = pendingWrite.backingArray()
             val dataSize = pendingWrite.size()
-            val written = feedLwip(data, 0, dataSize, retryOnEmpty = true)
+            val written = feedLwip(data, pendingWrite.readOffset(), dataSize, retryOnEmpty = true)
             if (written == -1) {
                 val sndbuf = NativeBridge.nativeTcpSndbuf(pcb)
                 logger.error("[TCP] tcp_write fatal: $dstHost:$dstPort (pending=$dataSize, sndbuf=$sndbuf)")
@@ -1070,6 +1073,10 @@ class LwipTcpConnection(
             if (closed) return
 
             if (written > 0) {
+                // Handing downlink bytes to lwIP is forward progress — count it,
+                // so a slow-but-steady reader isn't declared idle mid-drain after
+                // a proxy EOF (the downlink-only path would otherwise truncate it).
+                activityTimer?.update()
                 if (written >= dataSize) {
                     pendingWrite.reset()
                 } else {
@@ -1093,12 +1100,34 @@ class LwipTcpConnection(
             }
         }
 
+        // Proxy EOF already seen: once the backlog is fully handed to lwIP, the
+        // deferred close can run (a close-delimited body is now complete).
+        if (downlinkDone) {
+            finishDownlinkIfDrained()
+            if (closed || pendingWrite.size() == 0) return
+        }
+
         // Made progress (or nothing was pending): prefetch the next chunk if
         // the backlog is below the low-water mark.
         tryArmReceive()
         // Same signal for a MITM downlink sender parked on backpressure (null on
         // every non-intercepted connection, so this is a no-op there).
         mitmInner?.onDrainProgress()
+    }
+
+    /**
+     * After the proxy's downlink EOF, closes (or applies the uplink-only
+     * timeout) once the client-bound backlog is fully handed to lwIP. No-op
+     * while bytes remain, so a slow reader gets the whole close-delimited body.
+     */
+    private fun finishDownlinkIfDrained() {
+        if (closed || !downlinkDone) return
+        if (pendingWrite.size() > 0) return
+        if (uplinkDone) {
+            close()
+        } else {
+            activityTimer?.setTimeout(TunnelConstants.uplinkOnlyTimeoutMs)
+        }
     }
 
     /**
@@ -1117,7 +1146,10 @@ class LwipTcpConnection(
      * naturally pause whenever lwIP can't keep up.
      */
     private fun tryArmReceive() {
-        if (closed || receiveInFlight) return
+        // Once the proxy has signalled EOF there is nothing left to fetch; a
+        // fresh receive would just return null again. The remaining work is
+        // draining pendingWrite to the client (drainPendingWrite).
+        if (closed || receiveInFlight || downlinkDone) return
         if (pendingWrite.size() >= TunnelConstants.drainLowWaterMark) return
 
         val relay = directRelay
@@ -1149,10 +1181,17 @@ class LwipTcpConnection(
 
                 if (data == null || data.isEmpty()) {
                     downlinkDone = true
-                    if (uplinkDone) {
-                        close()
+                    if (pendingWrite.size() > 0) {
+                        // Proxy is done but bytes are still queued for a slow
+                        // client. Closing now would truncate a close-delimited
+                        // response; keep draining instead. The idle timer (each
+                        // drain step counts as activity) still bounds a stuck
+                        // consumer, and finishDownlinkIfDrained closes once the
+                        // backlog empties.
+                        activityTimer?.setTimeout(TunnelConstants.connectionIdleTimeoutMs)
+                        drainPendingWrite()
                     } else {
-                        activityTimer?.setTimeout(TunnelConstants.uplinkOnlyTimeoutMs)
+                        finishDownlinkIfDrained()
                     }
                     return@execute
                 }
@@ -1166,7 +1205,7 @@ class LwipTcpConnection(
     /** Best-effort flush of pending data into lwIP send buffer before close. */
     private fun flushPendingToLwip() {
         if (pendingWrite.size() == 0) return
-        val written = feedLwip(pendingWrite.backingArray(), 0, pendingWrite.size())
+        val written = feedLwip(pendingWrite.backingArray(), pendingWrite.readOffset(), pendingWrite.size())
         if (written > 0) {
             NativeBridge.nativeTcpOutput(pcb)
         }
@@ -1258,10 +1297,18 @@ class LwipTcpConnection(
     }
 }
 
-/** Simple ByteArrayOutputStream replacement for buffer management. */
+/**
+ * Simple ByteArrayOutputStream replacement for buffer management.
+ *
+ * Live data is the window `[start, count)`. [consume] advances [start] instead
+ * of memmoving the whole backlog on every ACK (which was ~100× amplification
+ * with a slow reader); the buffer is compacted only once the read offset passes
+ * the halfway mark, so the amortized cost per byte stays O(1).
+ */
 private class ByteArrayOutputStream {
     private var buf = ByteArray(256)
     private var count = 0
+    private var start = 0
     companion object {
         private const val SHRINK_THRESHOLD = 8192
     }
@@ -1271,20 +1318,24 @@ private class ByteArrayOutputStream {
     }
 
     fun write(data: ByteArray, off: Int, len: Int) {
-        ensureCapacity(count + len)
+        ensureCapacity(len)
         System.arraycopy(data, off, buf, count, len)
         count += len
     }
 
-    fun toByteArray(): ByteArray = buf.copyOf(count)
+    fun toByteArray(): ByteArray = buf.copyOfRange(start, count)
 
-    /** Direct access to backing array (valid up to [size] bytes). Avoids copy. */
+    /** Direct access to the backing array; live data starts at [readOffset], runs [size] bytes. */
     fun backingArray(): ByteArray = buf
 
-    fun size(): Int = count
+    /** Index in [backingArray] where the live data begins. */
+    fun readOffset(): Int = start
+
+    fun size(): Int = count - start
 
     fun reset() {
         count = 0
+        start = 0
         // Shrink backing array if it grew well beyond the initial size,
         // preventing long-lived connections from retaining peak memory.
         if (buf.size > SHRINK_THRESHOLD) {
@@ -1292,20 +1343,36 @@ private class ByteArrayOutputStream {
         }
     }
 
-    /** Removes the first [n] bytes, shifting remaining data to the front. */
+    /** Drops the first [n] live bytes by advancing the read offset; compacts lazily. */
     fun consume(n: Int) {
-        if (n >= count) {
+        start += n
+        if (start >= count) {
+            start = 0
             count = 0
-        } else {
-            System.arraycopy(buf, n, buf, 0, count - n)
-            count -= n
+        } else if (start > buf.size / 2) {
+            val live = count - start
+            System.arraycopy(buf, start, buf, 0, live)
+            count = live
+            start = 0
         }
     }
 
-    private fun ensureCapacity(minCapacity: Int) {
-        if (minCapacity > buf.size) {
-            val newSize = maxOf(buf.size * 2, minCapacity)
-            buf = buf.copyOf(newSize)
+    /** Ensures room for [additional] more bytes after [count], compacting/growing as needed. */
+    private fun ensureCapacity(additional: Int) {
+        if (count + additional <= buf.size) return
+        val live = count - start
+        if (start > 0 && live + additional <= buf.size) {
+            // Reclaim the consumed prefix in place rather than growing.
+            System.arraycopy(buf, start, buf, 0, live)
+            count = live
+            start = 0
+            return
         }
+        val newSize = maxOf(buf.size * 2, live + additional)
+        val next = ByteArray(newSize)
+        System.arraycopy(buf, start, next, 0, live)
+        buf = next
+        count = live
+        start = 0
     }
 }

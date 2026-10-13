@@ -1,5 +1,6 @@
 package com.mythaia.vpn.util
 
+import com.mythaia.vpn.FakeIpPool
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -185,7 +186,7 @@ object DnsCache {
         // Encrypted DNS first when the user has configured it, falling back to
         // the platform resolver rather than failing the dial: an unreachable
         // resolver should cost latency, not connectivity.
-        val encrypted = resolveEncrypted(bare, network)
+        val encrypted = rejectFakeIps(resolveEncrypted(bare, network), bare)
         if (encrypted.isNotEmpty()) {
             cache[key] = CacheEntry(encrypted, System.currentTimeMillis() + DEFAULT_TTL_MS)
             return encrypted
@@ -199,7 +200,7 @@ object DnsCache {
             } else {
                 InetAddress.getAllByName(bare)
             }
-            addresses.mapNotNull { it.hostAddress }.distinct()
+            rejectFakeIps(addresses.mapNotNull { it.hostAddress }.distinct(), bare)
         } catch (e: Exception) {
             logger.warning("[DNS] Resolution failed for $bare")
             emptyList()
@@ -210,6 +211,24 @@ object DnsCache {
         }
 
         return ips
+    }
+
+    /**
+     * Drops any address inside the synthetic fake-IP range from a resolver
+     * result. With no underlying network set, the platform fallback resolves
+     * through the VPN's own DNS, which answers every A query with a fake IP
+     * (198.18.x.x / fc00::x) — caching that would pin a real name (the proxy
+     * server's own, say) to a synthetic address for the whole TTL and send
+     * every later dial to a dead fake IP. Treating an all-fake result as a
+     * failed resolution lets [resolveAll] keep the previous good entry instead.
+     */
+    private fun rejectFakeIps(ips: List<String>, bare: String): List<String> {
+        if (ips.isEmpty()) return ips
+        val real = ips.filterNot { FakeIpPool.isFakeIp(it) }
+        if (real.size != ips.size) {
+            logger.warning("[DNS] Discarded fake-IP answer(s) for $bare")
+        }
+        return real
     }
 
     /**

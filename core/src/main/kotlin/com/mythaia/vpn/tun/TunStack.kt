@@ -46,6 +46,9 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
         Thread(r, "lwip-thread").apply { isDaemon = true }
     }.apply {
         rejectedExecutionHandler = ThreadPoolExecutor.DiscardPolicy()
+        // Drop cancelled timers (idle/handshake/sniff) from the queue at once;
+        // otherwise they linger up to their full delay, pinning closed connections.
+        removeOnCancelPolicy = true
     }
 
     @Volatile
@@ -366,7 +369,10 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
 
     override fun onTcpAccept(srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int, isIpv6: Boolean, pcb: Long): Long {
         val defaultConfig = configuration ?: return 0L
-        if (tcpConnections.size >= MAX_TCP_CONNECTIONS) return 0L
+        if (tcpConnections.size >= MAX_TCP_CONNECTIONS) {
+            warnTcpCapReached()
+            return 0L
+        }
 
         val dstIpString = NativeBridge.nativeIpToString(dstIp, isIpv6) ?: "?"
         val decision = decide(dstIpString, dstPort, udp = false, defaultConfig = defaultConfig) ?: return 0L
@@ -545,9 +551,21 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
         scheduleOutputFlush()
     }
 
+    /** Rate-limits the "TCP cap reached" warning (only touched on lwipExecutor). */
+    private var lastTcpCapWarnNanos = 0L
+
+    private fun warnTcpCapReached() {
+        val now = System.nanoTime()
+        if (now - lastTcpCapWarnNanos < TCP_CAP_WARN_INTERVAL_NANOS) return
+        lastTcpCapWarnNanos = now
+        logger.warning("Connection cap ($MAX_TCP_CONNECTIONS) reached; refusing new connections (RST)")
+    }
+
     companion object {
         private val logger = MythaiaLogger("TunStack")
-        private const val MAX_TCP_CONNECTIONS = 128
+        // Kept in sync with lwipopts.h MEMP_NUM_TCP_PCB (512).
+        private const val MAX_TCP_CONNECTIONS = 512
         private const val MAX_UDP_FLOWS = 200
+        private const val TCP_CAP_WARN_INTERVAL_NANOS = 5_000_000_000L
     }
 }

@@ -48,7 +48,10 @@
 #define LWIP_CHECKSUM_ON_COPY           1
 
 /* --- Pool sizes --- */
-#define MEMP_NUM_TCP_PCB                256
+/* Kept in sync with the Kotlin connection cap (LwipStack/TunStack
+ * MAX_TCP_CONNECTIONS = 512). A PCB is small, so a higher ceiling costs little
+ * and avoids RST'ing connections past 128 on a busy device. */
+#define MEMP_NUM_TCP_PCB                512
 #define MEMP_NUM_TCP_PCB_LISTEN         2
 #define MEMP_NUM_UDP_PCB                64
 #define MEMP_NUM_TCP_SEG                32768
