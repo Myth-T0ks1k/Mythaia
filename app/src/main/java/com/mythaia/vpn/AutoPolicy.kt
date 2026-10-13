@@ -40,4 +40,28 @@ object AutoPolicy {
     /** Rounds run only while someone can see the screen; a dead server is caught by the failure paths. */
     fun mayMeasure(context: android.content.Context): Boolean =
         context.getSystemService(android.os.PowerManager::class.java)?.isInteractive ?: true
+
+    /**
+     * When the last round started, by the screen or the background engine, on
+     * `SystemClock.elapsedRealtime()`: it keeps counting through deep sleep, so
+     * a phone picked up in the morning sees last night's round as old. Shared,
+     * so opening the app right after a background round does not run another.
+     */
+    @Volatile
+    private var lastRoundAt = 0L
+
+    fun markRound(now: Long) {
+        lastRoundAt = now
+    }
+
+    /**
+     * Whether a round is owed at [now]. Checked every minute and the moment
+     * the screen turns on or the app comes up, so a round skipped while the
+     * screen was off runs as soon as anyone can see the result, not up to ten
+     * minutes later.
+     */
+    fun roundDue(now: Long): Boolean = lastRoundAt == 0L || now - lastRoundAt >= RECHECK_MS
+
+    /** Between checks of [roundDue] in the loops; cheap, nothing goes out unless a round is due. */
+    const val DUE_CHECK_MS = 60 * 1000L
 }

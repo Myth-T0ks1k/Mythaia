@@ -933,6 +933,10 @@ class MythaiaVpnService : VpnService() {
                         sleepTimestampMillis = System.currentTimeMillis()
                     }
                     Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                        // An Auto round skipped while the screen was off runs now.
+                        if (intent.action == Intent.ACTION_SCREEN_ON) {
+                            AutoSelectEngine.onScreenOn(context)
+                        }
                         if (sleepTimestampMillis == 0L) return
                         val sleepSecs = (System.currentTimeMillis() - sleepTimestampMillis) / 1000L
                         sleepTimestampMillis = 0L

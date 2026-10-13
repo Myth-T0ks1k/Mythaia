@@ -54,18 +54,14 @@ object AutoSelectEngine {
 
     private val reconnectTimes = ArrayDeque<Long>()
 
-    /** Called when a tunnel comes up; starts the cycle of [AutoPolicy.RECHECK_MS]. */
+    /** Called when a tunnel comes up; checks every minute whether a round is owed ([AutoPolicy.roundDue]). */
     fun onTunnelUp(context: Context) {
         val app = context.applicationContext
         loop?.cancel()
         loop = scope.launch {
             while (isActive) {
-                delay(AutoPolicy.RECHECK_MS)
-                // Screen off: no rounds (a dead server is caught by onTunnelFailed
-                // and the service's stall watch, not by measuring every server).
-                if (uiVisible || !MythaiaVpnService.isActive || !AutoPolicy.mayMeasure(app)) continue
-                runCatching { tick(app) }
-                    .onFailure { logger.warning("Background tick failed: ${it.message ?: it}") }
+                delay(AutoPolicy.DUE_CHECK_MS)
+                runRoundIfDue(app)
             }
         }
     }
@@ -73,6 +69,38 @@ object AutoSelectEngine {
     fun onTunnelDown() {
         loop?.cancel()
         loop = null
+    }
+
+    /**
+     * The screen just turned on: a round skipped while it was off runs now
+     * (after a few seconds for the radio and the tunnel to wake), so what the
+     * user meets is already the best server, not up to ten minutes later.
+     */
+    fun onScreenOn(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            delay(SCREEN_ON_SETTLE_MS)
+            runRoundIfDue(app)
+        }
+    }
+
+    @Volatile
+    private var roundRunning = false
+
+    private suspend fun runRoundIfDue(app: Context) {
+        // Screen off: no rounds (a dead server is caught by onTunnelFailed and
+        // the service's stall watch, not by measuring every server). The screen
+        // on, with the app showing: the view model's turn.
+        if (uiVisible || !MythaiaVpnService.isActive || !AutoPolicy.mayMeasure(app)) return
+        if (roundRunning || !AutoPolicy.roundDue(android.os.SystemClock.elapsedRealtime())) return
+        roundRunning = true
+        try {
+            AutoPolicy.markRound(android.os.SystemClock.elapsedRealtime())
+            runCatching { tick(app) }
+                .onFailure { logger.warning("Background tick failed: ${it.message ?: it}") }
+        } finally {
+            roundRunning = false
+        }
     }
 
     /**
@@ -186,4 +214,7 @@ object AutoSelectEngine {
 
     private const val RECONNECT_MAX = 4
     private const val RECONNECT_WINDOW_MS = 10 * 60 * 1000L
+
+    /** After the screen turns on, before measuring: the radio and a slept tunnel need a moment. */
+    private const val SCREEN_ON_SETTLE_MS = 3_000L
 }

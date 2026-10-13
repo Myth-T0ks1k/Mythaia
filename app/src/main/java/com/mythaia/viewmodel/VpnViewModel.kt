@@ -406,6 +406,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Periodic Auto rounds belong to whoever can see the screen: this
         // view model while the activity shows, the service's engine otherwise.
         com.mythaia.vpn.AutoSelectEngine.uiVisible = visible
+        if (visible) onBecameVisible()
+    }
+
+    /**
+     * The screen just came up: what it shows must be current now, not after
+     * the loops' next turn. Counters at once, a connectivity check at once
+     * (it also finds the exit), and an Auto round if one is owed (one skipped
+     * while hidden or with the screen off).
+     */
+    private fun onBecameVisible() {
+        if (_vpnStatus.value != VpnStatus.CONNECTED) return
+        if (statsJob != null && !statsTick()) stopStatsPolling()
+        if (_vpnStatus.value != VpnStatus.CONNECTED) return
+        startConnectivityProbe(firstDelayMs = 0L)
+        val gid = _activeGroupId.value
+        if (activeIsAuto && !_autoSelecting.value &&
+            com.mythaia.vpn.AutoPolicy.roundDue(android.os.SystemClock.elapsedRealtime())
+        ) {
+            viewModelScope.launch { autoSelectFastest(gid) }
+        }
     }
 
     /** Where the tunnel comes out — address and country — once a probe got through. */
@@ -426,10 +446,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             ?: com.mythaia.data.network.ExitIpProbe.throughDefaultRoute()
 
     /** A real request through the live server, shortly after connecting and then every minute. */
-    private fun startConnectivityProbe() {
+    private fun startConnectivityProbe(firstDelayMs: Long = PROBE_FIRST_DELAY_MS) {
         probeJob?.cancel()
         probeJob = viewModelScope.launch {
-            var delayMs = PROBE_FIRST_DELAY_MS
+            var delayMs = firstDelayMs
             while (true) {
                 delay(delayMs)
                 delayMs = PROBE_INTERVAL_MS
@@ -770,6 +790,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (candidates.isEmpty()) return null
 
         _autoSelecting.value = true
+        com.mythaia.vpn.AutoPolicy.markRound(android.os.SystemClock.elapsedRealtime())
         try {
             _latencyKind.value = LatencyKind.HTTP
             syncProxyServerAddresses(candidates)
@@ -871,10 +892,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         if (autoLoopJob?.isActive == true) return
         autoLoopJob = viewModelScope.launch {
             while (true) {
-                delay(AUTO_RECHECK_MS)
+                delay(com.mythaia.vpn.AutoPolicy.DUE_CHECK_MS)
                 if (_vpnStatus.value != VpnStatus.CONNECTED || !activeIsAuto) break
                 // Hidden or screen off: the engine's turn, or nobody's.
                 if (!uiVisible || !com.mythaia.vpn.AutoPolicy.mayMeasure(getApplication())) continue
+                // A round from either side counts: see AutoPolicy.roundDue.
+                if (!com.mythaia.vpn.AutoPolicy.roundDue(android.os.SystemClock.elapsedRealtime())) continue
                 autoSelectFastest(_activeGroupId.value)
             }
         }
@@ -1157,56 +1180,78 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         bindRequested = false
     }
 
+    /**
+     * The previous counter reading, for the rates. -1 until there is one:
+     * seeded from a first reading rather than zero, so rebinding to a tunnel
+     * that has been up for hours does not report all of its traffic as one
+     * second's worth, and reseeded whenever the screen was hidden.
+     */
+    private var statsLastIn = -1L
+    private var statsLastOut = -1L
+
     private fun startStatsPolling() {
         if (statsJob != null) return
         statsJob = viewModelScope.launch {
-            // Seeded from the first reading rather than zero: rebinding to a
-            // tunnel that has been up for hours must not report all of its
-            // traffic as one second's worth.
-            var lastIn = -1L
-            var lastOut = -1L
-
+            statsLastIn = -1L
+            statsLastOut = -1L
             while (true) {
                 delay(STATS_POLL_MS)
                 if (!uiVisible) {
                     // Nobody is looking: skip the update (each one recomposes
                     // the home screen) and reseed, so the first reading back
                     // is not the whole hidden stretch counted as one second.
-                    lastIn = -1L
-                    lastOut = -1L
+                    statsLastIn = -1L
+                    statsLastOut = -1L
                     continue
                 }
-                val service = vpnService
-                if (service != null && service.isRunning) {
-                    val (bytesIn, bytesOut) = service.getStats()
-
-                    if (lastIn >= 0) {
-                        val seconds = STATS_POLL_MS / 1000.0
-                        // A counter that went backwards means the stack
-                        // restarted; report nothing rather than a negative rate.
-                        _downloadSpeed.value =
-                            ((bytesIn - lastIn).coerceAtLeast(0L) / seconds).toLong()
-                        _uploadSpeed.value =
-                            ((bytesOut - lastOut).coerceAtLeast(0L) / seconds).toLong()
-                    }
-                    lastIn = bytesIn
-                    lastOut = bytesOut
-
-                    _bytesIn.value = bytesIn
-                    _bytesOut.value = bytesOut
-                    _uptimeSeconds.value = service.uptimeSeconds
-                } else if (service != null && !service.isRunning &&
-                    _vpnStatus.value == VpnStatus.CONNECTED) {
-                    // Service is bound but no longer running — it actually died
-                    _vpnStatus.value = VpnStatus.DISCONNECTED
-                    resetStats()
-                    unbindFromService()
+                if (!statsTick()) {
                     statsJob = null
                     break
                 }
-                // If service is null, binding is still in progress — keep polling
             }
         }
+    }
+
+    /**
+     * One reading of the tunnel's counters into the live readouts. False when
+     * the service turned out to have died, which ends the polling. Runs on the
+     * main thread, from the loop and when the screen comes back.
+     */
+    private fun statsTick(): Boolean {
+        val service = vpnService
+        if (service != null && service.isRunning) {
+            val (bytesIn, bytesOut) = service.getStats()
+
+            if (statsLastIn >= 0) {
+                val seconds = STATS_POLL_MS / 1000.0
+                // A counter that went backwards means the stack
+                // restarted; report nothing rather than a negative rate.
+                _downloadSpeed.value =
+                    ((bytesIn - statsLastIn).coerceAtLeast(0L) / seconds).toLong()
+                _uploadSpeed.value =
+                    ((bytesOut - statsLastOut).coerceAtLeast(0L) / seconds).toLong()
+            } else {
+                // No baseline yet (first reading, or back from hidden): the rate
+                // from before is stale, so show none until the next tick.
+                _downloadSpeed.value = 0
+                _uploadSpeed.value = 0
+            }
+            statsLastIn = bytesIn
+            statsLastOut = bytesOut
+
+            _bytesIn.value = bytesIn
+            _bytesOut.value = bytesOut
+            _uptimeSeconds.value = service.uptimeSeconds
+        } else if (service != null && !service.isRunning &&
+            _vpnStatus.value == VpnStatus.CONNECTED) {
+            // Service is bound but no longer running — it actually died
+            _vpnStatus.value = VpnStatus.DISCONNECTED
+            resetStats()
+            unbindFromService()
+            return false
+        }
+        // If service is null, binding is still in progress — keep polling
+        return true
     }
 
     /** Zeroes every live readout so a stale rate cannot linger on screen. */

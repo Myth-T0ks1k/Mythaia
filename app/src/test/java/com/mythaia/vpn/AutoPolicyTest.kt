@@ -21,6 +21,15 @@ class AutoPolicyTest {
     }
 
     @Test
+    fun `a round is owed at first and again after the recheck interval`() {
+        AutoPolicy.markRound(0L)  // 0 reads as "never"
+        assertTrue(AutoPolicy.roundDue(5_000L))
+        AutoPolicy.markRound(1_000_000L)
+        assertFalse(AutoPolicy.roundDue(1_000_000L + AutoPolicy.RECHECK_MS - 1))
+        assertTrue(AutoPolicy.roundDue(1_000_000L + AutoPolicy.RECHECK_MS))
+    }
+
+    @Test
     fun `a clearly faster server is worth the move`() {
         assertTrue(AutoPolicy.worthSwitching(liveMs = 400, candidateMs = 240))
         assertTrue(AutoPolicy.worthSwitching(liveMs = 2000, candidateMs = 900))
