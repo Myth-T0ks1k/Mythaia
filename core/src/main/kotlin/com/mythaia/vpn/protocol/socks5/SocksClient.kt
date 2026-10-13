@@ -457,39 +457,44 @@ class SocksClient(
         initialData: ByteArray? = null
     ): ProxyConnection {
         var lastError: Exception? = null
-        for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
-            if (tunnel != null && attempt > 0) break
-            if (attempt > 0) {
-                cleanupRetryResources()
-                delay(RETRY_BASE_DELAY_MS * attempt)
-            }
-            try {
-                val transport = openTransport()
-                val buffer = Socks5Buffer(transport)
-                Socks5Handshake.performConnect(
-                    buffer = buffer,
-                    transport = transport,
-                    destinationHost = destinationHost,
-                    destinationPort = destinationPort,
-                    username = configuration.socks5Username,
-                    password = configuration.socks5Password
-                )
-
-                // Wrap the transport with any leftover handshake bytes so they are
-                // delivered to the tunneled stream on the first receive() call.
-                val streamTransport = BufferedPrefixTransport(transport, buffer.remaining)
-                val conn = SocksTcpConnection(streamTransport)
-
-                if (initialData != null && initialData.isNotEmpty()) {
-                    conn.send(initialData)
+        try {
+            for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
+                if (tunnel != null && attempt > 0) break
+                if (attempt > 0) {
+                    cleanupRetryResources()
+                    delay(RETRY_BASE_DELAY_MS * attempt)
                 }
-                return conn
-            } catch (e: Exception) {
-                logger.debug("SOCKS5 connect attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
-                lastError = e
+                try {
+                    val transport = openTransport()
+                    val buffer = Socks5Buffer(transport)
+                    Socks5Handshake.performConnect(
+                        buffer = buffer,
+                        transport = transport,
+                        destinationHost = destinationHost,
+                        destinationPort = destinationPort,
+                        username = configuration.socks5Username,
+                        password = configuration.socks5Password
+                    )
+
+                    // Wrap the transport with any leftover handshake bytes so they are
+                    // delivered to the tunneled stream on the first receive() call.
+                    val streamTransport = BufferedPrefixTransport(transport, buffer.remaining)
+                    val conn = SocksTcpConnection(streamTransport)
+
+                    if (initialData != null && initialData.isNotEmpty()) {
+                        conn.send(initialData)
+                    }
+                    return conn
+                } catch (e: Exception) {
+                    logger.debug("SOCKS5 connect attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
+                    lastError = e
+                }
             }
+            throw lastError ?: ProxyError.ConnectionFailed("All SOCKS5 retry attempts failed")
+        } catch (e: Throwable) {
+            closeAfterFailedDial()
+            throw e
         }
-        throw lastError ?: ProxyError.ConnectionFailed("All SOCKS5 retry attempts failed")
     }
 
     /** Connects to a destination via the SOCKS5 server using UDP ASSOCIATE. */
@@ -498,48 +503,66 @@ class SocksClient(
         destinationPort: Int
     ): ProxyConnection {
         var lastError: Exception? = null
-        for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
-            if (tunnel != null && attempt > 0) break
-            if (attempt > 0) {
-                cleanupRetryResources()
-                delay(RETRY_BASE_DELAY_MS * attempt)
-            }
-            try {
-                val transport = openTransport()
-                val buffer = Socks5Buffer(transport)
-                val relay = Socks5Handshake.performUdpAssociate(
-                    buffer = buffer,
-                    transport = transport,
-                    username = configuration.socks5Username,
-                    password = configuration.socks5Password,
-                    serverAddress = configuration.connectAddress
-                )
-
-                // Open and protect a UDP socket to the relay endpoint.
-                val socket = DatagramSocket()
-                if (!SocketProtector.protect(socket)) {
-                    socket.close()
-                    throw ProxyError.ConnectionFailed("Failed to protect SOCKS5 UDP socket")
+        try {
+            for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
+                if (tunnel != null && attempt > 0) break
+                if (attempt > 0) {
+                    cleanupRetryResources()
+                    delay(RETRY_BASE_DELAY_MS * attempt)
                 }
                 try {
-                    socket.connect(InetSocketAddress(relay.host, relay.port))
-                } catch (e: Exception) {
-                    socket.close()
-                    throw ProxyError.ConnectionFailed("Failed to connect SOCKS5 UDP relay: ${e.message}")
-                }
+                    val transport = openTransport()
+                    val buffer = Socks5Buffer(transport)
+                    val relay = Socks5Handshake.performUdpAssociate(
+                        buffer = buffer,
+                        transport = transport,
+                        username = configuration.socks5Username,
+                        password = configuration.socks5Password,
+                        serverAddress = configuration.connectAddress
+                    )
 
-                return SocksUdpConnection(
-                    tcpTransport = transport,
-                    udpSocket = socket,
-                    destinationHost = destinationHost,
-                    destinationPort = destinationPort
-                )
-            } catch (e: Exception) {
-                logger.debug("SOCKS5 UDP attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
-                lastError = e
+                    // Open and protect a UDP socket to the relay endpoint.
+                    val socket = DatagramSocket()
+                    if (!SocketProtector.protect(socket)) {
+                        socket.close()
+                        throw ProxyError.ConnectionFailed("Failed to protect SOCKS5 UDP socket")
+                    }
+                    try {
+                        socket.connect(InetSocketAddress(relay.host, relay.port))
+                    } catch (e: Exception) {
+                        socket.close()
+                        throw ProxyError.ConnectionFailed("Failed to connect SOCKS5 UDP relay: ${e.message}")
+                    }
+
+                    return SocksUdpConnection(
+                        tcpTransport = transport,
+                        udpSocket = socket,
+                        destinationHost = destinationHost,
+                        destinationPort = destinationPort
+                    )
+                } catch (e: Exception) {
+                    logger.debug("SOCKS5 UDP attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
+                    lastError = e
+                }
             }
+            throw lastError ?: ProxyError.ConnectionFailed("All SOCKS5 UDP retry attempts failed")
+        } catch (e: Throwable) {
+            closeAfterFailedDial()
+            throw e
         }
-        throw lastError ?: ProxyError.ConnectionFailed("All SOCKS5 UDP retry attempts failed")
+    }
+
+    /**
+     * Closes what a dial opened when it produced no connection.
+     *
+     * The retry loops only clean up at the start of the NEXT attempt, so the
+     * socket of a failed last attempt — connected, handshake half done — was
+     * left to nobody: NioSocket does not close itself on EOF. The same holds
+     * for the single attempt made through a tunnel. One instance serves one
+     * dial, so there is no live connection here to protect.
+     */
+    private fun closeAfterFailedDial() {
+        runCatching { cleanupRetryResources() }
     }
 
     /** Cancels the connection and releases all resources. */

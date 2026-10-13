@@ -1,6 +1,7 @@
 package com.mythaia.vpn.protocol.shadowsocks
 
 import com.mythaia.vpn.NativeBridge
+import com.mythaia.vpn.protocol.vless.encryption.Blake3Kdf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -103,24 +104,29 @@ object ShadowsocksKeyDerivation {
 
     /** First 16 bytes of BLAKE3(data). Used for the identity-header pskHash. */
     fun blake3Hash16(data: ByteArray): ByteArray {
-        val hash = NativeBridge.nativeBlake3Hash(data)
+        val hash = if (NativeBridge.isLoaded) NativeBridge.nativeBlake3Hash(data) else Blake3Kdf.hash(data)
         return hash.copyOf(16)
     }
 
     /** BLAKE3 DeriveKey: context "shadowsocks 2022 identity subkey", input = psk + salt. */
-    fun deriveIdentitySubkey(psk: ByteArray, salt: ByteArray, keySize: Int): ByteArray {
-        val input = psk + salt
-        return NativeBridge.nativeBlake3DeriveKey(
-            "shadowsocks 2022 identity subkey", input, keySize
-        )
-    }
+    fun deriveIdentitySubkey(psk: ByteArray, salt: ByteArray, keySize: Int): ByteArray =
+        blake3DeriveKey("shadowsocks 2022 identity subkey", psk + salt, keySize)
 
     /** BLAKE3 DeriveKey: context "shadowsocks 2022 session subkey", input = psk + salt. */
-    fun deriveSessionKey(psk: ByteArray, salt: ByteArray, keySize: Int): ByteArray {
-        val input = psk + salt
-        return NativeBridge.nativeBlake3DeriveKey(
-            "shadowsocks 2022 session subkey", input, keySize
-        )
+    fun deriveSessionKey(psk: ByteArray, salt: ByteArray, keySize: Int): ByteArray =
+        blake3DeriveKey("shadowsocks 2022 session subkey", psk + salt, keySize)
+
+    /**
+     * The native BLAKE3 when the library is loaded, else the Kotlin port the
+     * VLESS encryption ships — so a build without the library (the JVM unit
+     * tests, a desktop without its DLL) still derives the same keys. BLAKE3 is
+     * an XOF whose shorter outputs are prefixes of longer ones, so a 16-byte
+     * key is the first half of the 32-byte derivation.
+     */
+    private fun blake3DeriveKey(context: String, input: ByteArray, keySize: Int): ByteArray {
+        if (NativeBridge.isLoaded) return NativeBridge.nativeBlake3DeriveKey(context, input, keySize)
+        require(keySize <= 32) { "BLAKE3 fallback derives at most 32 bytes" }
+        return Blake3Kdf.deriveKey(context.toByteArray(Charsets.US_ASCII), input).copyOf(keySize)
     }
 
     private fun padBase64(string: String): String {

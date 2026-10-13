@@ -253,7 +253,10 @@ class AnyTlsSession(
     private suspend fun dispatch(frame: Frame) {
         when (frame.command) {
             // A zero-length push is not data. Forwarding it would surface as
-            // an empty read, which the relay treats as end of stream.
+            // an empty read, which the relay treats as end of stream. The
+            // stream may hold this loop here until its reader catches up —
+            // deliberately, so the socket's TCP window is what throttles the
+            // server rather than the heap (see AnyTlsStream.onData).
             AnyTlsProtocol.CMD_PSH ->
                 if (frame.data.isNotEmpty()) streams[frame.streamId]?.onData(frame.data)
 

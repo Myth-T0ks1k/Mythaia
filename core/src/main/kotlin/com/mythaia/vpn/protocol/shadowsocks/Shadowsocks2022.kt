@@ -130,10 +130,21 @@ class Shadowsocks2022Connection(
             writeIdentityHeaders(output, salt)
         }
 
-        // Fixed header (11 bytes): type(1) + timestamp(8) + variableHeaderLen(2).
+        // A small first write is padded so the handshake has no fixed size; an
+        // empty one must be, or the header alone would be the fingerprint.
         val paddingLen = if (payload.size < MAX_PADDING_LENGTH) random.nextInt(MAX_PADDING_LENGTH) + 1 else 0
-        val variableHeaderLen = addressHeader.size + 2 + paddingLen + payload.size
 
+        // The variable header is one AEAD chunk, so it is bound by the chunk
+        // limit like any other — its length field would wrap past 65535, and
+        // servers read it into a chunk-sized buffer. The first write can be
+        // everything the app queued during the dial (hundreds of KB), so only
+        // what fits goes in the header; the rest follows as ordinary chunks in
+        // the same write.
+        val headerRoom = ShadowsocksAEADWriter.MAX_PAYLOAD_SIZE - addressHeader.size - 2 - paddingLen
+        val inHeader = minOf(payload.size, headerRoom)
+        val variableHeaderLen = addressHeader.size + 2 + paddingLen + inHeader
+
+        // Fixed header (11 bytes): type(1) + timestamp(8) + variableHeaderLen(2).
         val fixedHeader = ByteArrayOutputStream(11)
         fixedHeader.write(HEADER_TYPE_CLIENT.toInt())
         val timestamp = System.currentTimeMillis() / 1000
@@ -143,17 +154,21 @@ class Shadowsocks2022Connection(
         val sealedFixed = ShadowsocksAEADCrypto.seal(cipher, sessionKey, writeNonce.next(), fixedHeader.toByteArray())
         output.write(sealedFixed)
 
-        // Variable header: address + paddingLen(2) + padding + payload.
+        // Variable header: address + paddingLen(2) + padding + initial payload.
         val variableHeader = ByteArrayOutputStream(variableHeaderLen)
         variableHeader.write(addressHeader)
         variableHeader.write(paddingLen.toUShortBigEndian())
         if (paddingLen > 0) {
             variableHeader.write(ByteArray(paddingLen))
         }
-        variableHeader.write(payload)
+        variableHeader.write(payload, 0, inHeader)
 
         val sealedVariable = ShadowsocksAEADCrypto.seal(cipher, sessionKey, writeNonce.next(), variableHeader.toByteArray())
         output.write(sealedVariable)
+
+        if (inHeader < payload.size) {
+            output.write(sealChunks(payload.copyOfRange(inHeader, payload.size)))
+        }
 
         return output.toByteArray()
     }

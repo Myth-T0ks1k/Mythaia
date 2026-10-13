@@ -80,9 +80,20 @@ object TrojanProtocol {
         return out
     }
 
+    /**
+     * Frames one datagram. A payload over [MAX_UDP_PAYLOAD_LENGTH] is refused
+     * rather than cut: a truncated datagram is corrupt at the receiver (a DNS
+     * reply with half its records, a QUIC packet that fails its AEAD), and
+     * failing loudly lets the caller drop the whole datagram like a lost packet.
+     */
     fun encodeUDPPacket(host: String, port: Int, payload: ByteArray): ByteArray {
+        if (payload.size > MAX_UDP_PAYLOAD_LENGTH) {
+            throw ProxyError.ProtocolError(
+                "Trojan: UDP payload of ${payload.size} bytes exceeds $MAX_UDP_PAYLOAD_LENGTH"
+            )
+        }
         val addr = encodeAddressPort(host, port)
-        val length = minOf(payload.size, MAX_UDP_PAYLOAD_LENGTH)
+        val length = payload.size
         val out = ByteArray(addr.size + 2 + 2 + length)
         var idx = 0
         System.arraycopy(addr, 0, out, idx, addr.size); idx += addr.size

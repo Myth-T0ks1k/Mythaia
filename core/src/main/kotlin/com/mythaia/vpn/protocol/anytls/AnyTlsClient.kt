@@ -10,8 +10,6 @@ import com.mythaia.vpn.protocol.tls.TlsError
 import com.mythaia.vpn.protocol.tls.TlsRecordConnection
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -146,7 +144,15 @@ class AnyTlsClient(
      * would announce the default digest again and be told to update again.
      */
     private class Pool {
-        private val lock = Mutex()
+        /**
+         * One monitor for every path into [sessions] and [idle], including
+         * [markIdle], which a session invokes from its own stream-close path
+         * — a plain callback that cannot take a suspending lock. The earlier
+         * mutex left it writing the map unguarded while [takeIdle] and
+         * [sweep] iterated it under the lock. Nothing in these critical
+         * sections suspends, so a monitor serves them all.
+         */
+        private val lock = Any()
         private val sessions = ArrayList<AnyTlsSession>()
 
         /** Idle sessions and when each became idle; the oldest retire first. */
@@ -156,7 +162,7 @@ class AnyTlsClient(
         @Volatile
         var scheme: AnyTlsPaddingScheme = AnyTlsPaddingScheme.DEFAULT
 
-        suspend fun register(session: AnyTlsSession) = lock.withLock {
+        fun register(session: AnyTlsSession) = synchronized(lock) {
             session.onIdle = { markIdle(session) }
             sessions.add(session)
             sweep()
@@ -172,7 +178,7 @@ class AnyTlsClient(
          * were opening its first stream — and the first stream is what composes
          * packet 1, whose shape the scheme defines.
          */
-        suspend fun takeIdle(): AnyTlsSession? = lock.withLock {
+        fun takeIdle(): AnyTlsSession? = synchronized(lock) {
             sessions.removeAll { it.isClosed }
             sweep()
             val chosen = idle.keys.lastOrNull { !it.isClosed && it.activeStreams == 0 }
@@ -180,7 +186,7 @@ class AnyTlsClient(
             chosen
         }
 
-        private fun markIdle(session: AnyTlsSession) {
+        private fun markIdle(session: AnyTlsSession) = synchronized(lock) {
             if (!session.isClosed) idle[session] = System.currentTimeMillis()
         }
 
@@ -209,7 +215,7 @@ class AnyTlsClient(
             }
         }
 
-        suspend fun shutdown() = lock.withLock {
+        fun shutdown() = synchronized(lock) {
             sessions.forEach { it.close() }
             sessions.clear()
             idle.clear()
@@ -219,7 +225,7 @@ class AnyTlsClient(
             private val pools = ConcurrentHashMap<UUID, Pool>()
             fun of(id: UUID): Pool = pools.getOrPut(id) { Pool() }
 
-            suspend fun shutdownAll() {
+            fun shutdownAll() {
                 pools.values.forEach { it.shutdown() }
                 pools.clear()
             }

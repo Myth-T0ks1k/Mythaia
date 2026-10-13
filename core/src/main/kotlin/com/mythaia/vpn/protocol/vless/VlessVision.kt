@@ -273,16 +273,6 @@ fun visionFilterTLS(data: ByteArray, state: VisionTrafficState) {
     }
 }
 
-/** Detects a Client Hello in outgoing data without decrementing the filter counter. */
-fun visionDetectClientHello(data: ByteArray, state: VisionTrafficState) {
-    if (data.size < 6) return
-
-    if (data[0] == 0x16.toByte() && data[1] == 0x03.toByte() &&
-        data[5] == TLS_HANDSHAKE_TYPE_CLIENT_HELLO) {
-        state.isTLS = true
-    }
-}
-
 fun isCompleteTlsRecord(data: ByteArray): Boolean {
     if (data.size < 5) return false
     if (data[0] != 0x17.toByte() || data[1] != 0x03.toByte() || data[2] != 0x03.toByte()) return false
@@ -327,17 +317,26 @@ class VlessVisionConnection(
     private val lock = Any()
 
     /**
-     * Sends an empty padding frame to camouflage the VLESS header when no initial
-     * data is available. MUST be synchronous — using sendAsync would race with the
-     * caller's subsequent VLESS data, which could arrive at the server before the
-     * Vision padding frame containing the UUID.
+     * Sends the VLESS request [header] and the first padded frame as one write.
+     *
+     * Xray composes them through one buffered writer, and for a reason: a
+     * header in a TLS record of its own has a length an observer can read off
+     * the wire, and hiding that length is exactly what the padding is for.
+     * With no [initialData] the frame is pure long padding, as Xray inserts
+     * when the app has nothing to say within its wait. Synchronous on purpose:
+     * an async write could let the caller's next frame overtake the one that
+     * carries the UUID.
      */
-    suspend fun sendEmptyPadding() {
-        val padded: ByteArray
+    suspend fun sendRequest(header: ByteArray, initialData: ByteArray?) {
+        val frame: ByteArray
         synchronized(lock) {
-            padded = visionPadding(null, VisionCommand.PADDING_CONTINUE, trafficState, true)
+            frame = if (initialData == null || initialData.isEmpty()) {
+                visionPadding(null, VisionCommand.PADDING_CONTINUE, trafficState, true)
+            } else {
+                processSendData(initialData)
+            }
         }
-        innerConnection.send(padded)
+        innerConnection.send(header + frame)
     }
 
     override val isConnected: Boolean get() = innerConnection.isConnected
@@ -373,8 +372,12 @@ class VlessVisionConnection(
     }
 
     private fun processSendData(data: ByteArray): ByteArray {
-        if (!trafficState.isTLS) {
-            visionDetectClientHello(data, trafficState)
+        // Outbound bytes go through the same filter as inbound ones, as in
+        // Xray's VisionWriter: it is what notices the ClientHello (so the
+        // padding becomes long), and each write it inspects counts against the
+        // same packet budget the reader draws on.
+        if (trafficState.numberOfPacketsToFilter > 0) {
+            visionFilterTLS(data, trafficState)
         }
 
         if (trafficState.writerDirectCopy) return data
@@ -478,15 +481,12 @@ class VlessVisionConnection(
     override suspend fun receive(): ByteArray? = receiveRaw()
 
     private fun processReceiveData(data: ByteArray): ByteArray {
-        if (trafficState.numberOfPacketsToFilter > 0) {
-            visionFilterTLS(data, trafficState)
-        }
-
         if (trafficState.readerDirectCopy) return data
 
+        var content = data
         if (trafficState.readerWithinPaddingBuffers || trafficState.numberOfPacketsToFilter > 0) {
             val cursor = DataCursor(data)
-            val unpadded = visionUnpadding(cursor, trafficState)
+            content = visionUnpadding(cursor, trafficState)
 
             if (trafficState.remainingContent > 0 || trafficState.remainingPadding > 0 || trafficState.currentCommand == 0) {
                 trafficState.readerWithinPaddingBuffers = true
@@ -496,11 +496,19 @@ class VlessVisionConnection(
                 trafficState.readerWithinPaddingBuffers = false
                 trafficState.readerDirectCopy = true
             }
-
-            return unpadded
         }
 
-        return data
+        // The filter looks for the ServerHello, which only exists once the
+        // padding is off: run on the padded bytes (which begin with the UUID)
+        // it never matched, TLS 1.3 was never detected, and the uplink stayed
+        // double-encrypted for the life of the connection. Xray's VisionReader
+        // unpads first for the same reason, and like it skips an empty result
+        // (pure padding) so it does not spend a packet of the budget.
+        if (content.isNotEmpty() && trafficState.numberOfPacketsToFilter > 0) {
+            visionFilterTLS(content, trafficState)
+        }
+
+        return content
     }
 
     override fun cancel() {

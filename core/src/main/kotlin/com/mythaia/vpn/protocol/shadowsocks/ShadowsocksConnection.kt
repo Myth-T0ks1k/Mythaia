@@ -8,8 +8,9 @@ private val logger = MythaiaLogger("Shadowsocks")
 
 /**
  * Shadowsocks TCP connection wrapping a transport with AEAD encryption. The address
- * header is prepended to the first send (encrypted as part of the stream).
- * Shadowsocks has no response header.
+ * header is prepended to the first send (encrypted as part of the stream); an
+ * empty first send therefore emits a chunk holding just the header, which is how
+ * [ShadowsocksClient] flushes it at connect time. Shadowsocks has no response header.
  */
 class ShadowsocksConnection(
     private val transport: Transport,

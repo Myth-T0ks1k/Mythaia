@@ -1,10 +1,12 @@
 package com.mythaia.vpn.protocol.trojan
 
+import com.mythaia.data.model.ProxyError
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.security.MessageDigest
 
@@ -157,11 +159,20 @@ class TrojanProtocolTest {
     }
 
     @Test
-    fun `an oversized payload is capped at what a server accepts`() {
+    fun `an oversized payload is refused rather than silently cut`() {
+        // A truncated datagram is corrupt at the receiver; the caller must
+        // get to drop it whole, which it cannot if the encoder hides the loss.
         val payload = ByteArray(TrojanProtocol.MAX_UDP_PAYLOAD_LENGTH + 500)
-        val packet = TrojanProtocol.encodeUDPPacket("example.com", 53, payload)
-        val decoded = TrojanProtocol.tryDecodeUDPPacket(packet)!!
-        assertEquals(TrojanProtocol.MAX_UDP_PAYLOAD_LENGTH, decoded.payload.size)
+        try {
+            TrojanProtocol.encodeUDPPacket("example.com", 53, payload)
+            fail("expected a protocol error")
+        } catch (_: ProxyError.ProtocolError) {
+            // expected
+        }
+
+        // Exactly the maximum still goes through intact.
+        val packet = TrojanProtocol.encodeUDPPacket("example.com", 53, ByteArray(TrojanProtocol.MAX_UDP_PAYLOAD_LENGTH))
+        assertEquals(TrojanProtocol.MAX_UDP_PAYLOAD_LENGTH, TrojanProtocol.tryDecodeUDPPacket(packet)!!.payload.size)
     }
 
     private fun be16(bytes: ByteArray, at: Int): Int =

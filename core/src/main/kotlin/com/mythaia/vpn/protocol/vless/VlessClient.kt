@@ -204,10 +204,30 @@ class VlessClient(
         // fails the dial rather than being swallowed — swallowing would silently
         // downgrade to plaintext and leak the VLESS UUID and payload in the clear.
         val encryption = VlessEncryptionConfig.parse(configuration.encryption)
-        if (encryption != null) {
-            return connectEncrypted(encryption, command, destinationHost, destinationPort, initialData)
-        }
 
+        try {
+            if (encryption != null) {
+                return connectEncrypted(encryption, command, destinationHost, destinationPort, initialData)
+            }
+            return dial(command, destinationHost, destinationPort, initialData)
+        } catch (e: Throwable) {
+            // A dial that produced no connection leaves whatever its last
+            // attempt opened — the socket, the TLS or WebSocket on top — in
+            // the resource fields, and nothing else will ever close them:
+            // the retry loops only clean up at the start of the NEXT attempt,
+            // and NioSocket does not close itself on EOF. One instance serves
+            // one dial, so there is no live connection here to protect.
+            runCatching { cleanupRetryResources() }
+            throw e
+        }
+    }
+
+    private suspend fun dial(
+        command: VlessCommand,
+        destinationHost: String,
+        destinationPort: Int,
+        initialData: ByteArray?
+    ): ProxyConnection {
         return when (configuration.transport) {
             "ws" -> {
                 if (isVisionFlow) {
@@ -1170,44 +1190,9 @@ class VlessClient(
         destinationPort: Int,
         initialData: ByteArray?
     ): ProxyConnection {
-        val isVision = isVisionFlow && (command == VlessCommand.TCP || command == VlessCommand.MUX)
-
-        var requestData = VlessProtocol.encodeRequestHeader(
-            uuid = configuration.uuid,
-            command = command,
-            destinationAddress = destinationHost,
-            destinationPort = destinationPort,
-            flow = if (isVision) VISION_FLOW else null
-        )
-
-        if (initialData != null && !isVision) {
-            requestData = requestData + initialData
-        }
-
         val tlsConn = tlsConnection
             ?: throw ProxyError.ConnectionFailed("Connection cancelled")
-        tlsConn.send(requestData)
-
-        val baseConn = VlessTlsConnection(tlsConn)
-
-        if (command == VlessCommand.UDP) {
-            return VlessUdpConnection(baseConn)
-        }
-
-        if (isVision) {
-            // Vision requires outer TLS 1.3.
-            validateOuterTlsForVision(baseConn)?.let { throw it }
-
-            val vision = wrapWithVision(baseConn)
-            if (initialData != null) {
-                vision.send(initialData)
-            } else {
-                vision.sendEmptyPadding()
-            }
-            return vision
-        }
-
-        return baseConn
+        return completeHandshake(VlessTlsConnection(tlsConn), command, destinationHost, destinationPort, initialData)
     }
 
     private suspend fun performHandshake(
@@ -1216,45 +1201,9 @@ class VlessClient(
         destinationPort: Int,
         initialData: ByteArray?
     ): ProxyConnection {
-        val isVision = isVisionFlow && (command == VlessCommand.TCP || command == VlessCommand.MUX)
-
-        var requestData = VlessProtocol.encodeRequestHeader(
-            uuid = configuration.uuid,
-            command = command,
-            destinationAddress = destinationHost,
-            destinationPort = destinationPort,
-            flow = if (isVision) VISION_FLOW else null
-        )
-
-        // Vision needs initialData passed through its own padding path; don't append to header.
-        if (initialData != null && !isVision) {
-            requestData = requestData + initialData
-        }
-
         val transport: Transport = tunnelTransport ?: connection
             ?: throw ProxyError.ConnectionFailed("Connection cancelled")
-        transport.send(requestData)
-
-        val baseConn = VlessDirectConnection(transport)
-
-        if (command == VlessCommand.UDP) {
-            return VlessUdpConnection(baseConn)
-        }
-
-        if (isVision) {
-            // Vision requires outer TLS 1.3.
-            validateOuterTlsForVision(baseConn)?.let { throw it }
-
-            val vision = wrapWithVision(baseConn)
-            if (initialData != null) {
-                vision.send(initialData)
-            } else {
-                vision.sendEmptyPadding()
-            }
-            return vision
-        }
-
-        return baseConn
+        return completeHandshake(VlessDirectConnection(transport), command, destinationHost, destinationPort, initialData)
     }
 
     private suspend fun performRealityHandshake(
@@ -1263,9 +1212,36 @@ class VlessClient(
         destinationPort: Int,
         initialData: ByteArray?
     ): ProxyConnection {
-        val isVision = isVisionFlow && (command == VlessCommand.TCP || command == VlessCommand.MUX)
+        val realityConn = realityConnection
+            ?: throw ProxyError.ConnectionFailed("Connection cancelled")
+        return completeHandshake(VlessRealityConnection(realityConn), command, destinationHost, destinationPort, initialData)
+    }
 
-        var requestData = VlessProtocol.encodeRequestHeader(
+    /**
+     * Writes the request over [baseConn] and wraps it for [command].
+     *
+     * Vision is checked against the outer transport before anything is
+     * written: the header carries the UUID, and checking afterwards put it on
+     * the wire in the clear — once per attempt — for a profile that asked for
+     * Vision over plain TCP. The header then shares its write with the first
+     * padded frame (see [VlessVisionConnection.sendRequest]); a header in a
+     * record of its own has a size the padding exists to hide. Off the Vision
+     * path the first payload is simply appended to the header, as before.
+     */
+    private suspend fun completeHandshake(
+        baseConn: VlessConnection,
+        command: VlessCommand,
+        destinationHost: String,
+        destinationPort: Int,
+        initialData: ByteArray?
+    ): ProxyConnection {
+        val isVision = isVisionFlow && (command == VlessCommand.TCP || command == VlessCommand.MUX)
+        if (isVision) {
+            // Vision requires outer TLS 1.3.
+            validateOuterTlsForVision(baseConn)?.let { throw it }
+        }
+
+        val requestData = VlessProtocol.encodeRequestHeader(
             uuid = configuration.uuid,
             command = command,
             destinationAddress = destinationHost,
@@ -1273,34 +1249,15 @@ class VlessClient(
             flow = if (isVision) VISION_FLOW else null
         )
 
-        if (initialData != null && !isVision) {
-            requestData = requestData + initialData
-        }
-
-        val realityConn = realityConnection
-            ?: throw ProxyError.ConnectionFailed("Connection cancelled")
-        realityConn.send(requestData)
-
-        val baseConn = VlessRealityConnection(realityConn)
-
-        if (command == VlessCommand.UDP) {
-            return VlessUdpConnection(baseConn)
-        }
-
         if (isVision) {
-            // Vision requires outer TLS 1.3.
-            validateOuterTlsForVision(baseConn)?.let { throw it }
-
             val vision = wrapWithVision(baseConn)
-            if (initialData != null) {
-                vision.send(initialData)
-            } else {
-                vision.sendEmptyPadding()
-            }
+            vision.sendRequest(requestData, initialData)
             return vision
         }
 
-        return baseConn
+        baseConn.sendRaw(if (initialData != null) requestData + initialData else requestData)
+
+        return if (command == VlessCommand.UDP) VlessUdpConnection(baseConn) else baseConn
     }
 
     /**

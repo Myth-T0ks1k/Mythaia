@@ -36,12 +36,24 @@ class VmessChunkStream(
     private val globalPadding: Boolean
 ) {
 
-    /** The largest value the two-byte length field can hold. */
-    private val maxChunk = 16 * 1024 - 1
-
     private companion object {
         /** GlobalPadding draws its length from the mask modulo this. */
         const val MAX_PADDING = 64
+
+        /**
+         * The largest chunk the two-byte length field can describe, and so the
+         * largest a peer may send. sing-box frames 16384-byte chunks and Xray
+         * reads whatever the field says; a tighter cap here rejected a valid
+         * stream as "not plausible" on its first large chunk.
+         */
+        const val MAX_WIRE_CHUNK = 0xFFFF
+
+        /**
+         * What this side writes per chunk. Kept well under the field's maximum
+         * so the chunk fits any reader's buffer; Xray's own writer stops at its
+         * 8 KiB buffer size.
+         */
+        const val WRITE_CHUNK = 16 * 1024 - 1
     }
 
     private val shake: SHAKEDigest? = if (masking || globalPadding) {
@@ -168,7 +180,7 @@ class VmessChunkStream(
      * the largest padding the mask stream can ask for.
      */
     private val payloadPerChunk: Int
-        get() = maxChunk - tagSize - MAX_PADDING
+        get() = WRITE_CHUNK - tagSize - MAX_PADDING
 
     /** The empty chunk that tells the peer the stream is finished. */
     fun encodeTerminator(): ByteArray {
@@ -236,7 +248,7 @@ class VmessChunkStream(
         val raw = ((input[from].toInt() and 0xFF) shl 8) or (input[from + 1].toInt() and 0xFF)
         val onWire = if (masking) raw xor mask else raw
 
-        if (onWire < paddingLength || onWire > maxChunk) {
+        if (onWire < paddingLength || onWire > MAX_WIRE_CHUNK) {
             throw ProxyError.ProtocolError("VMess: chunk length $onWire is not plausible")
         }
         if (input.size - from - 2 < onWire) return Decoded.NeedMore

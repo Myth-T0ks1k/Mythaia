@@ -43,8 +43,9 @@ class ShadowsocksClient(
                 delay(RETRY_BASE_DELAY_MS * (attempt - 1))
             }
 
+            var transport: Transport? = null
             try {
-                val transport = connectTransport()
+                transport = connectTransport()
                 val addressHeader = ShadowsocksProtocol.buildAddressHeader(destinationHost, destinationPort)
 
                 val connection = if (cipher.isSS2022) {
@@ -56,12 +57,20 @@ class ShadowsocksClient(
                     ShadowsocksConnection(transport, cipher, masterKey, addressHeader)
                 }
 
-                if (initialData != null && initialData.isNotEmpty()) {
-                    connection.send(initialData)
-                }
+                // The address header rides the first write, so it goes out now
+                // even when the app has sent nothing: a server-speaks-first
+                // protocol (SSH, SMTP, IMAP, MySQL) never gets its banner until
+                // the server knows where to connect. A chunk carrying only the
+                // header is valid AEAD, and 2022 pads an empty initial payload.
+                // The tunnel has already waited for the app's first bytes and
+                // acks them itself once this returns.
+                connection.send(initialData ?: ByteArray(0))
 
                 return connection
             } catch (e: Exception) {
+                // Nothing else holds a transport that never became a returned
+                // connection, so a failed attempt would otherwise leak it.
+                runCatching { transport?.forceCancel() }
                 if (e is com.mythaia.vpn.protocol.tls.TlsError.CertificateValidationFailed) throw e
                 lastError = e
                 logger.debug("Connect attempt $attempt failed: ${e.message}")

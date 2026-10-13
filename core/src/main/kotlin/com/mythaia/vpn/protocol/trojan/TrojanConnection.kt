@@ -12,7 +12,9 @@ private val logger = MythaiaLogger("Trojan")
  *
  * The header — `hex(sha224(password)) + CRLF + cmd + addr:port + CRLF` — is
  * prepended to the first `sendRaw` payload and travels inside the same TLS
- * record. The receive path is a pass-through because Trojan servers reply
+ * record; an empty first payload writes exactly the header, which is how
+ * [TrojanClient] flushes it at connect time for flows where the server speaks
+ * first. The receive path is a pass-through because Trojan servers reply
  * without any framing of their own.
  */
 class TrojanConnection(

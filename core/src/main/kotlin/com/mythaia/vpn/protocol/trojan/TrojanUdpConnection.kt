@@ -34,15 +34,31 @@ class TrojanUdpConnection(
         get() = tlsVersion
 
     override suspend fun sendRaw(data: ByteArray) {
+        if (tooLarge(data)) return
         tlsConnection.send(frame(data))
     }
 
     override fun sendRawAsync(data: ByteArray) {
+        if (tooLarge(data)) return
         try {
             tlsConnection.sendAsync(frame(data))
         } catch (e: Exception) {
             logger.error("[Trojan-UDP] Send error: ${e.message}")
         }
+    }
+
+    /**
+     * A datagram the framing cannot carry is dropped here, as the network
+     * would drop an oversized packet — not truncated (the receiver would get
+     * garbage) and not fatal (one odd packet must not end the association).
+     */
+    private fun tooLarge(data: ByteArray): Boolean {
+        if (data.size <= TrojanProtocol.MAX_UDP_PAYLOAD_LENGTH) return false
+        logger.warning(
+            "[Trojan-UDP] Dropping ${data.size}-byte datagram to $dstHost:$dstPort; " +
+                "the framing carries at most ${TrojanProtocol.MAX_UDP_PAYLOAD_LENGTH}"
+        )
+        return true
     }
 
     override suspend fun receiveRaw(): ByteArray? = deliverNextPacket()

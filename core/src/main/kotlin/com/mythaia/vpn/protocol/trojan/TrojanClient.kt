@@ -40,8 +40,16 @@ class TrojanClient(
 
         val opened = connectTransport(tlsConfig)
         val trojan = TrojanConnection(opened.transport, opened.tlsVersion, password, destinationHost, destinationPort)
-        if (initialData != null && initialData.isNotEmpty()) {
-            trojan.send(initialData)
+        try {
+            // The request header rides the first write, so it goes out now even
+            // when the app has sent nothing yet: SSH, SMTP, IMAP, MySQL all wait
+            // for the server's banner, and the server cannot send one until it
+            // has learnt the destination. The tunnel has already waited for the
+            // app's first bytes and acks them itself once this returns.
+            trojan.send(initialData ?: ByteArray(0))
+        } catch (e: Exception) {
+            runCatching { opened.transport.forceCancel() }
+            throw e
         }
         return trojan
     }

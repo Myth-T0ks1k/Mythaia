@@ -352,6 +352,30 @@ class VmessTest {
     }
 
     @Test
+    fun `a chunk as large as the length field allows is accepted`() {
+        // sing-box frames 16384-byte chunks; the field is sixteen bits, so a
+        // peer may send up to 65535. Rejecting either as "not plausible" broke
+        // the stream on its first large download chunk.
+        val reader = VmessChunkStream(
+            ByteArray(16) { it.toByte() }, ByteArray(16) { (it * 3).toByte() },
+            VmessSecurity.NONE, masking = false, globalPadding = false
+        )
+        val payload = ByteArray(16384) { (it % 251).toByte() }
+        val wire = byteArrayOf(0x40, 0x00) + payload
+        val decoded = reader.decode(wire, 0)
+        assertTrue("expected a chunk, got $decoded", decoded is VmessChunkStream.Decoded.Chunk)
+        decoded as VmessChunkStream.Decoded.Chunk
+        assertArrayEquals(payload, decoded.payload)
+        assertEquals(wire.size, decoded.consumed)
+
+        // The field's maximum is waited for, not refused.
+        assertEquals(
+            VmessChunkStream.Decoded.NeedMore,
+            reader.decode(byteArrayOf(0xFF.toByte(), 0xFF.toByte()) + ByteArray(10), 0)
+        )
+    }
+
+    @Test
     fun `a tampered chunk fails authentication rather than decoding`() {
         val (writer, reader) = streams(VmessSecurity.AES_128_GCM, masking = false, padding = false)
         val wire = writer.encode("secret".toByteArray())
