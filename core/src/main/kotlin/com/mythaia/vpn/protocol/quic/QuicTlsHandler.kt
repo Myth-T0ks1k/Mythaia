@@ -109,6 +109,7 @@ class QuicTlsHandler(
     private var keyDerivation: Tls13KeyDerivation? = null
     private var handshakeSecret: ByteArray? = null
     private var clientHandshakeSecret: ByteArray? = null
+    private var serverHandshakeSecret: ByteArray? = null
     private var clientHello: ByteArray? = null
 
     /** Set with the application keys; what [exportKeyingMaterial] derives from. */
@@ -259,7 +260,7 @@ class QuicTlsHandler(
                 ENCRYPTED_EXTENSIONS -> processEncryptedExtensions(connection, body)
                 CERTIFICATE -> processCertificate(body)
                 CERTIFICATE_VERIFY -> processCertificateVerify(body)
-                FINISHED -> processServerFinished(connection)
+                FINISHED -> processServerFinished(connection, body)
                 NEW_SESSION_TICKET -> Outcome.OK
                 else -> {
                     logger.debug("[QUIC-TLS] Ignoring handshake message type $type")
@@ -311,6 +312,7 @@ class QuicTlsHandler(
         val (secret, keys) = derivation.deriveHandshakeKeys(shared, transcript)
         handshakeSecret = secret
         clientHandshakeSecret = keys.clientTrafficSecret
+        serverHandshakeSecret = keys.serverTrafficSecret
 
         // The traffic secrets, not the expanded keys: ngtcp2 runs its own
         // `quic key` / `quic iv` / `quic hp` expansion over these.
@@ -459,13 +461,25 @@ class QuicTlsHandler(
      * The verify data covers the transcript up to but not including the
      * Finished itself, which is why the snapshot was taken on the way in.
      */
-    private fun processServerFinished(connection: Long): Outcome {
+    private fun processServerFinished(connection: Long, body: ByteArray): Outcome {
         val derivation = keyDerivation ?: return fail("Finished arrived before ServerHello")
         val secret = handshakeSecret ?: return fail("no handshake secret")
 
         // Before any application key exists: past this point the tunnel would
         // be carrying real traffic to whoever answered.
         if (validateCertificate() == Outcome.FAILED) return Outcome.FAILED
+
+        // RFC 8446 4.4.4: the server's verify_data is
+        // HMAC(server finished_key, transcript hash up to but not including
+        // this Finished). The snapshot was taken on the way in, before the
+        // message was appended. A mismatch means the handshake was tampered
+        // with — stop here, before any 1-RTT key is installed or ngtcp2 is
+        // told the handshake completed.
+        val serverSecret = serverHandshakeSecret ?: return fail("no server handshake secret")
+        val expected = derivation.computeFinishedVerifyData(serverSecret, transcriptBeforeServerFinished)
+        if (!constantTimeEquals(body, expected)) {
+            return fail("server Finished verify data did not match")
+        }
 
         // RFC 8446 7.1: the application secrets are derived over the
         // transcript through the server Finished, which `transcript` already
@@ -555,6 +569,19 @@ class QuicTlsHandler(
             at += length
         }
         return null
+    }
+
+    /**
+     * Compares in time that depends only on the lengths, never on where the
+     * bytes first differ. A verify_data is not a key, but a timing oracle on
+     * it would let a Finished be forged byte by byte, so this matters — the
+     * same guarantee [com.mythaia.vpn.protocol.tls.TlsClient] relies on.
+     */
+    private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
+        if (a.size != b.size) return false
+        var diff = 0
+        for (i in a.indices) diff = diff or (a[i].toInt() xor b[i].toInt())
+        return diff == 0
     }
 
     private fun fail(reason: String): Outcome {

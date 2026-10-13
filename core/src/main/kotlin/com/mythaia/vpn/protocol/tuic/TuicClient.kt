@@ -170,7 +170,15 @@ class TuicClient(private val configuration: ProxyConfiguration) {
             throw ProxyError.ProtocolError("TUIC: QUIC handshake failed")
         }
 
-        authenticate(connection)
+        try {
+            authenticate(connection)
+        } catch (e: Throwable) {
+            // Otherwise the freshly built connection — socket, read/timer
+            // threads, ngtcp2 handle — leaks until idle timeout, and every
+            // later dial builds and leaks another.
+            connection.close()
+            throw e
+        }
         startHeartbeat(connection)
 
         quic = connection
@@ -229,7 +237,14 @@ class TuicClient(private val configuration: ProxyConfiguration) {
 
     private companion object {
         const val ALPN = "h3"
-        const val HEARTBEAT_INTERVAL_MS = 10_000L
+
+        /**
+         * tuic-client's own default. The server's `max_idle_time` defaults to
+         * 10 s, so a 10 s heartbeat raced the server's idle timer and often
+         * arrived after it had already dropped the association; 3 s stays well
+         * inside it.
+         */
+        const val HEARTBEAT_INTERVAL_MS = 3_000L
 
         /** The TUIC packet size assumed while QUIC cannot say yet; see Hysteria's. */
         const val MAX_UDP_DATAGRAM = 1100

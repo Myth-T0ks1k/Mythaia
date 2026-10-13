@@ -175,6 +175,14 @@ class QuicConnection(
         streams.values.forEach { it.onPeerClosed() }
         streams.clear()
 
+        // Tell the peer, best effort: without a CONNECTION_CLOSE the server
+        // keeps the session, its streams and its UDP sessions until its idle
+        // timeout, and a client that reconnects straight away holds two.
+        val farewell = synchronized(engineLock) {
+            if (handle == 0L) null else runCatching { NativeBridge.nativeQuicConnClose(handle) }.getOrNull()
+        }
+        farewell?.let { send(it) }
+
         synchronized(engineLock) {
             if (handle != 0L) {
                 NativeBridge.nativeQuicConnFree(handle)
@@ -195,8 +203,15 @@ class QuicConnection(
         val thread = Thread({
             try {
                 body()
-            } catch (e: Exception) {
-                if (running.get()) logger.warning("[QUIC] $name ended: ${e.message}")
+            } catch (e: Throwable) {
+                // Throwable, not Exception: an OutOfMemoryError raised inside
+                // a native callback surfaces here, and a connection whose
+                // reader or timer has died is dead — leaving it open merely
+                // hides that until the idle timeout.
+                if (running.get()) {
+                    logger.warning("[QUIC] $name died: $e")
+                    close()
+                }
             }
         }, name).apply { isDaemon = true }
         threads.add(thread)
@@ -252,17 +267,31 @@ class QuicConnection(
      * The packet and the accepted byte count are different numbers, and both
      * come back: sending only the count would leave ngtcp2 waiting to have a
      * packet acknowledged that never left.
+     *
+     * Returns how many bytes went out (0 with [fin] means the FIN did),
+     * [WRITE_AGAIN] when nothing fit this time, or a value below it when the
+     * stream or the connection is finished and offering again is pointless.
      */
     internal fun writeStream(streamId: Long, data: ByteArray, fin: Boolean): Long {
         val accepted = LongArray(1)
         val datagram = synchronized(engineLock) {
-            if (handle == 0L) return -1
+            if (handle == 0L) return WRITE_CLOSED
             NativeBridge.nativeQuicConnWriteStream(handle, streamId, data, fin, accepted)
         }
         datagram?.let { send(it) }
         flush()
         return accepted[0]
     }
+
+    /**
+     * Half the stream receive window: how much a stream lets the app consume
+     * before it hands the credit back. Large enough that ngtcp2 sends a
+     * MAX_STREAM_DATA for each batch (it does so once a quarter of the window
+     * is owed), small enough that the peer never waits for the whole window
+     * to drain.
+     */
+    internal val streamCreditThreshold: Long =
+        (tuning.initialMaxStreamDataBidiLocal / 2).coerceAtLeast(1)
 
     /**
      * Sends one unreliable datagram, now or as soon as the congestion window
@@ -337,12 +366,25 @@ class QuicConnection(
      * Reports consumed bytes so the peer reopens the window.
      *
      * Skipping this stalls a transfer partway through with nothing logged: the
-     * peer is simply not allowed to send more.
+     * peer is simply not allowed to send more. Crediting too early is the
+     * opposite failure: the peer fills the heap faster than the app reads.
+     *
+     * [wake] asks for the MAX_STREAM_DATA / MAX_DATA frames to leave now
+     * rather than on the next read or timer; it must be false from inside a
+     * native callback, where ngtcp2 may not be asked to write.
      */
-    internal fun extendOffsets(streamId: Long, count: Int) {
+    internal fun extendOffsets(streamId: Long, count: Long, wake: Boolean) {
+        if (count <= 0) return
         synchronized(engineLock) {
-            if (handle != 0L) NativeBridge.nativeQuicExtendOffsets(handle, streamId, count)
+            if (handle == 0L) return
+            var left = count
+            while (left > 0) {
+                val piece = minOf(left, Int.MAX_VALUE.toLong()).toInt()
+                NativeBridge.nativeQuicExtendOffsets(handle, streamId, piece)
+                left -= piece
+            }
         }
+        if (wake) flush()
     }
 
     // MARK: - Event loop
@@ -480,16 +522,26 @@ class QuicConnection(
     }
 
     override fun onStreamData(streamId: Long, data: ByteArray, fin: Boolean) {
-        val stream = streams[streamId] ?: return
-        if (data.isNotEmpty()) {
-            stream.onData(data)
-            extendOffsets(streamId, data.size)
+        val stream = streams[streamId] ?: run {
+            // A stream this end never opened (the server's HTTP/3 control
+            // stream, say). Nobody reads it, so the credit it consumed is
+            // handed straight back; otherwise every byte on it shrinks the
+            // connection window for good.
+            extendOffsets(streamId, data.size.toLong(), wake = false)
+            return
         }
+        // The credit comes back when the app reads the bytes, not here: see
+        // QuicStream. Crediting on arrival let a fast server fill the heap.
+        if (data.isNotEmpty()) stream.onData(data)
         if (fin) stream.onPeerClosed()
     }
 
     override fun onStreamClose(streamId: Long, errorCode: Long) {
-        streams.remove(streamId)?.onPeerClosed()
+        streams.remove(streamId)?.onTransportClosed()
+    }
+
+    override fun onStreamReset(streamId: Long, errorCode: Long) {
+        streams.remove(streamId)?.onPeerReset(errorCode)
     }
 
     /** Handed to whoever registered for datagrams; dropped when nobody has. */
@@ -503,6 +555,15 @@ class QuicConnection(
     }
 
     companion object {
+        /** [writeStream] took nothing this time; offer the same bytes again. */
+        internal const val WRITE_AGAIN = -1L
+
+        /**
+         * [writeStream] on a connection that is already gone. Below
+         * [WRITE_AGAIN], like every ngtcp2 error, so callers need one test.
+         */
+        internal const val WRITE_CLOSED = -2L
+
         /** Everything a QUIC datagram can be, plus room to read a larger one. */
         private const val MAX_DATAGRAM = 1500
 

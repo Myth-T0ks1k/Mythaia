@@ -121,11 +121,23 @@ data class QuicTuning(
      * in one place, is which field goes under which number.
      */
     /**
-     * The seven limits the JNI bridge sets on the connection, in its order.
+     * Everything the JNI bridge sets on the connection, in its order.
      *
-     * A flat array rather than seven parameters: the bridge reads them by
+     * A flat array rather than named parameters: the bridge reads them by
      * index, and adding one in the wrong place there is a mistake that shows up
      * as a connection whose limits are quietly not what was asked for.
+     *
+     * The first seven are transport parameters the peer is told. The last five
+     * are local engine settings the peer never sees: the congestion
+     * controller, the two flow-control auto-tuning ceilings, and the handshake
+     * and keep-alive timeouts — all dead before this, which is why a 1 GB
+     * download could not grow its window and a Hysteria session idled out at 30
+     * seconds with no keep-alive.
+     *
+     * Brutal is paced in Kotlin by replacing ngtcp2's controller after the fact
+     * (see [QuicCongestionControl.Brutal]); it is not an ngtcp2 algorithm, so
+     * what ngtcp2 is *started* on is BBR, the closest rate-probing match. The
+     * [BrutalCongestionControl] class and its CUBIC report are left untouched.
      */
     fun toNativeArray(): LongArray = longArrayOf(
         initialMaxData,
@@ -134,8 +146,20 @@ data class QuicTuning(
         initialMaxStreamDataUni,
         initialMaxStreamsBidi,
         initialMaxStreamsUni,
-        maxIdleTimeoutNanos
+        maxIdleTimeoutNanos,
+        nativeCongestionAlgorithm.toLong(),
+        maxWindow,
+        maxStreamWindow,
+        handshakeTimeoutNanos,
+        keepAliveTimeoutNanos
     )
+
+    /** The `ngtcp2_cc_algo` ngtcp2 is created with; Brutal maps to BBR. */
+    private val nativeCongestionAlgorithm: Int
+        get() = when (congestionControl) {
+            is QuicCongestionControl.Brutal -> QuicCongestionControl.NGTCP2_CC_ALGO_BBR
+            else -> congestionControl.ngtcp2Algorithm
+        }
 
     val advertisedParameters: List<TransportParameter>
         get() = buildList {

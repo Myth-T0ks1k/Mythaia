@@ -77,20 +77,30 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         val stream = session.openStream()
             ?: throw ProxyError.ProtocolError("Hysteria: no stream credit left")
 
-        stream.send(
-            HysteriaProtocol.encodeTcpRequest(HysteriaProtocol.formatAddress(host, port))
-        )
+        try {
+            stream.send(
+                HysteriaProtocol.encodeTcpRequest(HysteriaProtocol.formatAddress(host, port))
+            )
 
-        val response = readTcpResponse(stream)
-        if (response.status != HysteriaProtocol.TCP_RESPONSE_STATUS_OK) {
+            val (response, leftover) = readTcpResponse(stream)
+            if (response.status != HysteriaProtocol.TCP_RESPONSE_STATUS_OK) {
+                throw ProxyError.ProtocolError("Hysteria refused $host:$port: ${response.message}")
+            }
+
+            if (initialData != null && initialData.isNotEmpty()) {
+                stream.send(initialData)
+            }
+            // Bytes that arrived in the same stream chunk as the TCPResponse are
+            // the start of the proxied payload — a server-first banner (SSH,
+            // SMTP, IMAP, MySQL). They are handed back as the first receive()
+            // rather than dropped.
+            return if (leftover.isEmpty()) stream else HysteriaTcpConnection(stream, leftover)
+        } catch (e: Throwable) {
+            // A refusal, a read that never completed, or a failed send all leave
+            // the stream open in the session otherwise.
             stream.cancel()
-            throw ProxyError.ProtocolError("Hysteria refused $host:$port: ${response.message}")
+            throw e
         }
-
-        if (initialData != null && initialData.isNotEmpty()) {
-            stream.send(initialData)
-        }
-        return stream
     }
 
     /**
@@ -211,7 +221,16 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             throw ProxyError.ProtocolError("Hysteria: could not start HTTP/3")
         }
 
-        authenticate(h3)
+        try {
+            authenticate(h3)
+        } catch (e: Throwable) {
+            // The QUIC connection (socket, read/timer threads, ngtcp2 handle)
+            // and the HTTP/3 layer would otherwise leak until idle timeout, and
+            // every later dial would build and leak another.
+            h3.close()
+            connection.close()
+            throw e
+        }
 
         quic = connection
         http3 = h3
@@ -303,16 +322,21 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
     }
 
     /**
-     * Reads the proxy's answer to a TCP request.
+     * Reads the proxy's answer to a TCP request, and whatever followed it.
      *
      * The response is variable-length and arrives on a stream, so it can be
      * split across reads; the parser says how much it needs rather than
-     * guessing from what is there.
+     * guessing from what is there. The last read often carries the response
+     * *and* the first of the proxied payload, so the bytes past the response
+     * are returned too rather than thrown away.
      */
-    private suspend fun readTcpResponse(stream: QuicStream): HysteriaProtocol.TcpResponse {
+    private suspend fun readTcpResponse(stream: QuicStream): Pair<HysteriaProtocol.TcpResponse, ByteArray> {
         var buffer = ByteArray(0)
         while (true) {
-            HysteriaProtocol.parseTcpResponse(buffer)?.let { return it }
+            HysteriaProtocol.parseTcpResponse(buffer)?.let { response ->
+                val leftover = buffer.copyOfRange(response.consumed, buffer.size)
+                return response to leftover
+            }
             val chunk = stream.receive()
                 ?: throw ProxyError.ProtocolError("Hysteria: connection closed before a response")
             buffer += chunk
@@ -342,4 +366,39 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         fun datagramLimit(session: com.mythaia.vpn.protocol.quic.QuicConnection): Int =
             session.maxDatagramPayload().takeIf { it > 0 } ?: MAX_UDP_DATAGRAM
     }
+}
+
+/**
+ * A proxied TCP stream whose first [receiveRaw] hands back the payload bytes
+ * that rode in behind the Hysteria TCPResponse before it reads the stream.
+ *
+ * Without this a server-first protocol loses its opening banner: the bytes
+ * after the response, delivered in the same QUIC stream chunk, would be
+ * discarded with the parse buffer.
+ */
+internal class HysteriaTcpConnection(
+    private val stream: ProxyConnection,
+    leftover: ByteArray
+) : ProxyConnection() {
+
+    private var pending: ByteArray? = leftover.takeIf { it.isNotEmpty() }
+    private val pendingLock = Any()
+
+    override val isConnected: Boolean get() = stream.isConnected
+
+    override suspend fun sendRaw(data: ByteArray) = stream.sendRaw(data)
+    override fun sendRawAsync(data: ByteArray) = stream.sendRawAsync(data)
+
+    override suspend fun receiveRaw(): ByteArray? {
+        synchronized(pendingLock) {
+            val held = pending
+            if (held != null) {
+                pending = null
+                return held
+            }
+        }
+        return stream.receiveRaw()
+    }
+
+    override fun cancel() = stream.cancel()
 }

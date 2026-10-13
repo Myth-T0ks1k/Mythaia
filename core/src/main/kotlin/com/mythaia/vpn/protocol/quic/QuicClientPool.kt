@@ -103,7 +103,8 @@ internal class QuicUdpFlow(
 internal class UdpReassembler {
     private class Partial(val pieces: Array<ByteArray?>, val started: Long)
 
-    private val partial = HashMap<Long, Partial>()
+    /** Insertion-ordered so the oldest partial can be evicted when the map is full. */
+    private val partial = LinkedHashMap<Long, Partial>()
 
     /** The whole payload once every piece of [packetKey] has arrived, else null. */
     @Synchronized
@@ -111,12 +112,30 @@ internal class UdpReassembler {
         if (fragmentCount <= 1) return payload
         if (fragmentId !in 0 until fragmentCount) return null
         val now = System.currentTimeMillis()
-        if (partial.size > 64) partial.entries.removeIf { now - it.value.started > STALE_MS }
-        val entry = partial.getOrPut(packetKey) { Partial(arrayOfNulls(fragmentCount), now) }
-        if (entry.pieces.size != fragmentCount) {
-            partial.remove(packetKey)
-            return null
+
+        // Drop stale partials on every insert, not only when the map is large.
+        // The key is (session << 16 | packetId) with a 16-bit packet id, so a
+        // fragment of packet N and one of packet N+65536 share a key: without a
+        // short expiry an orphaned fragment of the first would be glued onto the
+        // second and corrupt it.
+        partial.entries.removeIf { now - it.value.started > STALE_MS }
+
+        val existing = partial[packetKey]
+        val entry = if (existing == null || existing.pieces.size != fragmentCount) {
+            // No partial, or one whose fragment count disagrees — a stale key
+            // collision. Start fresh rather than index into the wrong-sized
+            // array or glue mismatched pieces together.
+            Partial(arrayOfNulls(fragmentCount), now).also {
+                partial[packetKey] = it
+                if (partial.size > MAX_PARTIALS) {
+                    val oldest = partial.keys.iterator()
+                    if (oldest.hasNext()) { oldest.next(); oldest.remove() }
+                }
+            }
+        } else {
+            existing
         }
+
         entry.pieces[fragmentId] = payload
         if (entry.pieces.any { it == null }) return null
         partial.remove(packetKey)
@@ -131,6 +150,10 @@ internal class UdpReassembler {
     }
 
     private companion object {
-        const val STALE_MS = 5_000L
+        /** A UDP packet reassembles in milliseconds on any working path; 2 s is already generous. */
+        const val STALE_MS = 2_000L
+
+        /** A ceiling on half-assembled packets, so a flood of lone fragments cannot grow the map without bound. */
+        const val MAX_PARTIALS = 1024
     }
 }

@@ -46,6 +46,13 @@
    and ngtcp2 is told the same number so it never builds one that would. */
 #define MAX_DATAGRAM 1452
 
+/* The length of QuicTuning.toNativeArray: seven transport limits followed by
+   five local engine settings (cc algorithm, the two auto-tuning ceilings, and
+   the handshake and keep-alive timeouts). A shorter array (an older caller) is
+   read as far as it goes and the rest stay at their defaults. */
+#define TUNING_LEN 12
+#define TUNING_KEEP_ALIVE_INDEX 11
+
 typedef struct {
   ngtcp2_crypto_conn_ref conn_ref; /* must stay first: ngtcp2 casts to it */
   ngtcp2_conn *conn;
@@ -55,6 +62,7 @@ typedef struct {
   jmethodID on_crypto_data;
   jmethodID on_stream_data;
   jmethodID on_stream_close;
+  jmethodID on_stream_reset;
   jmethodID on_handshake_done;
   jmethodID on_datagram;
 
@@ -296,6 +304,35 @@ static int on_stream_close(ngtcp2_conn *conn, uint32_t flags,
 }
 
 /*
+ * A peer reset the receiving side of a stream (RESET_STREAM).
+ *
+ * stream_close fires only once both sides are shut, so a bare RESET_STREAM
+ * with no STOP_SENDING would otherwise never reach Kotlin and a reader would
+ * hang forever. This hands the reset up so the stream can fail its receive.
+ */
+static int on_stream_reset(ngtcp2_conn *conn, int64_t stream_id,
+                           uint64_t final_size, uint64_t app_error_code,
+                           void *user_data, void *stream_user_data) {
+  quic_conn *qc = (quic_conn *)user_data;
+  (void)conn;
+  (void)final_size;
+  (void)stream_user_data;
+
+  int attached = 0;
+  JNIEnv *env = attach(qc, &attached);
+  if (env == NULL) {
+    return 0;
+  }
+  (*env)->CallVoidMethod(env, qc->callback, qc->on_stream_reset,
+                         (jlong)stream_id, (jlong)app_error_code);
+  if ((*env)->ExceptionCheck(env)) {
+    (*env)->ExceptionClear(env);
+  }
+  detach(qc, attached);
+  return 0;
+}
+
+/*
  * A DATAGRAM frame arrived.
  *
  * QUIC datagrams are unreliable and unordered by design — they are not a
@@ -457,11 +494,13 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   qc->on_crypto_data = (*env)->GetMethodID(env, cb, "onCryptoData", "(I[B)V");
   qc->on_stream_data = (*env)->GetMethodID(env, cb, "onStreamData", "(J[BZ)V");
   qc->on_stream_close = (*env)->GetMethodID(env, cb, "onStreamClose", "(JJ)V");
+  qc->on_stream_reset = (*env)->GetMethodID(env, cb, "onStreamReset", "(JJ)V");
   qc->on_handshake_done =
     (*env)->GetMethodID(env, cb, "onHandshakeComplete", "()V");
   qc->on_datagram = (*env)->GetMethodID(env, cb, "onDatagram", "([B)V");
   if (qc->on_crypto_data == NULL || qc->on_stream_data == NULL ||
-      qc->on_stream_close == NULL || qc->on_handshake_done == NULL) {
+      qc->on_stream_close == NULL || qc->on_stream_reset == NULL ||
+      qc->on_handshake_done == NULL) {
     (*env)->DeleteGlobalRef(env, qc->callback);
     free(qc);
     return 0;
@@ -489,6 +528,7 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   callbacks.version_negotiation = ngtcp2_crypto_version_negotiation_cb;
   callbacks.recv_stream_data = on_recv_stream_data;
   callbacks.stream_close = on_stream_close;
+  callbacks.stream_reset = on_stream_reset;
   callbacks.handshake_completed = on_handshake_completed;
   callbacks.rand = on_rand;
   callbacks.get_new_connection_id = on_get_new_connection_id;
@@ -508,10 +548,42 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
      here: HTTP/3 requires the server to open a control stream, so a profile
      for it must grant unidirectional credit, while a plain tunnel grants none
      and treats an attempt as a connection error. Order matches
-     QuicTuning.toNativeArray. */
-  jlong values[7] = {0};
-  if (tuning != NULL && (*env)->GetArrayLength(env, tuning) >= 7) {
-    (*env)->GetLongArrayRegion(env, tuning, 0, 7, values);
+     QuicTuning.toNativeArray; the tail (index 7 on) carries the local engine
+     settings — congestion control, the auto-tuning ceilings, and the two
+     timeouts — rather than transport parameters the peer sees. */
+  jlong values[TUNING_LEN] = {0};
+  if (tuning != NULL) {
+    jsize n = (*env)->GetArrayLength(env, tuning);
+    if (n > TUNING_LEN) {
+      n = TUNING_LEN;
+    }
+    if (n > 0) {
+      (*env)->GetLongArrayRegion(env, tuning, 0, n, values);
+    }
+  }
+
+  /* index 7: congestion control algorithm (ngtcp2_cc_algo). Hysteria's Brutal
+     is not an ngtcp2 algorithm; Kotlin maps it to BBR before it reaches here.
+     Zero (the default when the caller sent the short, older array) is CUBIC. */
+  switch (values[7]) {
+  case NGTCP2_CC_ALGO_RENO:
+  case NGTCP2_CC_ALGO_BBR:
+    settings.cc_algo = (ngtcp2_cc_algo)values[7];
+    break;
+  default:
+    settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
+    break;
+  }
+  /* index 8/9: the ceilings flow-control window auto-tuning may grow to. A
+     nonzero value turns auto-tuning on, starting from the initial_max_* below
+     and scaling up; zero leaves it off. */
+  settings.max_window = (uint64_t)values[8];
+  settings.max_stream_window = (uint64_t)values[9];
+  /* index 10: how long the handshake may take. UINT64_MAX (or zero here, left
+     as the library default) means no deadline; a real value abandons a
+     handshake that stalls, which a filtered path can do silently. */
+  if (values[10] > 0) {
+    settings.handshake_timeout = (ngtcp2_duration)values[10];
   }
 
   ngtcp2_transport_params params;
@@ -548,12 +620,64 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
     return 0;
   }
 
+  /* index 11: keep-alive. ngtcp2 takes this only after the connection object
+     exists, not through settings. A nonzero value sends a PING once the
+     connection has been idle that long, which is what keeps a server from
+     dropping the session on its own idle timer between flows. */
+  if (values[TUNING_KEEP_ALIVE_INDEX] > 0) {
+    ngtcp2_conn_set_keep_alive_timeout(
+      qc->conn, (ngtcp2_duration)values[TUNING_KEEP_ALIVE_INDEX]);
+  }
+
   /* The TLS native handle is deliberately left unset until the cipher suite is
      known. This backend does not point it at a TLS object — there is no C-side
      TLS object — it reads it back as the negotiated suite, so setting it to
      anything else makes ngtcp2_crypto_ctx_tls return NULL and every key
      installation fail. See nativeQuicSetCipherSuite. */
   return (jlong)(intptr_t)qc;
+}
+
+/*
+ * Builds the CONNECTION_CLOSE packet that tells the peer we are leaving.
+ *
+ * Returns null, and writes nothing, unless the handshake completed and the
+ * connection is not already closing or draining — write_connection_close
+ * refuses those states, and there is no peer to tell before a handshake. The
+ * application error code is 0 (a clean, reasonless shutdown). Best effort:
+ * the caller sends the packet if there is one and frees the connection either
+ * way.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_mythaia_vpn_NativeBridge_nativeQuicConnClose(JNIEnv *env, jclass clazz,
+                                                      jlong handle) {
+  (void)clazz;
+  quic_conn *qc = (quic_conn *)(intptr_t)handle;
+  if (qc == NULL || qc->conn == NULL) {
+    return NULL;
+  }
+  if (!ngtcp2_conn_get_handshake_completed(qc->conn) ||
+      ngtcp2_conn_in_closing_period(qc->conn) ||
+      ngtcp2_conn_in_draining_period(qc->conn)) {
+    return NULL;
+  }
+
+  ngtcp2_ccerr ccerr;
+  ngtcp2_ccerr_default(&ccerr);
+  ngtcp2_ccerr_set_application_error(&ccerr, 0, NULL, 0);
+
+  ngtcp2_path_storage ps;
+  ngtcp2_path_storage_zero(&ps);
+  ngtcp2_pkt_info pi;
+
+  ngtcp2_ssize written = ngtcp2_conn_write_connection_close(
+    qc->conn, &ps.path, &pi, qc->out, sizeof(qc->out), &ccerr, timestamp_ns());
+  if (written <= 0) {
+    if (written < 0) {
+      LOGD("write_connection_close: %s", ngtcp2_strerror((int)written));
+    }
+    return NULL;
+  }
+  return to_java_bytes(env, qc->out, (size_t)written);
 }
 
 JNIEXPORT void JNICALL Java_com_mythaia_vpn_NativeBridge_nativeQuicConnFree(
@@ -737,16 +861,40 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
   }
 
   if (accepted_out != NULL) {
-    /* -1 means "no STREAM frame went into this packet", which is a normal
-       outcome and not an error; reporting it as a byte count would have the
-       caller treat a routine backpressure tick as a fatal write failure. */
-    jlong reported = written < 0 ? 0 : (accepted < 0 ? 0 : (jlong)accepted);
+    /* What the caller does next turns on this one number, so the three cases
+       are kept distinct rather than all collapsed to zero:
+         >= 0  a STREAM frame carrying that many bytes went in (0 with the FIN
+               flag means the empty FIN went); offer any remainder again.
+         -1    nothing fit this tick — congestion, pacing, a packet full of
+               other frames, or a flow-control block; offer the same bytes
+               again. STREAM_DATA_BLOCKED is this, not a failure.
+         <= -2 terminal: the stream is gone, shut for writing, or the
+               connection is closing/draining. Collapsing these to zero (as
+               this once did) made sendRaw spin 5 ms JNI calls under the engine
+               lock until something else tore the stream down.
+       `written == 0` always means nothing was written, whatever `accepted`
+       holds — ngtcp2 may leave `accepted` untouched — so it maps to -1 even
+       for an empty FIN, which is why finish() loops. */
+    jlong reported;
+    if (written > 0) {
+      reported = accepted < 0 ? -1 : (jlong)accepted;
+    } else if (written == 0) {
+      reported = -1;
+    } else if (written == NGTCP2_ERR_WRITE_MORE ||
+               written == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+      reported = -1;
+    } else {
+      /* STREAM_NOT_FOUND, STREAM_SHUT_WR, CLOSING, DRAINING, NOMEM,
+         CALLBACK_FAILURE, PKT_NUM_EXHAUSTED, … — all far below -1. */
+      reported = (jlong)written;
+    }
     (*env)->SetLongArrayRegion(env, accepted_out, 0, 1, &reported);
   }
 
   if (written <= 0) {
     if (written < 0 && written != NGTCP2_ERR_STREAM_DATA_BLOCKED &&
-        written != NGTCP2_ERR_STREAM_SHUT_WR) {
+        written != NGTCP2_ERR_STREAM_SHUT_WR &&
+        written != NGTCP2_ERR_WRITE_MORE) {
       LOGD("writev_stream: %s", ngtcp2_strerror((int)written));
     }
     return NULL;

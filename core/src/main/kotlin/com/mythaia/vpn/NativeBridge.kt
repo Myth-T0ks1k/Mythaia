@@ -245,6 +245,15 @@ object NativeBridge {
 
         fun onStreamData(streamId: Long, data: ByteArray, fin: Boolean)
         fun onStreamClose(streamId: Long, errorCode: Long)
+
+        /**
+         * The peer sent RESET_STREAM: no more data will arrive on the stream.
+         *
+         * Separate from [onStreamClose], which fires only once *both*
+         * directions are shut — a reset of the read side while this end is
+         * still writing would otherwise never reach the stream.
+         */
+        fun onStreamReset(streamId: Long, errorCode: Long)
         fun onHandshakeComplete()
 
         /**
@@ -264,13 +273,22 @@ object NativeBridge {
         remotePort: Int,
         localIp: String,
         localPort: Int,
-        /** The seven transport limits, in [QuicTuning.toNativeArray] order. */
+        /** The transport limits and local settings, in [QuicTuning.toNativeArray] order. */
         tuning: LongArray,
         callback: QuicCallback
     ): Long
 
     @JvmStatic
     external fun nativeQuicConnFree(handle: Long)
+
+    /**
+     * The CONNECTION_CLOSE packet that tells the peer we are leaving, or
+     * null when there is nothing to say (handshake never completed, or the
+     * connection is already closing). Sending it is the caller's job; the
+     * connection must still be freed afterwards.
+     */
+    @JvmStatic
+    external fun nativeQuicConnClose(handle: Long): ByteArray?
 
     /** Feeds one received datagram in. Negative is an ngtcp2 error code. */
     @JvmStatic
@@ -289,10 +307,19 @@ object NativeBridge {
      * Offers stream data and returns the datagram it produced, or null.
      *
      * Both halves matter: ngtcp2 serialises a packet *and* reports how much of
-     * the payload went into it, and those are different numbers. The byte count
-     * lands in `acceptedOut[0]`. Taking fewer than offered, or none, is normal
-     * — flow control and congestion both say so — and the caller offers the
-     * remainder again.
+     * the payload went into it, and those are different numbers. What lands in
+     * `acceptedOut[0]`:
+     *
+     * - 0 or more: a STREAM frame carrying that many bytes went into the
+     *   packet (and the FIN, when it was asked for and all the data fit).
+     *   Fewer than offered is normal — flow control says so — and the caller
+     *   offers the remainder again.
+     * - -1: nothing was taken this time (congestion window, pacing, a packet
+     *   full of other frames, or a stream blocked by flow control). Offer the
+     *   same bytes again later.
+     * - below -1: an ngtcp2 error code, and the stream or connection is
+     *   finished — the stream no longer exists, was already shut for
+     *   writing, or the connection is closing. Retrying is pointless.
      */
     @JvmStatic
     external fun nativeQuicConnWriteStream(
@@ -401,7 +428,9 @@ object NativeBridge {
      * Reports that [count] bytes of a stream have been consumed.
      *
      * Without it the peer's flow-control window closes and the transfer stalls
-     * partway through with nothing logged anywhere.
+     * partway through with nothing logged anywhere. It queues MAX_STREAM_DATA
+     * and MAX_DATA frames; something must then ask ngtcp2 to write for them
+     * to leave.
      */
     @JvmStatic
     external fun nativeQuicExtendOffsets(handle: Long, streamId: Long, count: Int)

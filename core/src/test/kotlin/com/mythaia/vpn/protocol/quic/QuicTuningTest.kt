@@ -266,4 +266,40 @@ class QuicTuningTest {
             assertFalse(name, tuning.disableActiveMigration)
         }
     }
+
+    // MARK: - The native settings array
+
+    @Test
+    fun `the native array carries the engine settings after the seven limits`() {
+        // The bridge reads these by index: the first seven are transport
+        // parameters, then cc algorithm, the two window ceilings, and the two
+        // timeouts. A short array would silently leave them at ngtcp2 defaults.
+        val tuning = QuicTuning.NAIVE
+        val a = tuning.toNativeArray()
+        assertEquals(12, a.size)
+        assertEquals(tuning.initialMaxData, a[0])
+        assertEquals(tuning.maxIdleTimeoutNanos, a[6])
+        assertEquals(tuning.maxWindow, a[8])
+        assertEquals(tuning.maxStreamWindow, a[9])
+        assertEquals(tuning.handshakeTimeoutNanos, a[10])
+        assertEquals(tuning.keepAliveTimeoutNanos, a[11])
+    }
+
+    @Test
+    fun `cubic and bbr presets report their own algorithm to ngtcp2`() {
+        // CUBIC (0x01) for Naive, BBR (0x02) for the bulk tunnel.
+        assertEquals(0x01L, QuicTuning.NAIVE.toNativeArray()[7])
+        assertEquals(0x02L, QuicTuning.NOWHERE.toNativeArray()[7])
+    }
+
+    @Test
+    fun `brutal is started on BBR because it is not an ngtcp2 algorithm`() {
+        // The BrutalCongestionControl class still reports CUBIC (it replaces
+        // the controller later); what ngtcp2 is created with is BBR, the
+        // nearest rate-probing match.
+        val brutal = QuicTuning.hysteria(HysteriaCongestionControl.BRUTAL, uploadMbps = 100)
+        assertEquals(0x02L, brutal.toNativeArray()[7])
+        val bbr = QuicTuning.hysteria(HysteriaCongestionControl.BBR, uploadMbps = 0)
+        assertEquals(0x02L, bbr.toNativeArray()[7])
+    }
 }
