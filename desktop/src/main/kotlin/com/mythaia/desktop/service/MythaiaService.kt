@@ -53,12 +53,39 @@ object MythaiaService {
     }
 
     private fun prepare() {
-        AppPaths.overrideDataDir = AppPaths.programData
-        MythaiaLogger.backend = FileLog(File(AppPaths.programData.apply { mkdirs() }, "service.log"))
+        val dataDir = AppPaths.programData.apply { mkdirs() }
+        AppPaths.overrideDataDir = dataDir
+        MythaiaLogger.backend = FileLog(File(dataDir, "service.log"))
+        lockDown(dataDir)
         AppPaths.nativeLibrary()?.let { System.setProperty("mythaia.native.library", it.absolutePath) }
         runCatching { NativeBridge.nativeQuicVersion() }
         runCatching { TunEngine.cleanupLeftovers() }
         logger.info("Service starting (elevated=${TunEngine.isElevated()}, wintun=${TunEngine.isAvailable()})")
+    }
+
+    /**
+     * ProgramData lets every local user create files and folders, and what
+     * this directory holds — the route snapshot above all — is acted on as
+     * SYSTEM. So it is owned by SYSTEM and writable by SYSTEM and
+     * administrators only, with inheritance cut and any permissions the
+     * creator of the folder gave themselves reset first. SIDs, not names:
+     * the names are localised. A failure is logged and left at that — the
+     * snapshot's owner check does not depend on this.
+     */
+    private fun lockDown(dir: File) {
+        val path = dir.absolutePath
+        val steps = listOf(
+            listOf("icacls", path, "/setowner", "*S-1-5-18", "/q"),
+            listOf("icacls", path, "/reset", "/q"),
+            listOf("icacls", path, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/q")
+        )
+        for (argv in steps) {
+            val result = com.mythaia.desktop.tun.WindowsNet.run(argv)
+            if (!result.ok) {
+                logger.error("Could not secure $path (${argv[2]}): ${result.output.lineSequence().firstOrNull { it.isNotBlank() } ?: "exit ${result.exitCode}"}")
+                return
+            }
+        }
     }
 
     private fun createCore(): ServiceCore {

@@ -69,3 +69,6 @@ desktop/tools/
 # Interop lab output (scripts/lab/gen.py) and matrix results
 scripts/lab/out/
 matrix-results.tsv
+
+# Kotlin compiler session files
+.kotlin/

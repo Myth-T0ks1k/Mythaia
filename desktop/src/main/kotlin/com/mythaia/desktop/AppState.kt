@@ -65,6 +65,9 @@ data class ServerGroup(val id: String, val name: String, val subscription: Subsc
 /** Bytes per second in each direction, sampled once a second. */
 data class Speed(val up: Long, val down: Long)
 
+/** What a link handed to the app would add, parsed but not stored: the window asks first. */
+data class PendingImport(val text: String, val names: List<String>)
+
 /**
  * The application state: the lists, the settings, the connection and Auto.
  * Compose reads the flows; every mutation goes through here and is saved.
@@ -150,6 +153,10 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     /** Set when the window should come to the front (tray "show", second instance). */
     val windowVisible = MutableStateFlow(true)
     val bringToFront = MutableStateFlow(0L)
+
+    /** A URL-handler import waiting for the user's yes; see [requestImport]. */
+    private val _pendingImport = MutableStateFlow<PendingImport?>(null)
+    val pendingImport: StateFlow<PendingImport?> = _pendingImport.asStateFlow()
 
     private var autoJob: Job? = null
     private var probeJob: Job? = null
@@ -704,6 +711,56 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     // ------------------------------------------------------------ servers
 
+    /**
+     * The URL-handler path into [addText]: any web page can open a
+     * `mythaia://` or `vless://` link, so what one brings is shown — names
+     * and hosts — and stored only on [confirmImport]. Pasting and QR
+     * scanning from inside the app are the user's own doing and stay direct.
+     */
+    fun requestImport(text: String) {
+        val names = describeImport(text)
+        if (names.isEmpty()) {
+            notify(tr("nothing_parsed"))
+            return
+        }
+        _pendingImport.value = PendingImport(text, names)
+        windowVisible.value = true
+        bringToFront.value = System.currentTimeMillis()
+    }
+
+    fun confirmImport() {
+        val pending = _pendingImport.value ?: return
+        _pendingImport.value = null
+        addText(pending.text)
+    }
+
+    fun dismissImport() {
+        _pendingImport.value = null
+    }
+
+    /** What [addText] would make of [text]: one line per server (name and host) or subscription (host). */
+    private fun describeImport(text: String): List<String> {
+        if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(text)) {
+            return runCatching { com.mythaia.data.network.XrayJsonImporter.parse(text) }.getOrDefault(emptyList())
+                .map { "${it.name} · ${it.serverAddress}" }
+        }
+        val out = ArrayList<String>()
+        for (line in text.lines().map { it.trim() }.filter { it.isNotEmpty() }) {
+            if (isSubscriptionUrl(line)) {
+                out += line.substringAfter("://").substringBefore('/')
+                continue
+            }
+            if (!ProxyConfiguration.canParseUrl(line)) continue
+            runCatching { ProxyConfiguration.fromUrl(line) }.onSuccess { out += "${it.name} · ${it.serverAddress}" }
+        }
+        return out
+    }
+
+    /** An http(s):// line without credentials in its authority is a subscription, not a proxy link. */
+    private fun isSubscriptionUrl(line: String): Boolean =
+        (line.startsWith("https://", ignoreCase = true) || line.startsWith("http://", ignoreCase = true)) &&
+            !line.substringAfter("://").substringBefore('/').contains('@')
+
     /** Adds every link in [text]; an https:// line without credentials is a subscription; Xray JSON imports whole. */
     fun addText(text: String, subscriptionName: String? = null, frontSni: String? = null, frontTargets: List<String> = emptyList()) {
         if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(text)) {
@@ -720,12 +777,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         val added = mutableListOf<ProxyConfiguration>()
         val subscriptionUrls = mutableListOf<String>()
         for (line in lines) {
-            if (line.startsWith("https://", ignoreCase = true) || line.startsWith("http://", ignoreCase = true)) {
-                val authority = line.substringAfter("://").substringBefore('/')
-                if (!authority.contains('@')) {
-                    subscriptionUrls += line
-                    continue
-                }
+            if (isSubscriptionUrl(line)) {
+                subscriptionUrls += line
+                continue
             }
             if (!ProxyConfiguration.canParseUrl(line)) continue
             runCatching { ProxyConfiguration.fromUrl(line) }

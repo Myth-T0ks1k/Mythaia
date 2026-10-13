@@ -45,9 +45,11 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
     /** Starts the listeners for [configuration]; throws when a port is taken. */
     @Throws(IOException::class)
     fun start(settings: DesktopSettings, configuration: ProxyConfiguration) {
-        this.configuration = configuration
-        DnsCache.setActiveProxyDomain(configuration.serverAddress)
-        if (!server.isRunning) {
+        if (server.isRunning) {
+            switchTo(configuration)
+        } else {
+            this.configuration = configuration
+            DnsCache.setActiveProxyDomain(configuration.serverAddress)
             stats.reset()
             server.start(settings.socksPort, settings.httpPort, settings.allowLan, settings.socksUdp)
         }
@@ -55,19 +57,32 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
         logger.info("Outbound: ${configuration.name} (${configuration.outboundProtocol.displayName})")
     }
 
+    /**
+     * New connections dial [configuration] from here on; the ones being
+     * relayed finish through whatever they were dialled with. The pooled
+     * sessions belong to the old server — a QUIC connection with its TUIC
+     * heartbeat, HTTP/2 connections — and nothing would dial them again, so
+     * they are closed now rather than at [stop].
+     */
     fun switchTo(configuration: ProxyConfiguration) {
+        val previous = this.configuration
         this.configuration = configuration
         DnsCache.setActiveProxyDomain(configuration.serverAddress)
+        if (previous != configuration) closePooledSessions()
         logger.info("Switched to ${configuration.name}")
     }
 
     fun stop() {
         server.stop()
-        com.mythaia.vpn.protocol.quic.QuicClientPool.closeAll()
-        com.mythaia.vpn.protocol.naive.http2.Http2StreamPool.closeAll()
+        closePooledSessions()
         configuration = null
         DnsCache.setActiveProxyDomain(null)
         setSystemProxy(false, null)
+    }
+
+    private fun closePooledSessions() {
+        com.mythaia.vpn.protocol.quic.QuicClientPool.closeAll()
+        com.mythaia.vpn.protocol.naive.http2.Http2StreamPool.closeAll()
     }
 
     /**
@@ -89,6 +104,14 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
     override fun wantsFirstData(host: String): Boolean =
         configuration?.outboundProtocol?.handshakeCarriesInitialData == true &&
             router.decide(host) == RouteTarget.PROXY
+
+    override suspend fun isThisHost(host: String): Boolean {
+        if (Router.isThisHostLiteral(host)) return true
+        // Only a direct route can get to this machine; a proxied name resolves at the server.
+        if (DnsCache.isIpAddress(host) || router.decide(host) != RouteTarget.DIRECT) return false
+        return withContext(Dispatchers.IO) { runCatching { DnsCache.resolveAll(host) }.getOrDefault(emptyList()) }
+            .any { Router.isThisHostLiteral(it) }
+    }
 
     override suspend fun dial(host: String, port: Int, initialData: ByteArray?): Upstream? =
         when (router.decide(host)) {

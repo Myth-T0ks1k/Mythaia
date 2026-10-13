@@ -84,6 +84,28 @@ class Router(
         return RouteTarget.PROXY
     }
 
+    companion object {
+        /**
+         * Whether [host], taken literally, is this machine: loopback,
+         * link-local or the unspecified address, or `localhost` and the
+         * names under it. The private ranges are deliberately not here —
+         * a LAN client may reach the LAN through the proxy, just not the
+         * proxy's own host.
+         */
+        fun isThisHostLiteral(host: String): Boolean {
+            val h = host.trim().trimEnd('.').lowercase().removePrefix("[").removeSuffix("]")
+            if (h == "localhost" || h.endsWith(".localhost")) return true
+            // DnsCache does not count an IPv4-mapped form (::ffff:127.0.0.1) as an
+            // address, since Java parses it to an Inet4Address; it is one here. A
+            // colon-bearing string is never looked up by InetAddress, only parsed.
+            if (!DnsCache.isIpAddress(h) && !mappedV6.matches(h)) return false
+            val address = runCatching { InetAddress.getByName(h) }.getOrNull() ?: return false
+            return address.isLoopbackAddress || address.isLinkLocalAddress || address.isAnyLocalAddress
+        }
+
+        private val mappedV6 = Regex("""[0-9a-f:][0-9a-f:.]*:[0-9a-f:.]*""")
+    }
+
     /** One network in CIDR notation, v4 or v6. */
     class Cidr private constructor(private val network: ByteArray, private val prefix: Int) {
         fun contains(address: ByteArray): Boolean {

@@ -152,6 +152,27 @@ object WindowsNet {
         }.getOrNull() ?: runCatching { java.nio.charset.Charset.forName("cp866") }.getOrNull() ?: Charsets.UTF_8
     }
 
+    /** The SID of [file]'s owner (`S-1-5-18` for SYSTEM), or null when it cannot be read. */
+    fun fileOwnerSid(file: java.io.File): String? = runCatching {
+        val descriptor = Advapi32Util.getFileSecurityDescriptor(file, false)
+        Advapi32Util.convertSidToStringSid(descriptor.owner)
+    }.getOrNull()
+
+    /** The SID of the account this process runs as, or null off Windows. */
+    val currentUserSid: String? by lazy {
+        if (!isWindows) return@lazy null
+        runCatching {
+            val token = com.sun.jna.platform.win32.WinNT.HANDLEByReference()
+            val process = com.sun.jna.platform.win32.Kernel32.INSTANCE.GetCurrentProcess()
+            if (!com.sun.jna.platform.win32.Advapi32.INSTANCE.OpenProcessToken(process, com.sun.jna.platform.win32.WinNT.TOKEN_QUERY, token)) return@runCatching null
+            try {
+                Advapi32Util.getTokenAccount(token.value).sidString
+            } finally {
+                com.sun.jna.platform.win32.Kernel32.INSTANCE.CloseHandle(token.value)
+            }
+        }.getOrNull()
+    }
+
     /** Resolves [host] to IPv4 literals, through the app's own cache (which is on the physical network once set). */
     fun resolveV4(host: String): List<String> {
         if (DnsCache.isIpAddress(host)) return if (host.contains(':')) emptyList() else listOf(host)

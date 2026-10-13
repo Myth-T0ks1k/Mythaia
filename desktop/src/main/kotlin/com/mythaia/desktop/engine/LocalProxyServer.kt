@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -49,6 +50,15 @@ interface Dialer {
      * them; see `TunnelConstants.firstDataWaitMs`.
      */
     fun wantsFirstData(host: String): Boolean = false
+
+    /**
+     * True when [host] is this machine itself — loopback, link-local or the
+     * unspecified address, as a literal or, for a name that would be dialled
+     * direct, by resolution. A listener open to the LAN refuses those for
+     * its LAN clients: `allowLan` shares the tunnel, not the host's own
+     * services.
+     */
+    suspend fun isThisHost(host: String): Boolean = Router.isThisHostLiteral(host)
 }
 
 /** Byte counters the home screen shows. */
@@ -84,6 +94,9 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
     // read on a pool thread does not notice a cancelled coroutine.
     private val clients: MutableSet<Socket> = ConcurrentHashMap.newKeySet()
     private val relays: MutableSet<DatagramSocket> = ConcurrentHashMap.newKeySet()
+    /** Open connections per client address, for the per-host cap when the LAN is let in. */
+    private val perClient = ConcurrentHashMap<InetAddress, AtomicInteger>()
+    @Volatile private var lastRefusalLog = 0L
     private val running = AtomicBoolean(false)
     @Volatile private var udpEnabled = true
     @Volatile private var bindAddress: InetAddress = InetAddress.getLoopbackAddress()
@@ -127,6 +140,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         clients.clear()
         relays.forEach { runCatching { it.close() } }
         relays.clear()
+        perClient.clear()
         scope?.cancel()
         scope = null
         logger.info("Stopped")
@@ -141,6 +155,11 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 if (running.get()) logger.debug("accept: ${e.message}")
                 break
             }
+            val remote = client.inetAddress
+            if (!admit(client, remote)) {
+                runCatching { client.close() }
+                continue
+            }
             clients += client
             current.launch {
                 stats.connections.incrementAndGet()
@@ -153,11 +172,51 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 } finally {
                     stats.connections.decrementAndGet()
                     clients -= client
+                    release(remote)
                     runCatching { client.close() }
                 }
             }
         }
     }
+
+    /**
+     * Every connection costs two pool threads for as long as it lives, so
+     * there is a ceiling on them, and — once the LAN is let in — one on what
+     * a single host may hold, so one misbehaving device cannot take the
+     * proxy away from the others. Refusals are logged, but not one per
+     * connection: a flood would then be a flood of log lines.
+     */
+    private fun admit(client: Socket, remote: InetAddress?): Boolean {
+        val reason = when {
+            clients.size >= MAX_CONNECTIONS -> "$MAX_CONNECTIONS connections open"
+            remote == null -> null
+            else -> {
+                val count = perClient.computeIfAbsent(remote) { AtomicInteger() }
+                if (count.incrementAndGet() > MAX_PER_CLIENT && !bindAddress.isLoopbackAddress) {
+                    release(remote)
+                    "$MAX_PER_CLIENT connections from it already"
+                } else null
+            }
+        } ?: return true
+        val now = System.currentTimeMillis()
+        if (now - lastRefusalLog > REFUSAL_LOG_INTERVAL_MS) {
+            lastRefusalLog = now
+            logger.warning("Refusing ${remote?.hostAddress ?: "?"}: $reason")
+        }
+        return false
+    }
+
+    private fun release(remote: InetAddress?) {
+        if (remote == null) return
+        perClient.computeIfPresent(remote) { _, count -> if (count.decrementAndGet() <= 0) null else count }
+    }
+
+    /**
+     * Whether [client] may be let at [host]: a client on another machine is
+     * refused this machine's own addresses; see [Dialer.isThisHost].
+     */
+    private suspend fun refusedForLan(client: Socket, host: String): Boolean =
+        client.inetAddress?.isLoopbackAddress != true && dialer.isThisHost(host)
 
     private suspend fun handle(client: Socket) {
         client.soTimeout = HANDSHAKE_TIMEOUT_MS
@@ -190,6 +249,10 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
 
         when (command) {
             CMD_CONNECT -> {
+                if (refusedForLan(client, host)) {
+                    write(output, socksReply(REP_NOT_ALLOWED))
+                    return
+                }
                 if (dialer.wantsFirstData(host)) {
                     // Confirm first, as Xray's inbounds do, so the client sends
                     // its first bytes and they go out with the request header.
@@ -234,6 +297,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
     }
 
     private suspend fun udpAssociate(client: Socket, input: InputStream, output: OutputStream) {
+        val clientIp = client.inetAddress ?: return
         val relaySocket = DatagramSocket(InetSocketAddress(bindAddress, 0))
         relays += relaySocket
         try {
@@ -250,7 +314,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
             client.soTimeout = 0
 
             coroutineScope {
-                val relayJob = launch { udpRelayLoop(relaySocket) }
+                val relayJob = launch { udpRelayLoop(relaySocket, clientIp) }
                 // The association lives as long as the TCP control connection.
                 try {
                     withContext(io) {
@@ -272,20 +336,28 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         }
     }
 
-    private suspend fun udpRelayLoop(relaySocket: DatagramSocket) = coroutineScope {
+    /**
+     * [clientIp] is the address the control connection came from: only
+     * datagrams from it are relayed. The port is learned from the first one,
+     * since RFC 1928 lets the client announce 0.0.0.0:0 in its request.
+     */
+    private suspend fun udpRelayLoop(relaySocket: DatagramSocket, clientIp: InetAddress) = coroutineScope {
         val upstreams = ConcurrentHashMap<String, Upstream>()
         val jobs = ConcurrentHashMap<String, Job>()
+        val fromLan = !clientIp.isLoopbackAddress
         var clientAddress: SocketAddress? = null
         val buffer = ByteArray(65_535)
         try {
             while (true) {
                 val packet = DatagramPacket(buffer, buffer.size)
                 withContext(io) { relaySocket.receive(packet) }
+                if (packet.address != clientIp) continue
                 if (clientAddress == null) clientAddress = packet.socketAddress
                 val data = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
                 if (data.size < 5 || data[2] != 0.toByte()) continue // fragments unsupported
                 val parsed = runCatching { parseUdpHeader(data) }.getOrNull() ?: continue
                 val (host, port, headerLength) = parsed
+                if (fromLan && dialer.isThisHost(host)) continue
                 val key = "$host:$port"
                 val payload = data.copyOfRange(headerLength, data.size)
                 val upstream = upstreams[key] ?: run {
@@ -398,6 +470,10 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 write(output, httpError(400, "Bad Request"))
                 return
             }
+            if (refusedForLan(client, host)) {
+                write(output, httpError(403, "Forbidden"))
+                return
+            }
             if (dialer.wantsFirstData(host)) {
                 // As for SOCKS: confirm first, dial with the client's first bytes.
                 write(output, "$version 200 Connection established\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
@@ -460,6 +536,10 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 write(output, httpError(400, "Bad Request"))
                 return
             }
+        }
+        if (refusedForLan(client, host)) {
+            write(output, httpError(403, "Forbidden"))
+            return
         }
 
         val forwarded = StringBuilder()
@@ -543,10 +623,16 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
 
     // ------------------------------------------------------------------ relay
 
-    /** Copies both ways until either side ends, then closes both. */
+    /**
+     * Copies both ways until either side ends, then closes both. A
+     * connection with no bytes either way for [IDLE_TIMEOUT_MS] is closed
+     * too: the handshake timeout is off by now, and a client that went away
+     * without a FIN would otherwise hold its two pool threads for good.
+     */
     private suspend fun relay(client: Socket, input: InputStream, output: OutputStream, upstream: Upstream) {
         try {
             coroutineScope {
+                val lastActivity = AtomicLong(System.nanoTime())
                 val uplink = launch {
                     val buffer = ByteArray(32 * 1024)
                     try {
@@ -554,6 +640,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                             val n = withContext(io) { input.read(buffer) }
                             if (n < 0) break
                             if (n == 0) continue
+                            lastActivity.set(System.nanoTime())
                             stats.up.addAndGet(n.toLong())
                             upstream.send(buffer.copyOf(n))
                         }
@@ -565,6 +652,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                         while (true) {
                             val data = upstream.receive() ?: break
                             if (data.isEmpty()) continue
+                            lastActivity.set(System.nanoTime())
                             stats.down.addAndGet(data.size.toLong())
                             withContext(io) {
                                 output.write(data)
@@ -572,6 +660,17 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                             }
                         }
                     } catch (_: Exception) {
+                    }
+                }
+                val watchdog = launch {
+                    while (true) {
+                        delay(IDLE_CHECK_MS)
+                        if (System.nanoTime() - lastActivity.get() < IDLE_TIMEOUT_MS * 1_000_000L) continue
+                        // Closing is what ends the blocking reads on the pool threads.
+                        logger.debug("idle for ${IDLE_TIMEOUT_MS / 60_000} min; closing")
+                        runCatching { upstream.close() }
+                        runCatching { client.close() }
+                        break
                     }
                 }
                 // The proxy protocols carry no half-close, so the connection
@@ -591,6 +690,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                     runCatching { client.close() }
                     uplink.cancel()
                     downlink.cancel()
+                    watchdog.cancel()
                 }
             }
         } finally {
@@ -657,6 +757,12 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
     companion object {
         private const val HANDSHAKE_TIMEOUT_MS = 15_000
         private const val HALF_CLOSE_GRACE_MS = 30_000L
+        /** Long enough for an idle-but-alive connection (a WebSocket, an IMAP IDLE) to be left alone. */
+        private const val IDLE_TIMEOUT_MS = 10 * 60_000L
+        private const val IDLE_CHECK_MS = 30_000L
+        private const val MAX_CONNECTIONS = 1024
+        private const val MAX_PER_CLIENT = 256
+        private const val REFUSAL_LOG_INTERVAL_MS = 10_000L
         private const val MAX_HEAD = 64 * 1024
         private const val CMD_CONNECT = 1
         private const val CMD_UDP_ASSOCIATE = 3

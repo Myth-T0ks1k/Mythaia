@@ -70,14 +70,39 @@ class DesktopStore {
     }
 
     @Synchronized
-    private fun write(file: File, text: String) {
+    internal fun write(file: File, text: String) {
         val temp = File(file.parentFile, "${file.name}.tmp")
         try {
             temp.writeText(text, Charsets.UTF_8)
-            Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (e: Exception) {
             logger.error("${file.name} could not be written: ${e.message}")
             runCatching { temp.delete() }
+            return
         }
+        // Windows refuses to replace a file something else has open for the
+        // moment — an antivirus, a backup agent, a sync client — so the move
+        // gets a few tries, then a plain replace; and if that fails too the
+        // new text stays in the temp file rather than being thrown away.
+        var lastError: Exception? = null
+        repeat(MOVE_ATTEMPTS) { attempt ->
+            try {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                return
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt < MOVE_ATTEMPTS - 1) Thread.sleep(MOVE_RETRY_MS)
+            }
+        }
+        try {
+            Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            logger.warning("${file.name}: atomic replace kept failing (${lastError?.message}); replaced it the plain way")
+        } catch (e: Exception) {
+            logger.error("${file.name} could not be replaced: ${e.message}. The unsaved version is in ${temp.absolutePath}")
+        }
+    }
+
+    companion object {
+        private const val MOVE_ATTEMPTS = 5
+        private const val MOVE_RETRY_MS = 50L
     }
 }

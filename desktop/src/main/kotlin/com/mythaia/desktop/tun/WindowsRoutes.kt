@@ -5,6 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 
 /**
@@ -45,6 +47,45 @@ data class TunNetConfig(
 /** One command line, and whether its failure aborts the setup. */
 data class NetCommand(val argv: List<String>, val essential: Boolean = true) {
     override fun toString(): String = argv.joinToString(" ")
+}
+
+/**
+ * One route the crash-recovery snapshot remembers — data, never a command.
+ * The service acts on the snapshot as SYSTEM out of ProgramData, which any
+ * local user could write to before the service first locked it down, so the
+ * file must not be able to say anything but "delete this route": the argv is
+ * rebuilt from a fixed template by [deleteCommand] and every field is checked
+ * by [WindowsRoutes.parseSnapshot] before it gets that far.
+ */
+@Serializable
+data class RouteEntry(
+    /** [IPV4]: a `route delete`; [IPV6]: a `netsh interface ipv6 delete route`. */
+    val kind: String,
+    val destination: String,
+    val prefix: Int,
+    /** The next hop; IPv4 routes only, an IPv6 route is on-link. */
+    val gateway: String? = null,
+    val interfaceIndex: Int
+) {
+    /** The command that deletes this route. argv[0] is a literal here, never from the data. */
+    fun deleteCommand(): NetCommand = NetCommand(
+        when (kind) {
+            IPV6 -> listOf("netsh", "interface", "ipv6", "delete", "route", "$destination/$prefix", "interface=$interfaceIndex", "store=active")
+            else -> listOf("route", "delete", destination, "mask", RoutePlan.maskOf(prefix), gateway ?: "", "if", interfaceIndex.toString())
+        },
+        essential = false
+    )
+
+    companion object {
+        const val IPV4 = "route"
+        const val IPV6 = "route6"
+
+        fun v4(destination: String, prefix: Int, gateway: String, interfaceIndex: Int) =
+            RouteEntry(IPV4, destination, prefix, gateway, interfaceIndex)
+
+        fun v6(destination: String, prefix: Int, interfaceIndex: Int) =
+            RouteEntry(IPV6, destination, prefix, null, interfaceIndex)
+    }
 }
 
 /**
@@ -105,11 +146,23 @@ object RoutePlan {
     }
 
     /** The routes that outlive the adapter and so must be deleted by hand, plus the adapter's own for tidiness. */
-    fun teardown(c: TunNetConfig): List<NetCommand> {
-        val out = ArrayList<NetCommand>()
-        out += NetCommand(routeDelete("0.0.0.0", "128.0.0.0", c.gateway, c.interfaceIndex), essential = false)
-        out += NetCommand(routeDelete("128.0.0.0", "128.0.0.0", c.gateway, c.interfaceIndex), essential = false)
-        out += physicalSideTeardown(c).map { NetCommand(it, essential = false) }
+    fun teardown(c: TunNetConfig): List<NetCommand> = teardownEntries(c).map { it.deleteCommand() }
+
+    /**
+     * [teardown] as data, for the snapshot a crash leaves behind. The
+     * adapter's own routes — the IPv4 halves and the IPv6 ::/1 and 8000::/1
+     * — are in it too: they go with the adapter, but an adapter a dead
+     * process left behind is exactly what the next start finds.
+     */
+    fun teardownEntries(c: TunNetConfig): List<RouteEntry> {
+        val out = ArrayList<RouteEntry>()
+        out += RouteEntry.v4("0.0.0.0", 1, c.gateway, c.interfaceIndex)
+        out += RouteEntry.v4("128.0.0.0", 1, c.gateway, c.interfaceIndex)
+        out += physicalSideTeardown(c)
+        if (c.ipv6Address != null) {
+            out += RouteEntry.v6("::", 1, c.interfaceIndex)
+            out += RouteEntry.v6("8000::", 1, c.interfaceIndex)
+        }
         return out
     }
 
@@ -119,9 +172,11 @@ object RoutePlan {
         return NetCommand(routeAdd(ip, "255.255.255.255", gw, c.physicalInterfaceIndex), essential = false)
     }
 
-    fun includeHost(c: TunNetConfig, ip: String): NetCommand? {
+    fun includeHost(c: TunNetConfig, ip: String): NetCommand? = includeHostEntry(c, ip)?.deleteCommand()
+
+    fun includeHostEntry(c: TunNetConfig, ip: String): RouteEntry? {
         val gw = c.physicalGateway ?: return null
-        return NetCommand(routeDelete(ip, "255.255.255.255", gw, c.physicalInterfaceIndex), essential = false)
+        return RouteEntry.v4(ip, 32, gw, c.physicalInterfaceIndex)
     }
 
     private fun physicalSide(c: TunNetConfig): List<List<String>> {
@@ -135,22 +190,19 @@ object RoutePlan {
         return out
     }
 
-    private fun physicalSideTeardown(c: TunNetConfig): List<List<String>> {
+    private fun physicalSideTeardown(c: TunNetConfig): List<RouteEntry> {
         val gw = c.physicalGateway ?: return emptyList()
-        val out = ArrayList<List<String>>()
-        for (host in c.excludedHosts.distinct()) out += routeDelete(host, "255.255.255.255", gw, c.physicalInterfaceIndex)
+        val out = ArrayList<RouteEntry>()
+        for (host in c.excludedHosts.distinct()) out += RouteEntry.v4(host, 32, gw, c.physicalInterfaceIndex)
         for (network in c.excludedNetworks) {
             val (net, prefix) = splitCidr(network) ?: continue
-            out += routeDelete(net, maskOf(prefix), gw, c.physicalInterfaceIndex)
+            out += RouteEntry.v4(net, prefix, gw, c.physicalInterfaceIndex)
         }
         return out
     }
 
     private fun routeAdd(dest: String, mask: String, gateway: String, ifIndex: Int) =
         listOf("route", "add", dest, "mask", mask, gateway, "metric", "1", "if", ifIndex.toString())
-
-    private fun routeDelete(dest: String, mask: String, gateway: String, ifIndex: Int) =
-        listOf("route", "delete", dest, "mask", mask, gateway, "if", ifIndex.toString())
 
     /** `a.b.c.d/n` → (`a.b.c.d`, n); null for anything else. */
     fun splitCidr(text: String): Pair<String, Int>? {
@@ -176,10 +228,10 @@ object RoutePlan {
  */
 class WindowsRoutes(private val snapshot: File) {
     private val logger = MythaiaLogger("Routes")
-    private val json = Json { ignoreUnknownKeys = true }
 
+    /** `version` defaults to nothing so a file from an older format, which held command lines, is rejected. */
     @Serializable
-    private data class Snapshot(val teardown: List<List<String>>)
+    private data class Snapshot(val version: Int = 0, val routes: List<RouteEntry> = emptyList())
 
     /** What is currently applied; null when nothing is. */
     @Volatile
@@ -193,7 +245,7 @@ class WindowsRoutes(private val snapshot: File) {
     fun apply(config: TunNetConfig) {
         val plan = RoutePlan.setup(config)
         // Everything that survives the adapter is written down before it is done.
-        writeSnapshot(RoutePlan.teardown(config).map { it.argv })
+        writeSnapshot(RoutePlan.teardownEntries(config))
         for (command in plan) {
             val result = runWithRetry(command)
             if (!result.ok) {
@@ -218,7 +270,7 @@ class WindowsRoutes(private val snapshot: File) {
         val command = RoutePlan.excludeHost(config, ip) ?: return
         val result = WindowsNet.run(command.argv)
         if (!result.ok) logger.warning("Could not exclude $ip: ${result.output.lineSequence().firstOrNull()}")
-        writeSnapshot(currentTeardown(config).map { it.argv })
+        writeSnapshot(currentTeardown(config))
     }
 
     /** Undoes [apply]. Safe to call twice. */
@@ -227,7 +279,7 @@ class WindowsRoutes(private val snapshot: File) {
             snapshot.delete()
             return
         }
-        for (command in currentTeardown(config)) {
+        for (command in currentTeardown(config).map { it.deleteCommand() }) {
             val result = WindowsNet.run(command.argv)
             if (!result.ok) logger.debug("Teardown (ignored): $command -> ${result.output.lineSequence().firstOrNull()}")
         }
@@ -237,25 +289,94 @@ class WindowsRoutes(private val snapshot: File) {
         logger.info("Routes removed")
     }
 
-    /** Deletes what a previous run left in the routing table, if its snapshot is still there. */
+    /**
+     * Deletes what a previous run left in the routing table, if its snapshot
+     * is still there. The snapshot is only believed when it was written by
+     * SYSTEM, an administrator or the account this process runs as — in
+     * ProgramData that means the service itself — and when every entry in it
+     * validates; anything else is discarded unread.
+     */
     fun cleanupLeftovers() {
         if (!snapshot.isFile) return
-        val commands = runCatching { json.decodeFromString(Snapshot.serializer(), snapshot.readText()).teardown }.getOrNull()
-        if (commands != null) {
-            logger.info("Removing ${commands.size} routes left by a previous run")
-            for (argv in commands) WindowsNet.run(argv)
+        val owner = if (WindowsNet.isWindows) WindowsNet.fileOwnerSid(snapshot) else null
+        val trusted = !WindowsNet.isWindows || (owner != null && (owner in TRUSTED_OWNERS || owner == WindowsNet.currentUserSid))
+        val routes = if (trusted) parseSnapshot(runCatching { snapshot.readText() }.getOrNull()) else null
+        when {
+            !trusted -> logger.warning("Ignoring the route snapshot: written by ${owner ?: "an unknown account"}")
+            routes == null -> logger.warning("Ignoring the route snapshot: not in this version's format")
+            else -> {
+                logger.info("Removing ${routes.size} routes left by a previous run")
+                for (route in routes) WindowsNet.run(route.deleteCommand().argv)
+            }
         }
         snapshot.delete()
     }
 
-    private fun currentTeardown(config: TunNetConfig): List<NetCommand> {
-        val extras = extraHosts.mapNotNull { RoutePlan.includeHost(config, it) }
-        return extras + RoutePlan.teardown(config)
+    private fun currentTeardown(config: TunNetConfig): List<RouteEntry> {
+        val extras = extraHosts.mapNotNull { RoutePlan.includeHostEntry(config, it) }
+        return extras + RoutePlan.teardownEntries(config)
     }
 
-    private fun writeSnapshot(commands: List<List<String>>) {
-        runCatching { snapshot.writeText(json.encodeToString(Snapshot.serializer(), Snapshot(commands))) }
+    private fun writeSnapshot(routes: List<RouteEntry>) {
+        runCatching { snapshot.writeText(encodeSnapshot(routes)) }
             .onFailure { logger.warning("Could not write the route snapshot: ${it.message}") }
+    }
+
+    companion object {
+        const val SNAPSHOT_VERSION = 2
+        private val json = Json { ignoreUnknownKeys = true }
+
+        /** SYSTEM and BUILTIN\Administrators; SIDs because the names are localised. */
+        private val TRUSTED_OWNERS = setOf("S-1-5-18", "S-1-5-32-544")
+
+        private val ipv4Form = Regex("""(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}""")
+        private val ipv6Form = Regex("""[0-9A-Fa-f:]{2,39}""")
+
+        internal fun encodeSnapshot(routes: List<RouteEntry>): String =
+            json.encodeToString(Snapshot.serializer(), Snapshot(SNAPSHOT_VERSION, routes))
+
+        /**
+         * The routes in a snapshot [text], or null when anything about it is
+         * not what this version writes: wrong version, unknown kind, an
+         * address that is not a literal of the right family, a prefix or
+         * interface index out of range. One bad entry rejects the file.
+         */
+        internal fun parseSnapshot(text: String?): List<RouteEntry>? {
+            if (text == null) return null
+            val snapshot = runCatching { json.decodeFromString(Snapshot.serializer(), text) }.getOrNull() ?: return null
+            if (snapshot.version != SNAPSHOT_VERSION) return null
+            return snapshot.routes.map { validated(it) ?: return null }
+        }
+
+        private fun validated(e: RouteEntry): RouteEntry? {
+            if (e.interfaceIndex <= 0) return null
+            return when (e.kind) {
+                RouteEntry.IPV4 -> {
+                    if (e.prefix !in 0..32) return null
+                    val destination = ipv4Literal(e.destination) ?: return null
+                    val gateway = ipv4Literal(e.gateway ?: return null) ?: return null
+                    RouteEntry.v4(destination, e.prefix, gateway, e.interfaceIndex)
+                }
+                RouteEntry.IPV6 -> {
+                    if (e.prefix !in 0..128 || e.gateway != null) return null
+                    RouteEntry.v6(ipv6Literal(e.destination) ?: return null, e.prefix, e.interfaceIndex)
+                }
+                else -> null
+            }
+        }
+
+        /** [text] as a dotted IPv4 address, or null. The regex comes first so InetAddress never resolves a name. */
+        private fun ipv4Literal(text: String): String? {
+            if (!ipv4Form.matches(text)) return null
+            return (runCatching { InetAddress.getByName(text) }.getOrNull() as? Inet4Address)?.hostAddress
+        }
+
+        /** [text] as an IPv6 address, or null; hex and colons only, so it is safe as an argument once it parses. */
+        private fun ipv6Literal(text: String): String? {
+            if (!ipv6Form.matches(text) || !text.contains(':')) return null
+            if (runCatching { InetAddress.getByName(text) }.getOrNull() !is Inet6Address) return null
+            return text.lowercase()
+        }
     }
 
     /** A freshly created adapter is not always addressable at once; the essentials get a few tries. */

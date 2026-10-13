@@ -22,10 +22,13 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Subject
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,6 +46,8 @@ import com.mythaia.desktop.ConnectionState
 import com.mythaia.desktop.S
 import com.mythaia.desktop.tr
 
+private const val MAX_IMPORT_NAMES_SHOWN = 12
+
 enum class Screen(val key: String, val icon: ImageVector) {
     HOME("nav_home", Icons.Default.Home),
     PROXIES("nav_proxies", Icons.Default.List),
@@ -56,6 +61,27 @@ fun App(state: AppState) {
     S.lang
     var screen by remember { mutableStateOf(Screen.HOME) }
     val message by state.message.collectAsState()
+    val pendingImport by state.pendingImport.collectAsState()
+
+    pendingImport?.let { pending ->
+        // What a mythaia:// or vless:// link from outside wants to add; nothing is stored until Add.
+        val shown = pending.names.take(MAX_IMPORT_NAMES_SHOWN)
+        val more = pending.names.size - shown.size
+        AlertDialog(
+            onDismissRequest = { state.dismissImport() },
+            title = { Text(tr("import_link_title")) },
+            text = {
+                Column {
+                    Text(tr("import_link_q", pending.names.size))
+                    Spacer(Modifier.height(12.dp))
+                    shown.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1) }
+                    if (more > 0) Text(tr("import_link_more", more), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { Button(onClick = { state.confirmImport() }) { Text(tr("add")) } },
+            dismissButton = { TextButton(onClick = { state.dismissImport() }) { Text(tr("cancel")) } }
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(modifier = Modifier.fillMaxSize()) {

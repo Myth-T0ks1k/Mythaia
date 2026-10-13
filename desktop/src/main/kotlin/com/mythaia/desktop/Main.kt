@@ -54,6 +54,7 @@ fun main(args: Array<String>) {
     val nativeAvailable = loadNativeLibrary(logger)
     SystemProxy.restoreIfLeftOver()
     runCatching { com.mythaia.desktop.tun.TunEngine.cleanupLeftovers() }
+    runCatching { com.mythaia.desktop.tun.Elevation.cleanupArgFile() }
 
     val state = AppState(DesktopStore(), nativeAvailable)
     // An elevated relaunch for TUN mode: switch to it and connect at once.
@@ -67,7 +68,8 @@ fun main(args: Array<String>) {
     state.windowVisible.value = !startHidden
     if (state.settings.value.autoConnect) state.connect()
     DeepLinks.register()
-    args.firstOrNull { DeepLinks.isLink(it) }?.let { state.addText(DeepLinks.extract(it)) }
+    // A link from outside — a browser, usually — is shown and confirmed before anything is stored.
+    args.firstOrNull { DeepLinks.isLink(it) }?.let { state.requestImport(DeepLinks.extract(it)) }
 
     application {
         val settings by state.settings.collectAsState()
@@ -220,11 +222,12 @@ private fun watchShowRequests(state: AppState) {
                     last = file.lastModified()
                     state.windowVisible.value = true
                     state.bringToFront.value = System.currentTimeMillis()
+                    // Written by a second instance started with a link: the same confirmation as a direct start.
                     val request = AppPaths.importRequest
                     if (request.isFile) {
                         val text = runCatching { request.readText() }.getOrNull()
                         request.delete()
-                        if (!text.isNullOrBlank()) state.addText(text)
+                        if (!text.isNullOrBlank()) state.requestImport(text)
                     }
                 }
             } catch (_: InterruptedException) {

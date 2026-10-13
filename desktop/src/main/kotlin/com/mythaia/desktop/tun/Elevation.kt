@@ -61,6 +61,8 @@ object Elevation {
         if (!result.ok) {
             lastError = result.output.lineSequence().firstOrNull { it.isNotBlank() } ?: "exit ${result.exitCode}"
             logger.warning("Elevated relaunch did not start: $lastError")
+            // Nobody will read it now; a launched instance reads its own at startup.
+            argFile.delete()
             return false
         }
         logger.info("Elevated instance launched: $file ${arguments.joinToString(" ")}")
@@ -70,6 +72,20 @@ object Elevation {
     @Volatile
     var lastError: String? = null
         private set
+
+    /**
+     * Removes the argfile a relaunch left behind — the launching instance
+     * exits as soon as the elevated one is up, so it cannot. Called at every
+     * startup; a file younger than a minute may be the one a launch in
+     * progress is about to read, and is left for the next time.
+     */
+    fun cleanupArgFile() {
+        val file = argFile
+        if (file.isFile && System.currentTimeMillis() - file.lastModified() > ARG_FILE_MAX_AGE_MS) file.delete()
+    }
+
+    private val argFile: File get() = File(AppPaths.dataDir, "relaunch.args")
+    private const val ARG_FILE_MAX_AGE_MS = 60_000L
 
     /**
      * The executable and its arguments: the installed launcher when there
@@ -88,7 +104,6 @@ object Elevation {
         val jvmArgs = ManagementFactory.getRuntimeMXBean().inputArguments
         val classPath = System.getProperty("java.class.path").orEmpty()
 
-        val argFile = File(AppPaths.dataDir, "relaunch.args")
         val lines = ArrayList<String>()
         jvmArgs.forEach { lines += argQuote(it) }
         lines += "-cp"

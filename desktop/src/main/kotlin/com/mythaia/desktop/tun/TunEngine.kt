@@ -301,9 +301,13 @@ class TunEngine(val stats: TrafficStats) {
         /** The wintun.dll this run would load, or null. */
         fun wintunLibrary(): File? = AppPaths.wintunLibrary()
 
-        /** Removes routes a crashed run may have left; call once at startup. */
+        /**
+         * Removes routes a crashed run may have left; call once at startup.
+         * Only with the rights to do it: a plain process would fail every
+         * delete and then discard the snapshot an elevated start could act on.
+         */
         fun cleanupLeftovers() {
-            if (!WindowsNet.isWindows) return
+            if (!WindowsNet.isWindows || !isElevated()) return
             WindowsRoutes(AppPaths.tunRouteSnapshot).cleanupLeftovers()
         }
     }

@@ -26,8 +26,12 @@ object AppPaths {
     val chains: File get() = File(dataDir, "chains.json")
     val importRequest: File get() = File(dataDir, "import.request")
     val proxySnapshot: File get() = File(dataDir, "system-proxy-before.json")
-    /** The routes TUN mode added on the physical side, so a crash can be cleaned up on the next start. */
-    val tunRouteSnapshot: File get() = File(dataDir, "tun-routes.json")
+    /**
+     * The routes TUN mode added, so a crash can be cleaned up on the next
+     * start. `v2` holds route data; the earlier `tun-routes.json` held
+     * command lines and is never read again.
+     */
+    val tunRouteSnapshot: File get() = File(dataDir, "tun-routes-v2.json")
     val geoIp: File get() = File(dataDir, "geoip.mmdb")
     val logDir: File get() = File(dataDir, "logs").apply { mkdirs() }
     val instanceLock: File get() = File(dataDir, "instance.lock")
