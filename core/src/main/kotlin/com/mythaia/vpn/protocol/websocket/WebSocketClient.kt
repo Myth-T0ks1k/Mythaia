@@ -39,7 +39,20 @@ class WebSocketConnection private constructor(
         get() = lock.withLock { _isConnected }
 
     companion object {
-        private const val MAX_RECEIVE_BUFFER_SIZE = 1_048_576  // 1 MB
+        /**
+         * The largest frame accepted; one declaring more is refused at once
+         * rather than waited for. Xray writes a WebSocket frame per buffer it
+         * relays, so frames of some hundred kilobytes are normal.
+         */
+        private const val MAX_FRAME_PAYLOAD = 16 * 1024 * 1024
+
+        /**
+         * A whole maximum frame plus the read that completed it. The buffer
+         * holds at most one incomplete frame, since a complete one is taken
+         * out before the next read. The old 1 MB cap sat below the largest
+         * frame, so one bigger than it could never be received at all.
+         */
+        private const val MAX_RECEIVE_BUFFER_SIZE = MAX_FRAME_PAYLOAD + 4 * 1024 * 1024
 
         val chromeUserAgent: String
             get() = com.mythaia.vpn.protocol.ProxyUserAgent.chrome
@@ -316,6 +329,11 @@ class WebSocketConnection private constructor(
                 payloadLength = (payloadLength shl 8) or (receiveBuffer[2 + i].toInt() and 0xFF).toLong()
             }
             headerSize = 10
+        }
+
+        if (payloadLength < 0 || payloadLength > MAX_FRAME_PAYLOAD) {
+            receiveBufferLen = 0
+            throw WebSocketError.InvalidFrame("frame of $payloadLength bytes, more than $MAX_FRAME_PAYLOAD")
         }
 
         if (isMasked) {

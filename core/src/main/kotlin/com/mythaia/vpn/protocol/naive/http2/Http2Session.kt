@@ -7,6 +7,8 @@ import com.mythaia.vpn.protocol.naive.NaiveTlsTransport
 import com.mythaia.vpn.protocol.ProxyConnection
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -40,13 +42,32 @@ class Http2Session(
     private val scope: CoroutineScope,
     private val tunnel: ProxyConnection? = null,
     var onClose: (() -> Unit)? = null,
-    private val dial: (suspend () -> Http2Wire)? = null
+    private val dial: (suspend () -> Http2Wire)? = null,
+    /** Pooled sessions only: silence from the server, with streams open, that earns a PING. */
+    private val keepaliveIdleMs: Long = KEEPALIVE_IDLE_MS,
+    /** How long after that PING the connection is given up on when nothing at all arrives. */
+    private val keepaliveTimeoutMs: Long = KEEPALIVE_TIMEOUT_MS
 ) {
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
         private val CONNECTION_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".toByteArray(Charsets.US_ASCII)
         private const val MAX_RECEIVE_BUFFER_SIZE = 2_097_152
         private const val MAX_CONCURRENT_STREAMS = 100
+
+        /** Our SETTINGS_HEADER_TABLE_SIZE: the most the server's HPACK encoder may ask us to keep. */
+        private const val HEADER_TABLE_SIZE = 65536
+
+        /** Our SETTINGS_MAX_HEADER_LIST_SIZE, and the most of one header block we buffer across CONTINUATION. */
+        private const val MAX_HEADER_BLOCK_SIZE = 262144
+
+        /** RFC 9113 §5.1.1: the last stream id a client can use. */
+        private const val MAX_STREAM_ID = 0x7FFFFFFF
+
+        const val KEEPALIVE_IDLE_MS = 30_000L
+        const val KEEPALIVE_TIMEOUT_MS = 15_000L
+
+        /** Why a stream fails when its session was closed under it; [Http2StreamPool] retries on it. */
+        internal const val CLOSED_MESSAGE = "Session closed"
     }
 
     enum class State { IDLE, CONNECTING, READY, CLOSED }
@@ -57,6 +78,10 @@ class Http2Session(
     @Volatile
     private var goawayReceived = false
     private var goawayLastStreamID = Int.MAX_VALUE
+
+    /** Every odd id up to [MAX_STREAM_ID] used: like a GOAWAY, no new streams here (§5.1.1). */
+    @Volatile
+    private var streamIdsExhausted = false
 
     private var transport: Http2Wire? = null
     private val receiveBuffer = Http2Buffer()
@@ -69,6 +94,20 @@ class Http2Session(
     @Volatile
     private var lastActivityNanos = System.nanoTime()
 
+    /** When the last frame arrived, whatever it was: the keepalive's measure of the server's silence. */
+    @Volatile
+    private var lastFrameNanos = System.nanoTime()
+
+    private var keepaliveJob: Job? = null
+
+    /**
+     * A header block whose HEADERS frame lacked END_HEADERS, collecting its
+     * CONTINUATION frames; RFC 9113 §6.10 lets nothing else arrive meanwhile.
+     */
+    private var pendingHeaderBlock: ByteArrayOutputStream? = null
+    private var pendingHeadersStreamID = 0
+    private var pendingHeadersFlags = 0
+
     /** How long the session has carried no stream at all; 0 while one is open. */
     val idleNanos: Long
         get() = if (synchronized(streamsLock) { streams.isNotEmpty() || reserved > 0 }) 0L
@@ -78,7 +117,9 @@ class Http2Session(
     val isStarting: Boolean get() = state == State.IDLE || state == State.CONNECTING
 
     private val streams = mutableMapOf<Int, Http2Stream>()
-    private var nextStreamID = 1
+
+    /** Internal so a test can walk it to the end of the id space. */
+    internal var nextStreamID = 1
     private val streamsLock = Any()
 
     /** Streams handed out but not opened yet: they hold a slot, not yet an id. */
@@ -93,7 +134,7 @@ class Http2Session(
     var serverInitialWindowSize = Http2FlowControl.DEFAULT_INITIAL_WINDOW_SIZE
         private set
 
-    val hpackDecoder = HpackDecoder()
+    val hpackDecoder = HpackDecoder(HEADER_TABLE_SIZE)
 
     private val writeMutex = Mutex()
 
@@ -101,7 +142,7 @@ class Http2Session(
     private val readyMutex = Mutex()
 
     val hasCapacity: Boolean
-        get() = state == State.READY && !goawayReceived &&
+        get() = state == State.READY && !goawayReceived && !streamIdsExhausted &&
             synchronized(streamsLock) { streams.size + reserved < streamLimit }
 
     val isClosed: Boolean get() = state == State.CLOSED
@@ -110,7 +151,7 @@ class Http2Session(
         ensureReady()
 
         if (state != State.READY) throw Http2Error.NotReady()
-        if (goawayReceived) throw Http2Error.Goaway()
+        if (goawayReceived || streamIdsExhausted) throw Http2Error.Goaway()
 
         return synchronized(streamsLock) {
             reserved += 1
@@ -126,7 +167,7 @@ class Http2Session(
      * `HTTP2Session.tryReserveStream()`.
      */
     fun tryReserveStream(destination: String): Http2Stream? {
-        if (state != State.READY || goawayReceived) return null
+        if (state != State.READY || goawayReceived || streamIdsExhausted) return null
         return synchronized(streamsLock) {
             if (streams.size + reserved >= streamLimit) return@synchronized null
             reserved += 1
@@ -153,12 +194,25 @@ class Http2Session(
             val t = transport
             if (t == null || state == State.CLOSED) throw Http2Error.ConnectionFailed("Transport closed")
             val id = synchronized(streamsLock) {
-                val id = nextStreamID
-                nextStreamID += 2
-                if (reserved > 0) reserved -= 1
-                streams[id] = stream
-                id
-            }
+                // The id space is finite (§5.1.1); past its end the counter
+                // wrapped to a negative id on the wire. Treated like a GOAWAY:
+                // no new streams here, the pool dials another connection. The
+                // reservation stays with the caller, which releases it on the
+                // way out.
+                if (nextStreamID !in 1..MAX_STREAM_ID) {
+                    streamIdsExhausted = true
+                    null
+                } else {
+                    val id = nextStreamID
+                    nextStreamID += 2
+                    // The last usable id just went out: [hasCapacity] turns
+                    // false now, so the pool stops picking this connection.
+                    if (nextStreamID !in 1..MAX_STREAM_ID) streamIdsExhausted = true
+                    if (reserved > 0) reserved -= 1
+                    streams[id] = stream
+                    id
+                }
+            } ?: throw Http2Error.Goaway()
             stream.assignId(id)
             t.send(Http2Framer.serialize(headers(id)))
         }
@@ -167,7 +221,7 @@ class Http2Session(
     fun removeStream(streamID: Int) {
         synchronized(streamsLock) { streams.remove(streamID) }
         lastActivityNanos = System.nanoTime()
-        if (goawayReceived && synchronized(streamsLock) { streams.isEmpty() }) {
+        if ((goawayReceived || streamIdsExhausted) && synchronized(streamsLock) { streams.isEmpty() }) {
             close()
         }
     }
@@ -180,6 +234,23 @@ class Http2Session(
      */
     fun acknowledgeConsumedData(streamID: Int, bytes: Int) {
         if (bytes <= 0) return
+        creditConnection(bytes)
+        val stream = synchronized(streamsLock) { streams[streamID] }
+        stream?.flowControl?.consumeRecv(bytes)?.let { streamInc ->
+            scope.launch { sendWindowUpdate(streamID, streamInc) }
+        }
+    }
+
+    /**
+     * The connection half of [acknowledgeConsumedData]: [bytes] of DATA the
+     * server sent are done with, whether the application read them or they
+     * went to a stream that was already gone. RFC 9113 §6.9: every DATA byte
+     * counts against the connection window, so every one has to be credited
+     * back, or the shared connection's window runs out after 128 MB of
+     * discarded data and the server stops sending to everyone on it.
+     */
+    fun creditConnection(bytes: Int) {
+        if (bytes <= 0) return
         val connInc: Int?
         synchronized(flowLock) {
             connectionRecvConsumed += bytes
@@ -191,10 +262,6 @@ class Http2Session(
         }
         if (connInc != null) {
             scope.launch { sendWindowUpdate(0, connInc) }
-        }
-        val stream = synchronized(streamsLock) { streams[streamID] }
-        stream?.flowControl?.consumeRecv(bytes)?.let { streamInc ->
-            scope.launch { sendWindowUpdate(streamID, streamInc) }
         }
     }
 
@@ -209,13 +276,13 @@ class Http2Session(
 
     private suspend fun ensureReady() {
         if (state == State.READY) return
-        if (state == State.CLOSED) throw Http2Error.ConnectionFailed("Session closed")
+        if (state == State.CLOSED) throw Http2Error.ConnectionFailed(CLOSED_MESSAGE)
 
         // A mutex rather than a flag: callers on several threads used to be able
         // to see "not connecting" at once and both dial.
         readyMutex.withLock {
             if (state == State.READY) return
-            if (state == State.CLOSED) throw Http2Error.ConnectionFailed("Session closed")
+            if (state == State.CLOSED) throw Http2Error.ConnectionFailed(CLOSED_MESSAGE)
             try {
                 state = State.CONNECTING
 
@@ -233,21 +300,63 @@ class Http2Session(
                         it.connect()
                     }
                 }
-                transport = t
+                // close() while the dial was in flight (the pool's closeAll) had
+                // no transport to cancel, and going on from here made a READY
+                // session with a read loop that nobody could reach any more.
+                if (!adoptTransport(t)) throw Http2Error.ConnectionFailed(CLOSED_MESSAGE)
 
                 sendConnectionPreface(t)
                 processHandshake(t)
 
-                state = State.READY
+                synchronized(streamsLock) {
+                    if (state == State.CLOSED) throw Http2Error.ConnectionFailed(CLOSED_MESSAGE)
+                    state = State.READY
+                }
                 lastActivityNanos = System.nanoTime()
+                lastFrameNanos = lastActivityNanos
 
                 scope.launch { readLoop() }
+                if (dial != null) keepaliveJob = scope.launch { keepaliveLoop() }
             } catch (e: Exception) {
-                state = State.CLOSED
-                transport?.cancel()
-                transport = null
-                onClose?.invoke()
+                closeWithError(e)
                 throw e
+            }
+        }
+    }
+
+    /** Stores [t] as the transport unless the session closed meanwhile, in which case it cancels it. */
+    private fun adoptTransport(t: Http2Wire): Boolean {
+        synchronized(streamsLock) {
+            if (state != State.CLOSED) {
+                transport = t
+                return true
+            }
+        }
+        t.cancel()
+        return false
+    }
+
+    /**
+     * Pooled connections only: a PING once streams are open and the server has
+     * sent nothing for [keepaliveIdleMs]; no frame at all within
+     * [keepaliveTimeoutMs] after it fails the connection and every stream on
+     * it, so the applications reconnect on a fresh one. Without it a stream on
+     * a connection the network had dropped silently hung until the
+     * application gave up on its own.
+     */
+    private suspend fun keepaliveLoop() {
+        while (state != State.CLOSED) {
+            val silentMs = (System.nanoTime() - lastFrameNanos) / 1_000_000
+            val busy = synchronized(streamsLock) { streams.isNotEmpty() }
+            if (!busy || silentMs < keepaliveIdleMs) {
+                delay(if (busy) keepaliveIdleMs - silentMs else keepaliveIdleMs)
+                continue
+            }
+            val before = lastFrameNanos
+            sendFrameRaw(Http2Framer.pingFrame())
+            delay(keepaliveTimeoutMs)
+            if (lastFrameNanos == before && state != State.CLOSED) {
+                closeWithError(Http2Error.ConnectionFailed("no reply to keepalive PING within $keepaliveTimeoutMs ms"))
             }
         }
     }
@@ -334,17 +443,43 @@ class Http2Session(
         }
     }
 
+    /** Routes one frame; throws on a connection error, which [readLoop] turns into [closeWithError]. */
     private fun routeFrame(frame: Http2Frame) {
         lastActivityNanos = System.nanoTime()
+        lastFrameNanos = lastActivityNanos
+
+        // RFC 9113 §6.10: an unfinished header block may be followed by nothing
+        // but its own CONTINUATION frames.
+        if (pendingHeaderBlock != null &&
+            (frame.type != Http2FrameType.CONTINUATION || frame.streamID != pendingHeadersStreamID)
+        ) {
+            throw Http2Error.ProtocolError(
+                "${frame.type} on stream ${frame.streamID} inside the header block of stream $pendingHeadersStreamID"
+            )
+        }
+
         when (frame.type) {
             Http2FrameType.DATA -> {
                 if (frame.streamID == 0) return
-                val stream = synchronized(streamsLock) { streams[frame.streamID] } ?: return
+                val data = Http2Framer.dataPayload(frame)
+                    ?: throw Http2Error.ProtocolError("DATA on stream ${frame.streamID}: padding longer than the frame")
+                val stream = synchronized(streamsLock) { streams[frame.streamID] }
+                if (stream == null) {
+                    // Closed on our side already (our RST and this frame crossed),
+                    // but the server spent connection window on it: credit it.
+                    creditConnection(frame.payload.size)
+                    return
+                }
+
+                // §6.1: padding counts against both windows but never reaches
+                // the application, so it is acknowledged here and now.
+                val padding = frame.payload.size - data.size
+                if (padding > 0) acknowledgeConsumedData(frame.streamID, padding)
 
                 // WINDOW_UPDATE deferred to consume time; see [acknowledgeConsumedData]
                 // (mirrors iOS HTTP2Stream.acknowledgeConsumedData semantics).
-                if (frame.payload.isNotEmpty()) {
-                    stream.deliverData(frame.payload)
+                if (data.isNotEmpty()) {
+                    stream.deliverData(data)
                 }
 
                 if (frame.hasFlag(Http2FrameFlags.END_STREAM)) {
@@ -355,18 +490,28 @@ class Http2Session(
             }
 
             Http2FrameType.HEADERS -> {
-                if (frame.streamID == 0) return
-                val stream = synchronized(streamsLock) { streams[frame.streamID] } ?: return
-                val headers = hpackDecoder.decode(frame.payload)
-                if (headers != null) {
-                    stream.deliverHeaders(headers)
+                if (frame.streamID == 0) throw Http2Error.ProtocolError("HEADERS on stream 0")
+                val fragment = Http2Framer.headerBlockFragment(frame)
+                    ?: throw Http2Error.ProtocolError("HEADERS on stream ${frame.streamID}: padding or priority longer than the frame")
+                if (frame.hasFlag(Http2FrameFlags.END_HEADERS)) {
+                    deliverHeaderBlock(frame.streamID, frame.flags, fragment)
                 } else {
-                    stream.deliverError(Http2Error.ProtocolError("Failed to decode headers"))
+                    pendingHeadersStreamID = frame.streamID
+                    pendingHeadersFlags = frame.flags
+                    pendingHeaderBlock = ByteArrayOutputStream(fragment.size * 2).also { it.write(fragment) }
                 }
-                // Trailers (gRPC's grpc-status) end the stream on a HEADERS frame.
-                if (frame.hasFlag(Http2FrameFlags.END_STREAM)) {
-                    stream.deliverEndStream()
-                    synchronized(streamsLock) { streams.remove(frame.streamID) }
+            }
+
+            Http2FrameType.CONTINUATION -> {
+                val block = pendingHeaderBlock
+                    ?: throw Http2Error.ProtocolError("CONTINUATION on stream ${frame.streamID} without HEADERS")
+                if (block.size() + frame.payload.size > MAX_HEADER_BLOCK_SIZE) {
+                    throw Http2Error.ProtocolError("header block on stream ${frame.streamID} over $MAX_HEADER_BLOCK_SIZE bytes")
+                }
+                block.write(frame.payload)
+                if (frame.hasFlag(Http2FrameFlags.END_HEADERS)) {
+                    pendingHeaderBlock = null
+                    deliverHeaderBlock(pendingHeadersStreamID, pendingHeadersFlags, block.toByteArray())
                 }
             }
 
@@ -430,6 +575,28 @@ class Http2Session(
         }
     }
 
+    /**
+     * Decodes a complete header block and hands it to its stream. Decoded
+     * whether or not the stream still exists: HPACK's dynamic table is shared
+     * by every stream on the connection (RFC 7541 §2.2), and skipping the
+     * block of a stream we had already reset (its response was in flight)
+     * dropped the table insertions it carried, after which every later header
+     * block on the connection decoded to garbage. A block that does not
+     * decode leaves the table in an unknown state, so it is a connection
+     * error (RFC 9113 §4.3, COMPRESSION_ERROR), not a stream's problem.
+     */
+    private fun deliverHeaderBlock(streamID: Int, flags: Int, block: ByteArray) {
+        val headers = hpackDecoder.decode(block)
+            ?: throw Http2Error.ProtocolError("COMPRESSION_ERROR: header block on stream $streamID does not decode")
+        val stream = synchronized(streamsLock) { streams[streamID] } ?: return
+        stream.deliverHeaders(headers)
+        // Trailers (gRPC's grpc-status) end the stream on a HEADERS frame.
+        if (flags and Http2FrameFlags.END_STREAM != 0) {
+            stream.deliverEndStream()
+            synchronized(streamsLock) { streams.remove(streamID) }
+        }
+    }
+
     suspend fun sendConnectRequest(stream: Http2Stream, destination: String) {
         val extraHeaders = mutableListOf<Pair<String, String>>()
 
@@ -455,12 +622,9 @@ class Http2Session(
         openStream(stream) { id -> Http2Framer.headersFrame(streamID = id, headerBlock = headerBlock, endStream = endStream) }
     }
 
-    suspend fun sendData(
-        streamID: Int,
-        data: ByteArray,
-        streamFlowControl: Http2StreamFlowControl,
-        endStream: Boolean = false
-    ) {
+    suspend fun sendData(stream: Http2Stream, data: ByteArray, endStream: Boolean = false) {
+        val streamID = stream.streamID
+        val streamFlowControl = stream.flowControl
         val maxPayload = Http2Framer.MAX_DATA_PAYLOAD
         var currentOffset = 0
 
@@ -475,6 +639,9 @@ class Http2Session(
         }
 
         while (currentOffset < data.size) {
+            // Checked per chunk: a stream reset or closed in the middle of a
+            // long write used to keep sending DATA on it to the end.
+            if (!stream.isConnected) throw Http2Error.StreamReset(streamID)
             val remaining = data.size - currentOffset
             // Taken under the lock: with many streams sending at once, an
             // unlocked read-then-subtract let two of them spend the same window.
@@ -529,7 +696,11 @@ class Http2Session(
                     val delta = value - serverInitialWindowSize
                     serverInitialWindowSize = value
                     // RFC 7540 §6.9.2: shift every existing stream's send window by delta.
-                    for (stream in streams.values) {
+                    // A snapshot: streams open and close on other threads, and
+                    // iterating the live map threw ConcurrentModificationException
+                    // out of the read loop, taking the connection down.
+                    val open = synchronized(streamsLock) { streams.values.toList() }
+                    for (stream in open) {
                         stream.adjustSendWindow(delta)
                     }
                 }
@@ -568,14 +739,17 @@ class Http2Session(
     }
 
     private fun closeWithError(error: Exception) {
-        if (state == State.CLOSED) return
-        state = State.CLOSED
-
+        // The transition is taken under the lock [adoptTransport] and the
+        // READY step use, so a close during the dial is never lost.
         val allStreams = synchronized(streamsLock) {
+            if (state == State.CLOSED) return
+            state = State.CLOSED
             val snapshot = streams.values.toList()
             streams.clear()
             snapshot
         }
+        keepaliveJob?.cancel()
+        keepaliveJob = null
         for (stream in allStreams) {
             stream.deliverError(error)
         }
@@ -591,28 +765,7 @@ class Http2Session(
     }
 
     fun close() {
-        if (state == State.CLOSED) return
-        state = State.CLOSED
-
-        val allStreams = synchronized(streamsLock) {
-            val snapshot = streams.values.toList()
-            streams.clear()
-            snapshot
-        }
-        for (stream in allStreams) {
-            stream.deliverError(Http2Error.ConnectionFailed("Session closed"))
-        }
-
-        synchronized(flowLock) {
-            connectionWindowAwaiter?.completeExceptionally(
-                Http2Error.ConnectionFailed("Session closed")
-            )
-            connectionWindowAwaiter = null
-        }
-
-        transport?.cancel()
-        transport = null
+        closeWithError(Http2Error.ConnectionFailed(CLOSED_MESSAGE))
         hpackDecoder.reset()
-        onClose?.invoke()
     }
 }

@@ -199,4 +199,48 @@ class HpackTest {
         // The dynamic entry the first block added is gone.
         assertNull(decoder.decode(hex("be")))
     }
+
+    // MARK: - Dynamic table size (RFC 7541 §4)
+
+    @Test
+    fun `the dynamic table evicts its oldest entries at its size limit`() {
+        // Each entry is 5 + 3 + 32 = 40 bytes: a 100-byte table holds two.
+        val decoder = HpackDecoder(maxTableSize = 100)
+        decoder.decode(hex("40 05 782d666f6f 03 626172")) // x-foo: bar
+        decoder.decode(hex("40 05 782d626172 03 626172")) // x-bar: bar
+        decoder.decode(hex("40 05 782d62617a 03 626172")) // x-baz: bar, x-foo evicted
+
+        assertEquals(listOf("x-baz" to "bar", "x-bar" to "bar"), decoder.decode(hex("be bf")))
+        // Index 64 was x-foo; the encoder knows it is gone, and so must we.
+        assertNull(decoder.decode(hex("c0")))
+    }
+
+    @Test
+    fun `an entry larger than the table empties it and is not added`() {
+        val decoder = HpackDecoder(maxTableSize = 50)
+        decoder.decode(hex("40 05 782d666f6f 03 626172")) // 40 bytes
+        // 5 + 20 + 32 = 57 bytes: §4.4.
+        decoder.decode(hex("40 05 782d626172 14") + ByteArray(20) { 0x61 })
+        assertNull(decoder.decode(hex("be")))
+    }
+
+    @Test
+    fun `a dynamic table size update shrinks the table`() {
+        val decoder = HpackDecoder()
+        decoder.decode(hex("40 05 782d666f6f 03 626172"))
+        // Size update to 0: everything goes.
+        assertEquals(emptyList<Pair<String, String>>(), decoder.decode(hex("20")))
+        assertNull(decoder.decode(hex("be")))
+        // Back up to the maximum, and entries are kept again.
+        assertEquals(listOf("x-foo" to "bar"), decoder.decode(hex("3f e1 1f 40 05 782d666f6f 03 626172")))
+        assertEquals(listOf("x-foo" to "bar"), decoder.decode(hex("be")))
+    }
+
+    @Test
+    fun `a size update past what we advertised is a decoding error`() {
+        // 5000 with a 5-bit prefix: 0x3f, then 4969 as e9 26. We advertised 4096.
+        assertNull(HpackDecoder(maxTableSize = 4096).decode(hex("3f e9 26")))
+        // Within a larger advertised size it is fine.
+        assertEquals(emptyList<Pair<String, String>>(), HpackDecoder(maxTableSize = 65536).decode(hex("3f e9 26")))
+    }
 }

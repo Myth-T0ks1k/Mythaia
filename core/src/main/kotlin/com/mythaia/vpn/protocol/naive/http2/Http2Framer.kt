@@ -10,7 +10,8 @@ enum class Http2FrameType(val value: Int) {
     SETTINGS(0x4),
     PING(0x6),
     GOAWAY(0x7),
-    WINDOW_UPDATE(0x8);
+    WINDOW_UPDATE(0x8),
+    CONTINUATION(0x9);
 
     companion object {
         fun fromValue(value: Int): Http2FrameType? = entries.firstOrNull { it.value == value }
@@ -21,6 +22,8 @@ object Http2FrameFlags {
     const val END_STREAM: Int = 0x1
     const val ACK: Int = 0x1
     const val END_HEADERS: Int = 0x4
+    const val PADDED: Int = 0x8
+    const val PRIORITY: Int = 0x20
 }
 
 /**
@@ -151,6 +154,43 @@ object Http2Framer {
 
     fun pingAckFrame(opaqueData: ByteArray): Http2Frame =
         Http2Frame(Http2FrameType.PING, Http2FrameFlags.ACK, 0, opaqueData)
+
+    /** A PING the peer must answer with the same 8 opaque bytes (RFC 9113 §6.7). */
+    fun pingFrame(opaqueData: ByteArray = ByteArray(8)): Http2Frame =
+        Http2Frame(Http2FrameType.PING, 0, 0, opaqueData)
+
+    /**
+     * The data of a DATA frame without its padding (RFC 9113 §6.1): with PADDED
+     * set, the first payload byte is the pad length and that many bytes at the
+     * end are padding. Null when the pad length does not fit the payload, which
+     * §6.1 makes a connection error.
+     */
+    fun dataPayload(frame: Http2Frame): ByteArray? =
+        stripPadding(frame.payload, frame.hasFlag(Http2FrameFlags.PADDED))
+
+    /**
+     * The header block fragment of a HEADERS frame (RFC 9113 §6.2): the payload
+     * without its padding (PADDED) and without the 5-byte priority block
+     * (PRIORITY: a stream dependency and weight, which this client ignores).
+     * Fed to HPACK as it was, padding and priority bytes decoded as header
+     * fields and derailed the dynamic table for every later block. Null when
+     * the flags claim more bytes than the payload has.
+     */
+    fun headerBlockFragment(frame: Http2Frame): ByteArray? {
+        val unpadded = stripPadding(frame.payload, frame.hasFlag(Http2FrameFlags.PADDED)) ?: return null
+        if (!frame.hasFlag(Http2FrameFlags.PRIORITY)) return unpadded
+        if (unpadded.size < 5) return null
+        return unpadded.copyOfRange(5, unpadded.size)
+    }
+
+    private fun stripPadding(payload: ByteArray, padded: Boolean): ByteArray? {
+        if (!padded) return payload
+        if (payload.isEmpty()) return null
+        val padLength = payload[0].toInt() and 0xFF
+        // §6.1: a pad length of the payload's length or more is a PROTOCOL_ERROR.
+        if (padLength >= payload.size) return null
+        return payload.copyOfRange(1, payload.size - padLength)
+    }
 
     /** RST_STREAM frame with the given error code (RFC 7540 §6.4). */
     fun rstStreamFrame(streamID: Int, errorCode: Int): Http2Frame {

@@ -133,6 +133,13 @@ class XHttpConnection private constructor(
     @Volatile
     private var pooledUpload: com.mythaia.vpn.protocol.naive.http2.Http2Stream? = null
 
+    /**
+     * Pooled packet-up: the POSTs whose reply has not ended them yet, under
+     * [lock]. [cancel] ends them, so a reply that never comes cannot leave a
+     * stream (and its slot on the shared connection) behind for good.
+     */
+    private val pooledPosts = HashSet<com.mythaia.vpn.protocol.naive.http2.Http2Stream>()
+
     val isConnected: Boolean
         get() = lock.withLock { _isConnected } &&
             (pooledStream == null || pooledDownload?.isConnected != false)
@@ -850,8 +857,11 @@ class XHttpConnection private constructor(
         val uploadCancelFn: (() -> Unit)?
         val pendingPackets: List<Pair<ByteArray, CompletableDeferred<Unit>>>
         val pendingResumptions: List<CancellableContinuation<Unit>>
+        val pendingPosts: List<com.mythaia.vpn.protocol.naive.http2.Http2Stream>
         lock.withLock {
             _isConnected = false
+            pendingPosts = pooledPosts.toList()
+            pooledPosts.clear()
             chunkedDecoder = ChunkedTransferDecoder()
             headerBuffer = ByteArray(0)
             headerBufferLen = 0
@@ -888,6 +898,7 @@ class XHttpConnection private constructor(
         // Pooled: end this tunnel's streams; the shared connection stays for others.
         pooledDownload?.close()
         pooledUpload?.close()
+        for (post in pendingPosts) post.close()
     }
 
     companion object {
@@ -1619,8 +1630,37 @@ class XHttpConnection private constructor(
             // One POST, as a stream of the shared connection. Its reply (an
             // empty 200) ends the stream by itself; nothing waits for it.
             val post = open()
-            post.openRequest(encodeH2UploadHeaders(seq, contentLength = data.size), endStream = data.isEmpty())
-            if (data.isNotEmpty()) post.sendLastData(data)
+            lock.withLock {
+                if (!_isConnected) {
+                    post.close()
+                    throw XHttpError.ConnectionClosed
+                }
+                pooledPosts.add(post)
+            }
+            try {
+                post.openRequest(encodeH2UploadHeaders(seq, contentLength = data.size), endStream = data.isEmpty())
+                if (data.isNotEmpty()) post.sendLastData(data)
+            } catch (e: Throwable) {
+                // A failure or a cancellation mid-send: RST_STREAM, so the shared
+                // connection gets the slot back. Left open, the stream stayed in
+                // the session for good and the session was never reaped.
+                lock.withLock { pooledPosts.remove(post) }
+                post.close()
+                throw e
+            }
+            // Reads the reply out until the server ends the stream: that
+            // credits the connection window for any body and drops the
+            // stream from [pooledPosts] when it is done. Cancelled with the
+            // tunnel, which then ends whatever is still open.
+            packetUpScope.launch {
+                try {
+                    while (post.receiveData() != null) { /* an empty 200: nothing to keep */ }
+                } catch (_: Throwable) {
+                } finally {
+                    lock.withLock { pooledPosts.remove(post) }
+                    post.close()
+                }
+            }
             return
         }
         val streamId: UInt
@@ -1968,7 +2008,23 @@ class ChunkedTransferDecoder {
 
     val isFinished: Boolean get() = _isFinished
 
+    companion object {
+        /**
+         * The most that may wait for a chunk to complete, and so the largest
+         * chunk accepted. Without a cap, a body that was never chunked (a
+         * proxy that unchunked it, an error page) was buffered without end and
+         * the reader hung for ever on "need more".
+         */
+        const val MAX_PENDING_BYTES = 4 * 1024 * 1024
+
+        /** A chunk size line is a few hex digits and maybe an extension; longer is not one. */
+        private const val MAX_SIZE_LINE = 1024
+    }
+
     fun feed(data: ByteArray) {
+        if (bufferLen + data.size > MAX_PENDING_BYTES) {
+            throw XHttpError.HttpError("chunked body: more than $MAX_PENDING_BYTES bytes pending")
+        }
         if (bufferLen + data.size > buffer.size) {
             val newSize = maxOf(buffer.size * 2, bufferLen + data.size)
             val newBuf = ByteArray(newSize)
@@ -1981,24 +2037,29 @@ class ChunkedTransferDecoder {
 
     /**
      * Returns the chunk payload (without framing), null if not enough data is available
-     * yet, or null when a zero-length terminator chunk is found (EOF).
+     * yet, or null when a zero-length terminator chunk is found (EOF). Throws
+     * [XHttpError.HttpError] when the bytes are not chunked encoding at all.
      */
     fun nextChunk(): ByteArray? {
         if (_isFinished) return null
 
         val crlfIdx = findCRLF(buffer, bufferLen, 0)
-        if (crlfIdx < 0) return null
+        if (crlfIdx < 0) {
+            if (bufferLen > MAX_SIZE_LINE) throw XHttpError.HttpError("chunked body: no chunk size line")
+            return null
+        }
 
         val sizeLineData = buffer.copyOfRange(0, crlfIdx)
         val sizeLine = String(sizeLineData, Charsets.US_ASCII)
 
-        // Parse hex chunk size (ignoring chunk extensions after ";")
+        // Parse hex chunk size (ignoring chunk extensions after ";"). A line
+        // that is not one is a protocol error, not "need more": waiting on it
+        // never ended.
         val sizeStr = sizeLine.split(";", limit = 2).first().trim()
-        val chunkSize: Long
-        try {
-            chunkSize = sizeStr.toLong(16)
-        } catch (e: NumberFormatException) {
-            return null
+        val chunkSize = sizeStr.toLongOrNull(16)
+            ?: throw XHttpError.HttpError("chunked body: bad chunk size line '${sizeStr.take(32)}'")
+        if (chunkSize < 0 || chunkSize > MAX_PENDING_BYTES) {
+            throw XHttpError.HttpError("chunked body: chunk of $chunkSize bytes")
         }
 
         if (chunkSize == 0L) {

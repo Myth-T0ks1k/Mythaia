@@ -457,9 +457,27 @@ object HpackHuffman {
  * Stateful HPACK decoder with a dynamic table that persists across decode calls
  * (RFC 7541 §2.3.3). Required for multiplexed sessions that span multiple HEADERS
  * frames; [HpackEncoder.decodeHeaders] is correct only for single-stream connections.
+ *
+ * [maxTableSize] is the SETTINGS_HEADER_TABLE_SIZE this side advertised (4096
+ * when it sent none, RFC 7540 §6.5.2): the peer may shrink its table below it
+ * with a size update, never grow it past it. The table is kept to the size the
+ * peer's encoder keeps, evicting the oldest entries (§4.3), or the two tables
+ * drift apart and every index after the first eviction names the wrong field.
  */
-class HpackDecoder {
-    private val dynamicTable = mutableListOf<Pair<String, String>>()
+class HpackDecoder(private val maxTableSize: Int = DEFAULT_TABLE_SIZE) {
+    companion object {
+        const val DEFAULT_TABLE_SIZE = 4096
+
+        /** RFC 7541 §4.1: an entry's size is its name and value in bytes plus 32. */
+        private const val ENTRY_OVERHEAD = 32
+    }
+
+    /** Newest entry first, as §2.3.3 numbers them from 62 up. */
+    private val dynamicTable = ArrayDeque<Pair<String, String>>()
+    private var dynamicTableSize = 0
+
+    /** The peer's current limit: [maxTableSize] until a size update lowers it. */
+    private var tableCapacity = maxTableSize
     private val staticTable = HpackEncoder.STATIC_TABLE
 
     fun decode(data: ByteArray): List<Pair<String, String>>? {
@@ -481,7 +499,7 @@ class HpackDecoder {
                     // RFC 7541 §6.2.1 Literal with Incremental Indexing
                     val (name, value) = decodeLiteral(data, offset, 6) ?: return null
                     headers.add(name to value)
-                    dynamicTable.add(0, name to value)
+                    addEntry(name, value)
                 }
 
                 byte and 0xF0 == 0x00 || byte and 0xF0 == 0x10 -> {
@@ -491,8 +509,12 @@ class HpackDecoder {
                 }
 
                 byte and 0xE0 == 0x20 -> {
-                    // RFC 7541 §6.3 Dynamic Table Size Update
-                    decodeInteger(data, offset, 5)
+                    // RFC 7541 §6.3 Dynamic Table Size Update. §4.2: past what we
+                    // advertised it is a decoding error (COMPRESSION_ERROR).
+                    val size = decodeInteger(data, offset, 5) ?: return null
+                    if (size > maxTableSize) return null
+                    tableCapacity = size
+                    evictDownTo(tableCapacity)
                 }
 
                 else -> return null
@@ -504,7 +526,29 @@ class HpackDecoder {
 
     fun reset() {
         dynamicTable.clear()
+        dynamicTableSize = 0
+        tableCapacity = maxTableSize
     }
+
+    private fun addEntry(name: String, value: String) {
+        val size = entrySize(name, value)
+        // §4.4: make room from the oldest end; an entry larger than the whole
+        // table empties it and is itself not added.
+        evictDownTo(tableCapacity - size)
+        if (size > tableCapacity) return
+        dynamicTable.addFirst(name to value)
+        dynamicTableSize += size
+    }
+
+    private fun evictDownTo(limit: Int) {
+        while (dynamicTableSize > limit && dynamicTable.isNotEmpty()) {
+            val (name, value) = dynamicTable.removeLast()
+            dynamicTableSize -= entrySize(name, value)
+        }
+    }
+
+    private fun entrySize(name: String, value: String): Int =
+        name.toByteArray(Charsets.UTF_8).size + value.toByteArray(Charsets.UTF_8).size + ENTRY_OVERHEAD
 
     private fun lookupEntry(index: Int): Pair<String, String>? {
         if (index < 1) return null

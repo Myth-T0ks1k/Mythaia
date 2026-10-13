@@ -2,7 +2,6 @@ package com.mythaia.vpn.protocol.grpc
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.net.URLEncoder
 
 /**
  * gRPC transport configuration.
@@ -78,7 +77,8 @@ data class GrpcConfiguration(
             return "/${urlPathEscape(name)}/$stream"
         }
 
-        val lastSlash = name.lastIndexOf('/')
+        // As Xray's getServiceName: a lone leading slash is both ends of the service part.
+        val lastSlash = name.lastIndexOf('/').coerceAtLeast(1)
         val serviceRaw = name.substring(1, lastSlash)
         val endingPath = name.substring(lastSlash + 1)
 
@@ -97,11 +97,33 @@ data class GrpcConfiguration(
         return "$prefix/${urlPathEscape(streamName)}"
     }
 
-    private fun urlPathEscape(value: String): String {
-        // URLEncoder encodes ' ' as '+' — replace back to %20 for path semantics
-        return URLEncoder.encode(value, "UTF-8")
-            .replace("+", "%20")
+    /**
+     * Go's `url.PathEscape`, which Xray applies to each segment of the service
+     * name, exactly: unreserved characters (RFC 3986 §2.3: letters, digits,
+     * `-_.~`) and the sub-delims `$&+:=@` stay; `/;,?` and every other byte of
+     * the UTF-8 form are percent-encoded, uppercase hex. `URLEncoder` is the
+     * form encoding, which escapes `~`, `@`, `:` and friends and keeps `*`, so
+     * a service name with any of them asked for a path the server did not serve.
+     */
+    internal fun urlPathEscape(value: String): String {
+        val out = StringBuilder(value.length)
+        for (b in value.toByteArray(Charsets.UTF_8)) {
+            val c = b.toInt() and 0xFF
+            val ch = c.toChar()
+            val keep = c < 0x80 && (
+                ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' ||
+                    ch in "-_.~" || ch in "\$&+:=@"
+                )
+            if (keep) {
+                out.append(ch)
+            } else {
+                out.append('%').append(HEX[c shr 4]).append(HEX[c and 0xF])
+            }
+        }
+        return out.toString()
     }
+
+    private val HEX = "0123456789ABCDEF"
 }
 
 /** gRPC transport errors. */

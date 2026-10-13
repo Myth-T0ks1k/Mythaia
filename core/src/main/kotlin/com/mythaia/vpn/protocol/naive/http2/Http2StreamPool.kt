@@ -41,8 +41,10 @@ object Http2StreamPool {
      * the stream in errors and logs.
      */
     suspend fun reserve(key: String, label: String, dial: suspend () -> Http2Wire): Http2Stream {
+        var retriedClosed = false
         while (true) {
             val session: Http2Session
+            val reservedStream: Http2Stream?
             val join: Boolean
             synchronized(this) {
                 val list = sessions.getOrPut(key) { mutableListOf() }
@@ -50,21 +52,36 @@ object Http2StreamPool {
                 val ready = list.firstOrNull { it.hasCapacity }
                 val starting = list.firstOrNull { it.isStarting }
                 when {
-                    ready != null -> { session = ready; join = false }
+                    // Reserved under the pool lock: the reaper closes idle sessions
+                    // under it too, so one it is about to close is never handed out
+                    // (that surfaced as "Transport closed" instead of a retry).
+                    ready != null -> { session = ready; join = false; reservedStream = ready.tryReserveStream(label) }
                     // Several streams at once (a page's first requests) wait for
                     // the connection being dialled instead of dialling their own.
-                    starting != null -> { session = starting; join = true }
+                    starting != null -> { session = starting; join = true; reservedStream = null }
                     else -> {
                         val fresh = Http2Session(null, scope, null, null, dial)
                         fresh.onClose = { synchronized(this) { sessions[key]?.remove(fresh) } }
                         list.add(fresh)
                         session = fresh
                         join = true
+                        reservedStream = null
                     }
                 }
                 startReaper()
             }
-            return if (join) session.acquireStream(label) else session.tryReserveStream(label) ?: continue
+            if (!join) return reservedStream ?: continue
+            try {
+                return session.acquireStream(label)
+            } catch (e: Http2Error.ConnectionFailed) {
+                // Closed between the pick and the join (closeAll, or a dial that
+                // was cancelled under it): once more, on another connection.
+                if (!retriedClosed && e.message?.endsWith(Http2Session.CLOSED_MESSAGE) == true) {
+                    retriedClosed = true
+                    continue
+                }
+                throw e
+            }
         }
     }
 
