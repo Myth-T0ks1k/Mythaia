@@ -80,6 +80,13 @@ class MainActivity : ComponentActivity() {
                     statusBarStyle = SystemBarStyle.auto(transparent, transparent) { darkTheme },
                     navigationBarStyle = SystemBarStyle.auto(transparent, transparent) { darkTheme }
                 )
+                // With three-button navigation Android lays a white scrim over
+                // the app for contrast, which showed as a white band under the
+                // navigation bar. The bar is solid and runs under the buttons
+                // itself, so the contrast is already there.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
             }
             MythaiaTheme(darkTheme = darkTheme) {
                 var onboardingCompleted by remember { mutableStateOf(viewModel.hasCompletedOnboarding) }

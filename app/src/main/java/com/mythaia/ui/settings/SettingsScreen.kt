@@ -55,7 +55,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -65,6 +65,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
@@ -92,7 +93,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: VpnViewModel, onClose: () -> Unit = {}) {
+fun SettingsScreen(viewModel: VpnViewModel, onClose: (() -> Unit)? = null) {
     val context = LocalContext.current
     var showRoutingRules by rememberSaveable { mutableStateOf(false) }
     var showAcknowledgements by rememberSaveable { mutableStateOf(false) }
@@ -123,9 +124,9 @@ fun SettingsScreen(viewModel: VpnViewModel, onClose: () -> Unit = {}) {
         showTrustedCertificates = false
         showAdvancedSettings = false
     }
-    // At the root, back closes the sheet — the arrow does the same, and a
-    // swipe never does, so a scroll cannot throw the user out by accident.
-    BackHandler(enabled = !activeSubScreen) { onClose() }
+    // At the root of a tab, back is the navigation's (to Home); only a host
+    // that passes [onClose] takes it over.
+    BackHandler(enabled = !activeSubScreen && onClose != null) { onClose?.invoke() }
 
     val currentRoute = when {
         showRoutingRules -> "routing"
@@ -247,26 +248,33 @@ private fun SettingsRoot(
     onOpenTrustedCertificates: () -> Unit,
     onOpenAcknowledgements: () -> Unit,
     onOpenAdvancedSettings: () -> Unit,
-    onClose: () -> Unit
+    onClose: (() -> Unit)?
 ) {
+    // Material 3's settings header: a large title that collapses into the
+    // bar as the list scrolls.
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
+        // The bottom bar's inset is the navigation's; the top bar takes the status bar.
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
+            LargeTopAppBar(
                 title = { Text(stringResource(R.string.settings)) },
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.close)
-                        )
+                    if (onClose != null) {
+                        IconButton(onClick = onClose) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.close)
+                            )
+                        }
                     }
                 },
-                // Inside a sheet there is no status bar to leave room for.
-                windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
-                colors = TopAppBarDefaults.topAppBarColors(
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
-                    scrolledContainerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
                     titleContentColor = MaterialTheme.colorScheme.onBackground,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground
                 )

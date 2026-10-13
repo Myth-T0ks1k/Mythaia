@@ -8,10 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -31,7 +29,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -70,11 +67,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -118,8 +110,7 @@ private const val CHAINS_GROUP_ID = "__chains__"
 @Composable
 fun HomeScreen(
     viewModel: VpnViewModel,
-    contentPadding: PaddingValues = PaddingValues(),
-    onOpenSettings: () -> Unit = {}
+    contentPadding: PaddingValues = PaddingValues()
 ) {
     val vpnStatus by viewModel.vpnStatus.collectAsState()
     val bytesIn by viewModel.bytesIn.collectAsState()
@@ -435,12 +426,8 @@ fun HomeScreen(
                 }
             }
 
-            SettingsHill(
-                onOpen = onOpenSettings,
-                lineColor = if (isConnected) Color.White.copy(alpha = 0.55f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                gearColor = if (isConnected) LightAzure else MaterialTheme.colorScheme.primary,
-                labelColor = if (isConnected) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // Settings is a tab of the navigation bar now, not a hill drawn here.
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 
@@ -636,100 +623,6 @@ private fun BoxScope.EdgeStickers(
                 }
             }
         }
-    }
-}
-
-/**
- * The way into Settings: a hairline across the bottom rising into a hill,
- * a gear sitting on its crest, and the word underneath. A tap on the gear or
- * a swipe up over the line opens the sheet.
- */
-@Composable
-private fun SettingsHill(
-    onOpen: () -> Unit,
-    lineColor: Color,
-    gearColor: Color,
-    labelColor: Color
-) {
-    val density = LocalDensity.current
-    val threshold = with(density) { 36.dp.toPx() }
-    var dragged by remember { mutableStateOf(0f) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(112.dp)
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = { dragged = 0f },
-                    onVerticalDrag = { _, amount -> dragged += amount },
-                    onDragEnd = {
-                        if (dragged < -threshold) onOpen()
-                        dragged = 0f
-                    }
-                )
-            }
-    ) {
-        // Geometry in dp so the gear can be placed exactly on the crest:
-        // the line runs low across the screen and rises to a crest at 44dp.
-        val crestDp = 44.dp
-        val baseDp = 66.dp
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val base = baseDp.toPx()
-            val crest = crestDp.toPx()
-            val hillHalf = w * 0.17f
-            val cx = w / 2f
-            val path = Path().apply {
-                moveTo(0f, base)
-                lineTo(cx - hillHalf * 1.7f, base)
-                cubicTo(cx - hillHalf * 0.95f, base, cx - hillHalf * 0.55f, crest, cx, crest)
-                cubicTo(cx + hillHalf * 0.55f, crest, cx + hillHalf * 0.95f, base, cx + hillHalf * 1.7f, base)
-                lineTo(w, base)
-            }
-            drawPath(path, lineColor, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-        }
-        // The gear stands on the crest: its bottom edge touches the line.
-        Surface(
-            onClick = onOpen,
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 2.dp,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = crestDp - 42.dp)
-                .size(40.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.settings),
-                    tint = gearColor,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-        // The word fills the band under the wave. Sized in dp, not sp: it is
-        // part of the drawing, so the phone's font-size setting must not
-        // reflow it against the line above.
-        val labelSize = with(density) { 26.dp.toSp() }
-        Text(
-            text = stringResource(R.string.settings),
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = labelSize,
-                lineHeight = labelSize,
-                letterSpacing = with(density) { 0.6.dp.toSp() }
-            ),
-            color = labelColor,
-            maxLines = 1,
-            softWrap = false,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .offset(y = baseDp + 8.dp)
-                .clickable(onClick = onOpen)
-        )
     }
 }
 

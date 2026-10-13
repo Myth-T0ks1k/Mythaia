@@ -1,26 +1,21 @@
 package com.mythaia.ui.navigation
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -31,15 +26,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -65,6 +55,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable object HomeRoute
 @Serializable object ProxiesRoute
+@Serializable object SettingsRoute
 
 data class TopLevelRoute(
     val titleResId: Int,
@@ -74,10 +65,14 @@ data class TopLevelRoute(
 )
 
 /**
- * Two destinations, Home and Proxies. Chains live inside Proxies as a tab;
- * Settings is a sheet pulled up from the home screen, not a destination.
+ * Three destinations, Home, Proxies and Settings, in Material 3's navigation
+ * bar (a rail on wide windows). Chains live inside Proxies as a tab.
+ *
+ * Settings used to be a sheet pulled up from a drawn hill on the home screen,
+ * under its own caption and above a separate rounded bar: three unrelated
+ * shapes stacked at the bottom of every screen. As a destination it gets the
+ * same bar, a full screen and the system back gesture like the other two.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(viewModel: VpnViewModel) {
     val navController = rememberNavController()
@@ -94,8 +89,6 @@ fun AppNavigation(viewModel: VpnViewModel) {
         }
     }
 
-    var showSettings by rememberSaveable { mutableStateOf(false) }
-
     val topLevelRoutes = listOf(
         TopLevelRoute(
             titleResId = R.string.home,
@@ -108,6 +101,12 @@ fun AppNavigation(viewModel: VpnViewModel) {
             route = ProxiesRoute,
             selectedIcon = ImageVector.vectorResource(R.drawable.ic_network_filled),
             unselectedIcon = ImageVector.vectorResource(R.drawable.ic_network_outlined)
+        ),
+        TopLevelRoute(
+            titleResId = R.string.settings,
+            route = SettingsRoute,
+            selectedIcon = Icons.Filled.Settings,
+            unselectedIcon = Icons.Outlined.Settings
         )
     )
 
@@ -135,11 +134,29 @@ fun AppNavigation(viewModel: VpnViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (wideLayout) return@Scaffold
-            WingBottomBar(
-                routes = topLevelRoutes,
-                isSelected = { isSelected(it) },
-                onSelect = { go(it) }
-            )
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                topLevelRoutes.forEach { route ->
+                    val selected = isSelected(route)
+                    NavigationBarItem(
+                        selected = selected,
+                        onClick = { go(route) },
+                        icon = {
+                            Icon(
+                                imageVector = if (selected) route.selectedIcon else route.unselectedIcon,
+                                contentDescription = null
+                            )
+                        },
+                        label = { Text(stringResource(route.titleResId), maxLines = 1) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    )
+                }
+            }
         }
     ) { innerPadding ->
         if (wideLayout) {
@@ -162,7 +179,7 @@ fun AppNavigation(viewModel: VpnViewModel) {
                             icon = {
                                 Icon(
                                     imageVector = if (selected) topLevelRoute.selectedIcon else topLevelRoute.unselectedIcon,
-                                    contentDescription = stringResource(topLevelRoute.titleResId)
+                                    contentDescription = null
                                 )
                             },
                             label = {
@@ -172,11 +189,11 @@ fun AppNavigation(viewModel: VpnViewModel) {
                                 )
                             },
                             colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
                                 unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                             ),
                             selected = selected,
                             onClick = { go(topLevelRoute) }
@@ -189,8 +206,7 @@ fun AppNavigation(viewModel: VpnViewModel) {
                     AppNavHost(
                         navController = navController,
                         viewModel = viewModel,
-                        contentPadding = innerPadding,
-                        onOpenSettings = { showSettings = true }
+                        contentPadding = innerPadding
                     )
                 }
             }
@@ -198,41 +214,8 @@ fun AppNavigation(viewModel: VpnViewModel) {
             AppNavHost(
                 navController = navController,
                 viewModel = viewModel,
-                contentPadding = innerPadding,
-                onOpenSettings = { showSettings = true }
+                contentPadding = innerPadding
             )
-        }
-    }
-
-    // Settings ride up from the bottom of the home screen. The whole screen,
-    // with its own drill-down, lives inside the sheet; the sub-screens' own
-    // back handling takes precedence until they are back at the root.
-    if (showSettings) {
-        // A swipe closes the sheet only once it has been dragged past 65% of
-        // the screen; released earlier, it springs back. A scroll inside the
-        // settings can therefore not throw the user out, while a deliberate
-        // pull down still works. The arrow and the back gesture close it too.
-        val screenHeight = LocalWindowInfo.current.containerSize.height.toFloat()
-        var farEnough by androidx.compose.runtime.remember { mutableStateOf(false) }
-        val sheetState = rememberModalBottomSheetState(
-            skipPartiallyExpanded = true,
-            confirmValueChange = { target -> target != SheetValue.Hidden || farEnough }
-        )
-        LaunchedEffect(sheetState) {
-            androidx.compose.runtime.snapshotFlow {
-                runCatching { sheetState.requireOffset() }.getOrDefault(0f)
-            }.collect { offset -> farEnough = screenHeight > 0f && offset > screenHeight * 0.65f }
-        }
-        ModalBottomSheet(
-            onDismissRequest = { showSettings = false },
-            sheetState = sheetState,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.background,
-            dragHandle = null
-        ) {
-            Box(modifier = Modifier.fillMaxHeight(0.96f)) {
-                SettingsScreen(viewModel = viewModel, onClose = { showSettings = false })
-            }
         }
     }
 }
@@ -242,8 +225,7 @@ fun AppNavigation(viewModel: VpnViewModel) {
 private fun AppNavHost(
     navController: NavHostController,
     viewModel: VpnViewModel,
-    contentPadding: PaddingValues,
-    onOpenSettings: () -> Unit
+    contentPadding: PaddingValues
 ) {
     NavHost(
         navController = navController,
@@ -252,15 +234,20 @@ private fun AppNavHost(
         composable<HomeRoute> {
             HomeScreen(
                 viewModel = viewModel,
-                contentPadding = contentPadding,
-                onOpenSettings = onOpenSettings
+                contentPadding = contentPadding
             )
         }
         composable<ProxiesRoute> {
             // Only the bottom inset: the screen draws its own header under the
             // status bar, and the outer padding would leave a blank band there.
-            Box(modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding())) {
+            Box(modifier = Modifier.bottomBarPadding(contentPadding)) {
                 ProxyListScreen(viewModel = viewModel)
+            }
+        }
+        composable<SettingsRoute> {
+            // The same: its top bar takes the status bar itself.
+            Box(modifier = Modifier.bottomBarPadding(contentPadding)) {
+                SettingsScreen(viewModel = viewModel)
             }
         }
     }
@@ -286,58 +273,13 @@ private fun AppNavHost(
 }
 
 /**
- * The Mythaia bottom bar: a paper slab with rounded shoulders, the active
- * destination sitting in an azure pill with its label beside the icon, the
- * other one quiet.
+ * Room for the navigation bar under a destination, marked as used: the
+ * destinations' own Scaffolds would otherwise add the system bar inset a
+ * second time and leave an empty band above the bar that cut lists off.
  */
-@Composable
-private fun WingBottomBar(
-    routes: List<TopLevelRoute>,
-    isSelected: (TopLevelRoute) -> Boolean,
-    onSelect: (TopLevelRoute) -> Unit
-) {
-    androidx.compose.material3.Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        shadowElevation = 12.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-        ) {
-            routes.forEach { route ->
-                val selected = isSelected(route)
-                androidx.compose.material3.Surface(
-                    onClick = { onSelect(route) },
-                    shape = RoundedCornerShape(50),
-                    color = if (selected) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent,
-                    contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (selected) route.selectedIcon else route.unselectedIcon,
-                            contentDescription = stringResource(route.titleResId),
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text(
-                            text = stringResource(route.titleResId),
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-        }
-    }
+private fun Modifier.bottomBarPadding(contentPadding: PaddingValues): Modifier {
+    val bottom = PaddingValues(bottom = contentPadding.calculateBottomPadding())
+    return padding(bottom).consumeWindowInsets(bottom)
 }
 
 private const val WIDE_LAYOUT_BREAKPOINT_DP = 600
