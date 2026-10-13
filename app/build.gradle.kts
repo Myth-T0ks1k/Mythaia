@@ -76,6 +76,11 @@ android {
             if (project.findProperty("mythaia.releaseX86") == "true") {
                 ndk { abiFilters += listOf("x86_64") }
             }
+            // `-Pmythaia.universal=true` builds one APK for every CPU: older
+            // and cheaper phones are still 32-bit ARM.
+            if (project.findProperty("mythaia.universal") == "true") {
+                ndk { abiFilters += listOf("armeabi-v7a", "x86", "x86_64") }
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
