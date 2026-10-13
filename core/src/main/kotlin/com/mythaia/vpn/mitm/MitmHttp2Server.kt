@@ -336,27 +336,38 @@ class MitmHttp2Server(
             }
             return
         }
-        val stream = synchronized(streamsLock) { responders[frame.streamID] }
-        if (stream != null) {
-            stream.flowControl.applyWindowUpdate(increment)
-        } else {
-            // Credit for a stream whose responder does not exist yet (client
-            // pre-crediting the response) — stash it and apply at delivery. Bounded:
-            // a client that sends WINDOW_UPDATEs for a flood of stream ids it never
-            // opens would otherwise grow this map without limit (a memory DoS), so a
-            // new id past the tracked-stream cap ends the connection.
-            synchronized(streamsLock) {
-                if (frame.streamID !in pendingStreamCredit &&
-                    pendingStreamCredit.size >= MAX_TRACKED_STREAMS
-                ) {
-                    throw Http2ServerException(
-                        "too many WINDOW_UPDATEs for streams with no responder", PROTOCOL_ERROR
-                    )
-                }
-                pendingStreamCredit[frame.streamID] =
-                    ((pendingStreamCredit[frame.streamID] ?: 0).toLong() + increment)
-                        .coerceAtMost(MAX_WINDOW).toInt()
+        synchronized(streamsLock) {
+            val stream = responders[frame.streamID]
+            if (stream != null) {
+                stream.flowControl.applyWindowUpdate(increment)
+                return
             }
+            // A stream id at or below the highest seen that has no responder and
+            // no request still arriving is closed — its response finished, it was
+            // reset, or the client skipped the id. A client routinely credits a
+            // stream whose last DATA it has not yet processed, so RFC 9113 §6.9
+            // says a WINDOW_UPDATE on a closed stream is to be ignored for a
+            // while. Stashing it instead pinned the id in pendingStreamCredit for
+            // the life of the connection, and 256 such finished streams tripped
+            // the cap below and ended a healthy connection with GOAWAY.
+            if (frame.streamID <= highestStreamID && frame.streamID !in assembling) return
+
+            // Credit for a stream whose responder does not exist yet (its request
+            // still arriving, or an id not yet opened: a client pre-crediting the
+            // response) — stash it and apply at delivery. Bounded: a client that
+            // sends WINDOW_UPDATEs for a flood of stream ids it never opens would
+            // otherwise grow this map without limit (a memory DoS), so a new id
+            // past the tracked-stream cap ends the connection.
+            if (frame.streamID !in pendingStreamCredit &&
+                pendingStreamCredit.size >= MAX_TRACKED_STREAMS
+            ) {
+                throw Http2ServerException(
+                    "too many WINDOW_UPDATEs for streams with no responder", PROTOCOL_ERROR
+                )
+            }
+            pendingStreamCredit[frame.streamID] =
+                ((pendingStreamCredit[frame.streamID] ?: 0).toLong() + increment)
+                    .coerceAtMost(MAX_WINDOW).toInt()
         }
     }
 
@@ -649,7 +660,17 @@ class MitmHttp2Server(
         return out.toByteArray()
     }
 
-    private suspend fun sendResponseBody(streamID: Int, flow: Http2StreamFlowControl, body: ByteArray) {
+    /**
+     * Frames [body] as flow-controlled DATA. [endStream] marks the final frame
+     * with END_STREAM; a caller streaming a body in several calls passes false
+     * and closes the stream itself once the last piece is out.
+     */
+    private suspend fun sendResponseBody(
+        streamID: Int,
+        flow: Http2StreamFlowControl,
+        body: ByteArray,
+        endStream: Boolean = true
+    ) {
         var offset = 0
         while (offset < body.size) {
             flow.awaitWindow()
@@ -666,7 +687,7 @@ class MitmHttp2Server(
                 continue
             }
             val end = offset + grant
-            val isLast = end >= body.size
+            val isLast = endStream && end >= body.size
             val chunk = body.copyOfRange(offset, end)
             offset = end
             writeMutex.withLock {
@@ -925,9 +946,48 @@ class MitmHttp2Server(
             finishResponder(streamID)
         }
 
+        /**
+         * Like [sendResponse], for a body that is not in hand: [head]'s status and
+         * headers go out as the HEADERS block, then [body] runs with a write-only
+         * sink whose every [MitmByteLeg.send] becomes flow-controlled DATA on this
+         * stream, and an empty END_STREAM DATA closes the stream once it returns.
+         * The stage-2 bridge streams an origin response too large to buffer
+         * through this. May be called at most once (it shares [sendResponse]'s
+         * one-shot); a no-op if the stream was already reset. If [body] throws,
+         * the stream is left open for the caller to reset.
+         */
+        suspend fun sendStreamedResponse(head: HttpMessage, body: suspend (sink: MitmByteLeg) -> Unit) {
+            check(responded.compareAndSet(false, true)) { "response already sent on stream $streamID" }
+            if (aborted) return
+            val status = head.status ?: 200
+            val block = buildResponseHeaderBlock(status, head.headers)
+            require(block.size <= MAX_HEADER_BLOCK_BYTES) { "response header block over cap" }
+            writeMutex.withLock {
+                if (aborted) return
+                client.send(emitHeaders(streamID, block, endStream = false))
+            }
+            body(DataSink())
+            if (aborted) return
+            writeMutex.withLock {
+                client.send(Http2Framer.serialize(Http2Framer.dataFrame(streamID, ByteArray(0), endStream = true)))
+            }
+            finishResponder(streamID)
+        }
+
         /** Aborts this stream toward the client with a RST_STREAM of [errorCode]. */
         suspend fun reset(errorCode: Int = CANCEL) {
             resetStream(streamID, errorCode)
+        }
+
+        /** The write-only leg [sendStreamedResponse] hands its body producer: each send is DATA on this stream. */
+        private inner class DataSink : MitmByteLeg {
+            override val negotiatedAlpn: String? = "h2"
+            override suspend fun receive(): ByteArray? = null
+            override suspend fun send(data: ByteArray) {
+                if (data.isNotEmpty()) sendResponseBody(streamID, flowControl, data, endStream = false)
+            }
+            override fun prependToReceiveBuffer(data: ByteArray) { /* write-only */ }
+            override fun close() { /* the stream is closed by sendStreamedResponse */ }
         }
     }
 

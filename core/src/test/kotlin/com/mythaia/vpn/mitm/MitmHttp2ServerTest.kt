@@ -13,6 +13,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -191,6 +192,76 @@ class MitmHttp2ServerTest {
 
             assertTrue("stream WINDOW_UPDATE credits the 10 consumed bytes", streamCredits.contains(body.size))
             assertTrue("connection WINDOW_UPDATE credits the 10 consumed bytes", connCredits.contains(body.size))
+        } finally {
+            job.cancel()
+        }
+    }
+
+    @Test
+    fun `WINDOW_UPDATE for finished streams is ignored rather than counted toward the tracked-stream cap`() = runBlocking {
+        val leg = DuplexLeg()
+        val server = MitmHttp2Server(leg, "h")
+        val job = launch { server.run() }
+        try {
+            leg.feed(CLIENT_PREFACE + clientSettings())
+            val block = byteArrayOf(0x82.toByte(), 0x87.toByte(), 0x84.toByte(), 0x41) + hpackString("h")
+            // More streams than the 256 tracked-stream cap, each answered and finished.
+            val finished = 300
+            for (i in 0 until finished) {
+                val id = 2 * i + 1
+                leg.feed(headersFrame(id, block, endStream = true))
+                val stream = withTimeout(2000) { server.acceptRequest() }
+                requireNotNull(stream)
+                stream.sendResponse(
+                    HttpMessage.response(200, stream.request.url, body = "ok".toByteArray(ascii), version = "HTTP/2")
+                )
+            }
+            // A client routinely credits a stream whose end it has not yet processed:
+            // late, harmless, and (RFC 9113 §6.9) to be ignored on a closed stream.
+            for (i in 0 until finished) {
+                leg.feed(Http2Framer.serialize(Http2Framer.windowUpdateFrame(2 * i + 1, 1)))
+            }
+            // The connection is still healthy: a new stream is accepted and no GOAWAY went out.
+            leg.feed(headersFrame(2 * finished + 1, block, endStream = true))
+            assertNotNull(withTimeout(2000) { server.acceptRequest() })
+            val frames = collect(leg)
+            assertTrue("no GOAWAY for a flood of late credits", frames.none { it.type == Http2FrameType.GOAWAY })
+        } finally {
+            job.cancel()
+        }
+    }
+
+    // MARK: - Streamed response
+
+    @Test
+    fun `a streamed response frames each sink write as DATA and closes the stream with an empty END_STREAM frame`() = runBlocking {
+        val leg = DuplexLeg()
+        val server = MitmHttp2Server(leg, "h")
+        val job = launch { server.run() }
+        try {
+            val block = byteArrayOf(0x82.toByte(), 0x87.toByte(), 0x84.toByte(), 0x41) + hpackString("h")
+            leg.feed(CLIENT_PREFACE + clientSettings() + headersFrame(1, block, endStream = true))
+            val stream = withTimeout(2000) { server.acceptRequest() }
+            requireNotNull(stream)
+
+            stream.sendStreamedResponse(
+                HttpMessage.response(200, stream.request.url, listOf(HttpHeader("Content-Type", "text/plain")), version = "HTTP/2")
+            ) { sink ->
+                sink.send("ab".toByteArray(ascii))
+                sink.send("cd".toByteArray(ascii))
+            }
+
+            val frames = collect(leg)
+            val headers = frames.first { it.type == Http2FrameType.HEADERS && it.streamID == 1 }
+            assertFalse("the body follows, so HEADERS does not end the stream", headers.hasFlag(Http2FrameFlags.END_STREAM))
+            assertEquals("200", HpackDecoder().decode(headers.payload)!!.first { it.first == ":status" }.second)
+
+            val data = frames.filter { it.type == Http2FrameType.DATA && it.streamID == 1 }
+            val body = ByteArrayOutputStream().also { out -> data.forEach { out.write(it.payload) } }.toByteArray()
+            assertEquals("abcd", String(body, ascii))
+            assertTrue("the last DATA frame ends the stream", data.last().hasFlag(Http2FrameFlags.END_STREAM))
+            assertTrue("and carries nothing: the body was already out", data.last().payload.isEmpty())
+            assertTrue(data.dropLast(1).none { it.hasFlag(Http2FrameFlags.END_STREAM) })
         } finally {
             job.cancel()
         }

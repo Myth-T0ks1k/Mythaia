@@ -4,8 +4,8 @@ import com.mythaia.vpn.util.MythaiaLogger
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Future
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -152,19 +152,23 @@ object MitmRegexGuard {
      * wall-clock deadline on a daemon worker, returning its result if it finishes
      * in time.
      *
+     * The deadline is measured from submission, so a block that waits its whole
+     * deadline out in the queue behind busy workers times out like one that ran
+     * too long — a saturated pool degrades to dropped rewrites, never to a hang.
+     *
      * @throws RegexDeadlineExceededException if [block] does not finish within
-     *   [deadlineMs], or if the bounded worker pool is saturated (every worker
-     *   pinned by an earlier pathological match) — both are "drop the connection"
-     *   signals for the caller. A pinned worker keeps running until its match
-     *   returns; see the class note for why that residual leak is bounded rather
-     *   than eliminated.
+     *   [deadlineMs], or if the bounded worker pool *and* its queue are full
+     *   (every worker pinned by an earlier pathological match and more waiting
+     *   than the queue holds) — both are "drop the connection" signals for the
+     *   caller. A pinned worker keeps running until its match returns; see the
+     *   class note for why that residual leak is bounded rather than eliminated.
      */
     fun <T> runWithRegexDeadline(deadlineMs: Long, block: () -> T): T {
         val future: Future<T> = try {
             executor.submit(Callable<T> { block() })
         } catch (_: RejectedExecutionException) {
             logger.warning(
-                "regex worker pool saturated (all workers pinned by catastrophic patterns); failing rewrite closed"
+                "regex worker pool and queue saturated (workers pinned by catastrophic patterns); failing rewrite closed"
             )
             throw RegexDeadlineExceededException("regex worker pool saturated")
         }
@@ -195,31 +199,44 @@ object MitmRegexGuard {
     private const val SAMPLE_MASK = 0x7FF
 
     /**
-     * Upper bound on concurrently-pinned regex workers. Past this, a new rewrite
-     * is rejected and fails closed rather than spawning an unbounded thread army —
-     * the bound itself is part of the DoS defence.
+     * Upper bound on concurrently-running regex workers — the thread army a
+     * burst of pinned matches can grow to, and so part of the DoS defence.
      */
     private const val MAX_REGEX_WORKERS = 32
+
+    /**
+     * How many rewrites may wait for a worker before a new one is refused. A
+     * busy tunnel legitimately has far more than [MAX_REGEX_WORKERS] rewrites in
+     * flight at once (every stream of every intercepted connection), and with no
+     * queue each one past the 32nd was rejected outright — a burst of ordinary
+     * traffic dropped streams. Queued rewrites still carry their own deadline
+     * from submission, so the queue bounds latency as well as memory: a rewrite
+     * that waits out its deadline is dropped, not run late.
+     */
+    private const val MAX_QUEUED_REWRITES = 256
 
     private val workerCount = AtomicLong(0)
 
     /**
-     * corePoolSize 0 + a [SynchronousQueue] + [ThreadPoolExecutor.AbortPolicy]:
-     * a submission either hands straight to an idle/new daemon worker or is
-     * rejected (never queued to wait behind a pinned worker). Idle workers retire
-     * after the keep-alive so a quiet tunnel holds no threads.
+     * [MAX_REGEX_WORKERS] core threads (allowed to time out, so a quiet tunnel
+     * holds none) over a bounded [LinkedBlockingQueue], with
+     * [ThreadPoolExecutor.AbortPolicy] only once the queue too is full. The core
+     * size is the maximum on purpose: a [ThreadPoolExecutor] queues ahead of
+     * growing past its core size, so a small core with a queue would serialise a
+     * burst on one or two threads and time the rest out; with core == max every
+     * submission up to the cap gets a thread at once and only the overflow waits.
      */
     private val executor = ThreadPoolExecutor(
-        0,
+        MAX_REGEX_WORKERS,
         MAX_REGEX_WORKERS,
         30L,
         TimeUnit.SECONDS,
-        SynchronousQueue(),
+        LinkedBlockingQueue(MAX_QUEUED_REWRITES),
         { runnable ->
             Thread(runnable, "mitm-regex-guard-${workerCount.incrementAndGet()}").apply {
                 isDaemon = true
             }
         },
         ThreadPoolExecutor.AbortPolicy()
-    )
+    ).apply { allowCoreThreadTimeOut(true) }
 }

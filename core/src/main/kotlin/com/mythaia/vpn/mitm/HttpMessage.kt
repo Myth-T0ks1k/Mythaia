@@ -171,3 +171,78 @@ class HttpMessage(
         ): HttpMessage = HttpMessage(HttpPhase.RESPONSE, null, url, version, status, headers, body)
     }
 }
+
+/**
+ * The origin a URL names — scheme, host and *effective* port — which is what
+ * decides where a forwarded request is dialed.
+ *
+ * A transparent rewrite can move a request to another host or port, and the
+ * bridges compare the rewritten URL's origin against the one their upstream leg
+ * was dialed to in order to know whether a fresh dial is needed. Scheme and host
+ * are lowercased (both are case-insensitive, RFC 3986 §3.1/§3.2.2) and a
+ * trailing root dot is dropped from the host, so two spellings of one origin
+ * compare equal with plain `==`. An IPv6 literal is kept without its URL
+ * brackets, the form a dialer wants.
+ */
+data class HttpOrigin(val scheme: String, val host: String, val port: Int) {
+
+    companion object {
+        /** A normalised origin for an already-known scheme/host/port (the SNI the session dialed). */
+        fun of(scheme: String, host: String, port: Int): HttpOrigin =
+            HttpOrigin(scheme.lowercase(), normalizeHost(host), port)
+
+        /**
+         * The origin of an absolute URL, or `null` when [url] is not one
+         * (no `scheme://`, an empty host, or a port that is not a number). The
+         * port defaults per scheme: 443 for `https`, 80 for `http`; a URL on
+         * any other scheme must carry its port explicitly to resolve.
+         */
+        fun parse(url: String?): HttpOrigin? {
+            if (url.isNullOrEmpty()) return null
+            val sep = url.indexOf("://")
+            if (sep <= 0) return null
+            val scheme = url.substring(0, sep).lowercase()
+            var i = sep + 3
+            while (i < url.length && url[i] != '/' && url[i] != '?' && url[i] != '#') i++
+            // Userinfo never travels to the origin; drop it if a rule wrote one.
+            val authority = url.substring(sep + 3, i).substringAfterLast('@')
+            if (authority.isEmpty()) return null
+
+            val host: String
+            val portText: String?
+            if (authority.startsWith("[")) {
+                val close = authority.indexOf(']')
+                if (close < 0) return null
+                host = authority.substring(1, close)
+                val rest = authority.substring(close + 1)
+                portText = when {
+                    rest.isEmpty() -> null
+                    rest.startsWith(":") -> rest.substring(1)
+                    else -> return null
+                }
+            } else {
+                val colon = authority.lastIndexOf(':')
+                if (colon >= 0) {
+                    host = authority.substring(0, colon)
+                    portText = authority.substring(colon + 1)
+                } else {
+                    host = authority
+                    portText = null
+                }
+            }
+            if (host.isEmpty()) return null
+
+            val port = when {
+                portText == null -> when (scheme) {
+                    "https" -> 443
+                    "http" -> 80
+                    else -> return null
+                }
+                else -> portText.toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+            }
+            return HttpOrigin(scheme, normalizeHost(host), port)
+        }
+
+        private fun normalizeHost(host: String): String = host.lowercase().removeSuffix(".")
+    }
+}

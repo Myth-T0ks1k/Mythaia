@@ -170,7 +170,10 @@ class MitmHttp2Bridge(
         // does, so the origin never answers in one (zstd, …) we'd have to pass
         // through opaque and defeat every body rule.
         val forwarded = clampAcceptEncoding(forwardMessage)
-        val upstream = dialUpstream(host, port, UPSTREAM_ALPNS)
+        // Every stream dials its own leg, so a transparent rewrite onto another
+        // origin is honoured simply by dialing that origin for this stream.
+        val target = upstreamOriginFor(parsedRequest.message.url, forwarded.url, stream.streamID)
+        val upstream = dialUpstream(target.host, target.port, UPSTREAM_ALPNS)
         // serialize makes the verbatim-vs-decompressed call from parsedRequest: an
         // untouched compressed body rides out with Content-Encoding intact, an
         // edited one goes out decompressed with the coding dropped.
@@ -194,6 +197,19 @@ class MitmHttp2Bridge(
                 }
         }
 
+        val deferred = parsedResponse.deferredBody
+        if (deferred != null) {
+            // Too large to hold and so never offered to a rule: the head goes out
+            // as the origin wrote it and the body's content streams behind it as
+            // DATA — de-chunked, since h2 frames the body itself, but otherwise
+            // untouched, coding included.
+            logger.info("[h2] $host stream ${stream.streamID}: response body over the ${Http1Codec.MAX_BUFFERED_BODY_BYTES}-byte cap; passed through unrewritten")
+            stream.sendStreamedResponse(headForStreamedBody(parsedResponse.message, deferred)) { sink ->
+                deferred.relayContentTo(sink)
+            }
+            return upstream
+        }
+
         val responseEditable = parsedResponse.bodyWasDecoded || !parsedResponse.hadContentCoding
         val rewritten = rewriteResponse(parsedResponse.message, responseEditable)
             ?: run {
@@ -203,6 +219,45 @@ class MitmHttp2Bridge(
             }
         stream.sendResponse(encodeResponseForClient(parsedResponse, rewritten))
         return upstream
+    }
+
+    /**
+     * The head for a response whose body streams through unrewritten: a declared
+     * `Content-Length` is kept only when the relay will deliver exactly that many
+     * bytes (RFC 9113 §8.1.1 requires it to match the DATA total); a chunked or
+     * close-delimited body has no length to declare. `Transfer-Encoding` is
+     * dropped by the server's encoder as connection-specific.
+     */
+    private fun headForStreamedBody(message: HttpMessage, relay: Http1Codec.BodyRelay): HttpMessage {
+        if (relay.framing is Http1Codec.RelayFraming.ContentLength) return message
+        return message.copy(headers = message.headers.filterNot { it.isNamed("Content-Length") })
+    }
+
+    // MARK: - Per-stream upstream selection
+
+    /** The origin the session intercepted: the SNI host and destination port, over TLS. */
+    private val origin = HttpOrigin.of("https", host, port)
+
+    /**
+     * Where this stream's upstream leg is dialed: the intercepted [origin], unless
+     * the rewriter moved the request ([rewrittenUrl] differs from [originalUrl])
+     * onto another `https` origin — then that origin, so a transparent rewrite to
+     * `https://other.example/` reaches `other.example` instead of sending its
+     * `Host` to the SNI host. A rewrite onto another scheme would need a
+     * transport the TLS dialer cannot open; it is logged and the request goes to
+     * [origin] with only its URL and `Host` rewritten. A request the rewriter
+     * left alone always goes to [origin], whatever its `:authority` says.
+     */
+    private fun upstreamOriginFor(originalUrl: String?, rewrittenUrl: String?, streamID: Int): HttpOrigin {
+        if (rewrittenUrl == originalUrl) return origin
+        val target = HttpOrigin.parse(rewrittenUrl) ?: return origin
+        if (target == origin) return origin
+        if (target.scheme != origin.scheme) {
+            logger.info("[h2] $host stream $streamID: rewritten URL moves to scheme '${target.scheme}', which the TLS dialer cannot open; keeping the original upstream")
+            return origin
+        }
+        logger.info("[h2] $host stream $streamID: rewritten URL names ${target.host}:${target.port}; dialing it")
+        return target
     }
 
     // MARK: - Rewrite under the regex deadline

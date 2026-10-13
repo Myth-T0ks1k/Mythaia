@@ -3,6 +3,7 @@ package com.mythaia.vpn.mitm
 import com.mythaia.vpn.protocol.naive.http2.HpackDecoder
 import com.mythaia.vpn.protocol.naive.http2.Http2Buffer
 import com.mythaia.vpn.protocol.naive.http2.Http2Frame
+import com.mythaia.vpn.protocol.naive.http2.Http2FrameFlags
 import com.mythaia.vpn.protocol.naive.http2.Http2FrameType
 import com.mythaia.vpn.protocol.naive.http2.Http2Framer
 import kotlinx.coroutines.CancellationException
@@ -17,6 +18,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
@@ -180,6 +182,83 @@ class MitmHttp2BridgeTest {
         }
     }
 
+    // MARK: - A transparent rewrite is dialed to its new origin
+
+    @Test
+    fun `a transparent rewrite onto another origin dials that origin for the stream`() = runBlocking {
+        val ruleSet = ruleSetOf(
+            MitmRule(
+                HttpPhase.REQUEST,
+                "https://h/moved",
+                MitmOperation.Rewrite(MitmRewriteAction.Transparent("https://other.example/landed"))
+            )
+        )
+        val client = DuplexLeg()
+        val dials = ArrayList<String>()
+        val upstream = ReplayLeg(cannedResponse(body = "landed"))
+        val bridge = MitmHttp2Bridge(
+            client, "h", 443, MitmRewriter(ruleSet),
+            dialUpstream = { host, port, _ -> dials.add("$host:$port"); upstream }
+        )
+        val job = launch { bridge.run() }
+        try {
+            client.feed(CLIENT_PREFACE + clientSettings() + headersFrame(1, getRequest("/moved", "h")))
+
+            val frames = collect(client)
+            val (headers, body) = decodedResponse(frames, streamID = 1)!!
+            assertEquals("200", statusOf(headers))
+            assertEquals("landed", String(body, latin1))
+
+            assertEquals("the stream dialed the rewritten origin, not the SNI host", listOf("other.example:443"), dials)
+            val forwarded = Http1Codec().readRequest(ReplayLeg(upstream.sent()))!!
+            assertEquals("https://other.example/landed", forwarded.message.url)
+            assertEquals("other.example", forwarded.message.header("Host"))
+        } finally {
+            job.cancel()
+        }
+    }
+
+    // MARK: - An over-cap response streams through as DATA
+
+    @Test
+    fun `a response past the cap streams through as DATA de-chunked and unrewritten`() = runBlocking {
+        val ruleSet = ruleSetOf(
+            MitmRule(HttpPhase.RESPONSE, "h/big", MitmOperation.BodyReplace("x", "y"))
+        )
+        // Five 1 MiB chunks: past the 4 MiB cap, so never buffered or offered to the rule.
+        val chunk = ByteArray(1024 * 1024) { 'x'.code.toByte() }
+        val wire = ByteArrayOutputStream()
+        wire.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n".toByteArray(latin1))
+        repeat(5) {
+            wire.write("100000\r\n".toByteArray(latin1))
+            wire.write(chunk)
+            wire.write("\r\n".toByteArray(latin1))
+        }
+        wire.write("0\r\n\r\n".toByteArray(latin1))
+        val client = DuplexLeg()
+        val bridge = MitmHttp2Bridge(
+            client, "h", 443, MitmRewriter(ruleSet),
+            dialUpstream = { _, _, _ -> ReplayLeg(wire.toByteArray()) }
+        )
+        val job = launch { bridge.run() }
+        try {
+            // The client opens its windows wide so 5 MiB can flow without WINDOW_UPDATEs.
+            client.feed(CLIENT_PREFACE + wideWindowSettings() + headersFrame(1, getRequest("/big", "h")))
+
+            val frames = collect(client, idleMs = 1500)
+            val (headers, body) = decodedResponse(frames, streamID = 1)!!
+            assertEquals("200", statusOf(headers))
+            assertEquals("text/plain", valueOf(headers, "content-type"))
+            assertNull("a chunked body has no length to declare", valueOf(headers, "content-length"))
+            assertEquals(5 * 1024 * 1024, body.size)
+            assertTrue("the content passes through untouched by the body rule", body.all { it == 'x'.code.toByte() })
+            val data = frames.filter { it.type == Http2FrameType.DATA && it.streamID == 1 }
+            assertTrue("the stream is closed after the body", data.last().hasFlag(Http2FrameFlags.END_STREAM))
+        } finally {
+            job.cancel()
+        }
+    }
+
     // MARK: - Helpers
 
     private fun ruleSetOf(vararg rules: MitmRule): MitmRuleSet =
@@ -189,6 +268,11 @@ class MitmHttp2BridgeTest {
 
     private fun clientSettings(): ByteArray =
         Http2Framer.serialize(Http2Framer.settingsFrame(listOf(0x3 to 100)))
+
+    /** Client SETTINGS with the largest INITIAL_WINDOW_SIZE, plus a connection WINDOW_UPDATE to match. */
+    private fun wideWindowSettings(): ByteArray =
+        Http2Framer.serialize(Http2Framer.settingsFrame(listOf(0x3 to 100, 0x4 to 0x7FFFFFFF))) +
+            Http2Framer.serialize(Http2Framer.windowUpdateFrame(0, 0x7FFFFFFF - 65_535))
 
     /** A GET request HEADERS frame (END_STREAM) for [path] on [authority]. */
     private fun headersFrame(streamID: Int, block: ByteArray): ByteArray =

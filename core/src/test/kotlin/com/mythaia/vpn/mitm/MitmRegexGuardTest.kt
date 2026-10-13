@@ -85,6 +85,33 @@ class MitmRegexGuardTest {
     }
 
     @Test
+    fun `a burst of concurrent rewrites beyond the worker count waits its turn instead of failing closed`() {
+        // 96 blocks each holding a worker briefly, through a pool of 32 workers.
+        // With no queue the 33rd and beyond were rejected outright — a burst of
+        // ordinary traffic dropped streams. Queued, every one completes well
+        // inside its deadline.
+        val burst = 96
+        val results = java.util.concurrent.ConcurrentLinkedQueue<Any>()
+        val threads = (0 until burst).map { i ->
+            Thread {
+                results.add(
+                    runCatching {
+                        MitmRegexGuard.runWithRegexDeadline(deadlineMs * 4) {
+                            Thread.sleep(20)
+                            i
+                        }
+                    }.getOrElse { it }
+                )
+            }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+        val failures = results.filterIsInstance<Throwable>()
+        assertTrue("every rewrite in the burst should complete, got $failures", failures.isEmpty())
+        assertEquals(burst, results.size)
+    }
+
+    @Test
     fun `the wrapper returns a normal block result and propagates a matching verdict`() {
         assertEquals(42, MitmRegexGuard.runWithRegexDeadline(deadlineMs) { 40 + 2 })
         assertTrue(

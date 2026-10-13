@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -295,11 +296,253 @@ class Http1CodecTest {
         }
     }
 
+    // MARK: - Over-cap bodies are deferred and relayed, not refused
+
+    @Test
+    fun `a Content-Length body past the cap is deferred and relayed byte-for-byte with the next message intact`() = runBlocking {
+        val body = ByteArray(Http1Codec.MAX_BUFFERED_BODY_BYTES + 1) { (it % 251).toByte() }
+        val head = crlf(
+            "HTTP/1.1 200 OK",
+            "Content-Type: application/octet-stream",
+            "Content-Length: ${body.size}",
+            "",
+            ""
+        )
+        val next = crlf("HTTP/1.1 204 No Content", "", "")
+        // Split inside the body so the relay has both an overread prefix and leg pulls to forward.
+        val leg = FakeByteLeg(splitAt(head + body + next, head.size + 1000))
+
+        val parsed = codec.readResponse(leg, requestMethod = "GET", requestUrl = "https://x/big")!!
+        val relay = parsed.deferredBody
+        assertNotNull("a body past the cap is deferred, not refused", relay)
+        requireNotNull(relay)
+        assertEquals("nothing of the body is buffered", 0, parsed.message.body.size)
+        assertArrayEquals("the head is kept exactly as received", head, relay.rawHead)
+        assertEquals(Http1Codec.RelayFraming.ContentLength(body.size.toLong()), relay.framing)
+
+        val sink = FakeByteLeg(ByteArray(0))
+        relay.relayTo(sink)
+        assertArrayEquals(body, sink.sent.toByteArray())
+
+        // The pipelined next response was pushed back onto the leg and reads as usual.
+        val following = codec.readResponse(leg, requestMethod = "GET", requestUrl = "https://x/next")!!
+        assertEquals(204, following.message.status)
+        assertNull(following.deferredBody)
+    }
+
+    @Test
+    fun `a chunked body that grows past the cap is relayed re-chunked with content, extensions and trailers kept`() = runBlocking {
+        // Five 1 MiB chunks: the fifth would carry the buffered total past 4 MiB.
+        val chunk = ByteArray(1024 * 1024) { 'c'.code.toByte() }
+        val wire = ByteArrayOutputStream()
+        wire.write(crlf("HTTP/1.1 200 OK", "Transfer-Encoding: chunked", "", ""))
+        repeat(5) {
+            wire.write(crlf("100000;ext=1", ""))
+            wire.write(chunk)
+            wire.write(crlf("", ""))
+        }
+        wire.write(crlf("0", "X-Trailer: t", "", ""))
+        wire.write(crlf("HTTP/1.1 204 No Content", "", ""))
+        val leg = FakeByteLeg(wire.toByteArray())
+
+        val parsed = codec.readResponse(leg, requestMethod = "GET", requestUrl = "https://x/big")!!
+        val relay = parsed.deferredBody!!
+        assertEquals(Http1Codec.RelayFraming.Chunked, relay.framing)
+
+        val sink = FakeByteLeg(ByteArray(0))
+        relay.relayTo(sink)
+        // De-chunked by hand (not by the codec): the content is the five chunks' data,
+        // whatever chunk boundaries the relay chose, and the trailer travelled on.
+        val (content, trailers, end) = dechunk(sink.sent.toByteArray(), 0)
+        assertEquals(5 * 1024 * 1024, content.size)
+        assertTrue(content.all { it == 'c'.code.toByte() })
+        assertEquals(listOf("X-Trailer: t"), trailers)
+        assertEquals("nothing follows the terminating blank line", sink.sent.size(), end)
+
+        val following = codec.readResponse(leg, requestMethod = "GET", requestUrl = "https://x/next")!!
+        assertEquals(204, following.message.status)
+    }
+
+    @Test
+    fun `a single chunk larger than the cap is relayed as the very bytes it arrived in`() = runBlocking {
+        val chunk = ByteArray(Http1Codec.MAX_BUFFERED_BODY_BYTES + 1) { 'h'.code.toByte() }
+        val chunkedBody = crlf(java.lang.Integer.toHexString(chunk.size), "") + chunk + crlf("", "0", "", "")
+        val wire = crlf("HTTP/1.1 200 OK", "Transfer-Encoding: chunked", "", "") + chunkedBody
+
+        val parsed = codec.readResponse(FakeByteLeg(wire), requestMethod = "GET", requestUrl = "https://x/big")!!
+        val relay = parsed.deferredBody!!
+
+        val sink = FakeByteLeg(ByteArray(0))
+        relay.relayTo(sink)
+        // Nothing was buffered before the cap tripped, so the relayed stream is the
+        // original chunked stream byte-for-byte.
+        assertArrayEquals(chunkedBody, sink.sent.toByteArray())
+    }
+
+    @Test
+    fun `relayContentTo strips the chunk framing and hands over only the content`() = runBlocking {
+        val chunk = ByteArray(1024 * 1024) { 'k'.code.toByte() }
+        val wire = ByteArrayOutputStream()
+        wire.write(crlf("HTTP/1.1 200 OK", "Transfer-Encoding: chunked", "", ""))
+        repeat(5) {
+            wire.write(crlf("100000", ""))
+            wire.write(chunk)
+            wire.write(crlf("", ""))
+        }
+        wire.write(crlf("0", "X-Trailer: dropped", "", ""))
+
+        val relay = codec.readResponse(FakeByteLeg(wire.toByteArray()), "GET", "https://x/big")!!.deferredBody!!
+        val sink = FakeByteLeg(ByteArray(0))
+        relay.relayContentTo(sink)
+        val content = sink.sent.toByteArray()
+        assertEquals(5 * 1024 * 1024, content.size)
+        assertTrue(content.all { it == 'k'.code.toByte() })
+    }
+
+    @Test
+    fun `a close-delimited body past the cap is relayed to EOF`() = runBlocking {
+        val body = ByteArray(Http1Codec.MAX_BUFFERED_BODY_BYTES + 7) { (it % 13).toByte() }
+        val wire = crlf("HTTP/1.1 200 OK", "Content-Type: application/octet-stream", "", "") + body
+        val parsed = codec.readResponse(FakeByteLeg(splitAt(wire, wire.size / 2)), "GET", "https://x/old")!!
+        val relay = parsed.deferredBody!!
+        assertEquals(Http1Codec.RelayFraming.UntilClose, relay.framing)
+
+        val sink = FakeByteLeg(ByteArray(0))
+        relay.relayTo(sink)
+        assertArrayEquals(body, sink.sent.toByteArray())
+    }
+
+    // MARK: - Request framing and targets
+
+    @Test
+    fun `an empty-body POST is framed with Content-Length 0 but a plain GET stays unframed`() {
+        val post = String(codec.serialize(HttpMessage.request("POST", "https://example.com/submit")), StandardCharsets.ISO_8859_1)
+        assertTrue("a strict origin answers an unframed empty POST with 411", post.contains("\r\nContent-Length: 0\r\n"))
+
+        val get = String(codec.serialize(HttpMessage.request("GET", "https://example.com/")), StandardCharsets.ISO_8859_1)
+        assertFalse("a GET with Content-Length: 0 makes some servers balk", get.lowercase().contains("content-length"))
+
+        // A DELETE that itself declared a zero length keeps a length.
+        val delete = String(
+            codec.serialize(
+                HttpMessage.request("DELETE", "https://example.com/x", listOf(HttpHeader("Content-Length", "0")))
+            ),
+            StandardCharsets.ISO_8859_1
+        )
+        assertTrue(delete.contains("\r\nContent-Length: 0\r\n"))
+    }
+
+    @Test
+    fun `a request with no reconstructible URL keeps the client's own request-target`() = runBlocking {
+        // Asterisk-form names no resource, so no URL — but "*" is what the origin must see.
+        val options = codec.readRequest(FakeByteLeg(crlf("OPTIONS * HTTP/1.1", "Host: example.com", "", "")))!!
+        assertNull(options.message.url)
+        assertEquals("*", options.requestTarget)
+        val optionsOut = String(codec.serialize(options.message, options), StandardCharsets.ISO_8859_1)
+        assertTrue(optionsOut, optionsOut.startsWith("OPTIONS * HTTP/1.1\r\n"))
+
+        // Origin-form with no Host: no authority to build a URL from, same path onward.
+        val noHost = codec.readRequest(FakeByteLeg(crlf("GET /no-host?x=1 HTTP/1.1", "", "")))!!
+        assertNull(noHost.message.url)
+        val noHostOut = String(codec.serialize(noHost.message, noHost), StandardCharsets.ISO_8859_1)
+        assertTrue(noHostOut, noHostOut.startsWith("GET /no-host?x=1 HTTP/1.1\r\n"))
+    }
+
+    @Test
+    fun `the expect-continue hook fires between head and body only for a request that frames a body`() = runBlocking {
+        val body = "payload"
+        val wire = crlf(
+            "POST /up HTTP/1.1",
+            "Host: example.com",
+            "Expect: 100-continue",
+            "Content-Length: ${body.length}",
+            "",
+            ""
+        ) + body.toByteArray(StandardCharsets.ISO_8859_1)
+        var fired = 0
+        val parsed = codec.readRequest(FakeByteLeg(wire)) { fired++ }!!
+        assertEquals(1, fired)
+        assertEquals(body, String(parsed.message.body, StandardCharsets.ISO_8859_1))
+
+        // No body framing: there is nothing to wait for, so no interim 100.
+        var firedWithoutBody = 0
+        codec.readRequest(FakeByteLeg(crlf("GET /x HTTP/1.1", "Host: example.com", "Expect: 100-continue", "", ""))) {
+            firedWithoutBody++
+        }
+        assertEquals(0, firedWithoutBody)
+    }
+
+    // MARK: - Diagnostics never leak a query or a header value
+
+    @Test
+    fun `a framing error does not quote the request line's query or a header value`() = runBlocking {
+        // Four tokens on the request line: malformed, and the query must stay out of the message.
+        val badLine = crlf("GET /login?token=SECRET-QUERY extra HTTP/1.1", "Host: example.com", "", "")
+        try {
+            codec.readRequest(FakeByteLeg(badLine))
+            throw AssertionError("expected a refusal for a malformed request line")
+        } catch (e: Http1ProtocolException) {
+            assertFalse(e.message, e.message!!.contains("SECRET-QUERY"))
+        }
+
+        // A header line with no colon: whatever it carries is not echoed.
+        val badHeader = crlf("GET / HTTP/1.1", "Host: example.com", "Cookie session=SECRET-COOKIE", "", "")
+        try {
+            codec.readRequest(FakeByteLeg(badHeader))
+            throw AssertionError("expected a refusal for a header line without a colon")
+        } catch (e: Http1ProtocolException) {
+            assertFalse(e.message, e.message!!.contains("SECRET-COOKIE"))
+        }
+
+        // A long malformed line is cut short rather than dumped whole.
+        val longLine = crlf("GET " + "/".repeat(500) + " HTTP/1.1 junk", "", "")
+        try {
+            codec.readRequest(FakeByteLeg(longLine))
+            throw AssertionError("expected a refusal for a malformed request line")
+        } catch (e: Http1ProtocolException) {
+            assertTrue(e.message, e.message!!.length < 200)
+        }
+    }
+
     // MARK: - Test helpers
 
     /** Joins [lines] with CRLF, including a trailing CRLF after the last line. */
     private fun crlf(vararg lines: String): ByteArray =
         lines.joinToString("\r\n").toByteArray(StandardCharsets.ISO_8859_1)
+
+    /** De-chunked content, trailer lines, and the offset just past the terminating blank line. */
+    private data class Dechunked(val content: ByteArray, val trailers: List<String>, val end: Int)
+
+    /**
+     * A hand-rolled chunked decoder (RFC 9112 §7.1), independent of the codec:
+     * size lines are hex before any `;`, each chunk's data is followed by CRLF,
+     * a `0` chunk ends the data, and trailer lines run to a blank line.
+     */
+    private fun dechunk(data: ByteArray, start: Int): Dechunked {
+        val content = ByteArrayOutputStream()
+        val trailers = ArrayList<String>()
+        var pos = start
+        fun readLine(): String {
+            var i = pos
+            while (!(data[i] == '\r'.code.toByte() && data[i + 1] == '\n'.code.toByte())) i++
+            val line = String(data, pos, i - pos, StandardCharsets.ISO_8859_1)
+            pos = i + 2
+            return line
+        }
+        while (true) {
+            val size = readLine().substringBefore(';').trim().toInt(16)
+            if (size == 0) break
+            content.write(data, pos, size)
+            pos += size
+            check(readLine().isEmpty()) { "chunk data must end with CRLF" }
+        }
+        while (true) {
+            val trailer = readLine()
+            if (trailer.isEmpty()) break
+            trailers.add(trailer)
+        }
+        return Dechunked(content.toByteArray(), trailers, pos)
+    }
 
     private fun splitAt(data: ByteArray, index: Int): List<ByteArray> =
         listOf(data.copyOfRange(0, index), data.copyOfRange(index, data.size))

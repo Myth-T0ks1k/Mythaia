@@ -4,6 +4,8 @@ import com.mythaia.vpn.protocol.Transport
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -186,6 +188,72 @@ class MitmSessionTest {
         )
         assertTrue("http/1.1 dispatches to the h1 bridge", ranH1)
         assertFalse("the h2 bridge must not run for an http/1.1 client", ranH2)
+    }
+
+    // MARK: - A rewritten origin is dialed through the session's dialer
+
+    @Test
+    fun `a transparent rewrite onto another host makes the h1 bridge dial that host through the session's dialer`() = runBlocking {
+        val ruleSet = MitmRuleSet(
+            name = "test", domainSuffixes = listOf("example.com"),
+            rules = listOf(
+                MitmRule(
+                    HttpPhase.REQUEST,
+                    "https://example\\.com/moved",
+                    MitmOperation.Rewrite(MitmRewriteAction.Transparent("https://other.example/landed"))
+                )
+            )
+        )
+        val client = FakeByteLeg(request("/moved"), negotiatedAlpn = "http/1.1")
+        val home = FakeByteLeg(response(body = "home"), negotiatedAlpn = "http/1.1")
+        val other = FakeByteLeg(response(body = "landed"), negotiatedAlpn = "http/1.1")
+        val dials = ArrayList<String>()
+
+        MitmSession.bridgeTerminatedClient(
+            clientLeg = client,
+            host = "example.com",
+            port = 443,
+            ruleSet = ruleSet,
+            dialUpstream = { host, port, _ ->
+                dials.add("$host:$port")
+                if (host == "other.example") other else home
+            }
+        )
+
+        // The session dials the SNI host up front; the bridge dials the rewritten origin on demand.
+        assertEquals(listOf("example.com:443", "other.example:443"), dials)
+        val forwarded = Http1Codec().readRequest(FakeByteLeg(other.sent()))!!
+        assertEquals("https://other.example/landed", forwarded.message.url)
+        assertEquals("nothing went to the SNI host for a request rewritten away from it", 0, home.sent().size)
+
+        val answered = Http1Codec().readResponse(
+            FakeByteLeg(client.sent()), requestMethod = "GET", requestUrl = "https://other.example/landed"
+        )!!
+        assertEquals("landed", String(answered.message.body, latin1))
+        assertTrue("the rewritten-origin leg is closed with the connection", other.closed)
+        assertTrue(home.closed)
+    }
+
+    // MARK: - Leaf cache
+
+    @Test
+    fun `the leaf cache is the shared store's for the shared CA and a private one otherwise`() {
+        val shared = MitmRuleStore.shared
+        val sharedAuthority = shared.generateAuthority()
+        try {
+            // The production case: the hook reads the CA off the shared store, so every
+            // interception must reuse that store's cache (one leaf key, cached leaves).
+            assertSame(shared.leafCertificates(), MitmSession.leafCertificatesFor(sharedAuthority))
+            assertSame(
+                "the same cache again on the next connection",
+                MitmSession.leafCertificatesFor(sharedAuthority), MitmSession.leafCertificatesFor(sharedAuthority)
+            )
+            // A CA the shared store does not hold gets its own cache, never the shared one.
+            val foreign = MitmRuleStore().generateAuthority()
+            assertNotSame(shared.leafCertificates(), MitmSession.leafCertificatesFor(foreign))
+        } finally {
+            shared.clearAuthority()
+        }
     }
 
     // MARK: - Rule sets and wire helpers

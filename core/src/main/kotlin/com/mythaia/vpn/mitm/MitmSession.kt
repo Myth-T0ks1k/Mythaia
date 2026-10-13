@@ -74,7 +74,10 @@ object MitmSession {
      * @param authority the CA the minted leaf chains to.
      * @param dialUpstream opens the origin leg given the host, port and the
      *   ALPN protocols to offer; the session calls it with the single protocol
-     *   the intercepted client settled on (see [upstreamAlpns]).
+     *   the intercepted client settled on (see [upstreamAlpns]), and the bridges
+     *   call it again for a request a rule rewrote onto another origin.
+     * @param leafCertificates the cache the leaf for [host] is taken from;
+     *   defaults to the process-wide one (see [leafCertificatesFor]).
      */
     suspend fun intercept(
         clientTransport: Transport,
@@ -83,13 +86,14 @@ object MitmSession {
         port: Int,
         ruleSet: MitmRuleSet,
         authority: MitmCertificateAuthority,
-        dialUpstream: suspend (host: String, port: Int, alpn: List<String>) -> MitmByteLeg
+        dialUpstream: suspend (host: String, port: Int, alpn: List<String>) -> MitmByteLeg,
+        leafCertificates: MitmLeafCertificates = leafCertificatesFor(authority)
     ) {
         // Terminate the client TLS, offering both protocols; the negotiated ALPN
         // then picks the bridge (see the class note on the h2 decision).
         val server = TlsServer(
             transport = clientTransport,
-            leafCertificates = MitmLeafCertificates(authority),
+            leafCertificates = leafCertificates,
             supportedAlpns = listOf(H2, HTTP_1_1)
         )
 
@@ -133,7 +137,14 @@ object MitmSession {
         runH2Bridge: suspend (client: MitmByteLeg) -> Unit =
             { c -> MitmHttp2Bridge.forTls(c, host, port, ruleSet, dialUpstream).run() },
         runH1Bridge: suspend (client: MitmByteLeg, upstream: MitmByteLeg) -> Unit =
-            { c, u -> MitmHttp1Bridge.forTls(c, u, ruleSet).run() }
+            { c, u ->
+                // The bridge is told what its leg was dialed to and how to dial
+                // another, so a request a rule rewrites onto a different origin
+                // reaches that origin rather than the SNI host.
+                MitmHttp1Bridge.forTls(
+                    c, u, ruleSet, originHost = host, originPort = port, dialUpstream = dialUpstream
+                ).run()
+            }
     ) {
         // h2: the bridge owns the whole connection and dials per stream, so no
         // single upstream leg is opened here. Its run() closes the client leg.
@@ -186,5 +197,25 @@ object MitmSession {
     internal fun upstreamAlpns(negotiatedInnerAlpn: String?): List<String> {
         val usable = negotiatedInnerAlpn?.takeIf { it.isNotEmpty() && it != "h2" } ?: HTTP_1_1
         return listOf(usable)
+    }
+
+    /**
+     * The leaf cache a connection under [authority] takes its certificate from.
+     *
+     * In production the tunnel hook reads the CA off [MitmRuleStore.shared], so
+     * [authority] is that store's CA and the store's own [MitmRuleStore.leafCertificates]
+     * cache is returned: a repeat host reuses its leaf and no P-256 key pair is
+     * generated per connection. Building a fresh [MitmLeafCertificates] per
+     * interception, as before, minted a new key and certificate for every
+     * connection and left the shared cache unused. A CA that is not the shared
+     * store's (an isolated store in a test) gets a private cache; so does the
+     * rare race where the shared CA is cleared between the two reads.
+     */
+    internal fun leafCertificatesFor(authority: MitmCertificateAuthority): MitmLeafCertificates {
+        val store = MitmRuleStore.shared
+        if (store.authority() === authority) {
+            runCatching { store.leafCertificates() }.getOrNull()?.let { return it }
+        }
+        return MitmLeafCertificates(authority)
     }
 }
