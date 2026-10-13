@@ -37,16 +37,28 @@ object GeoIpDatabase {
     /** Opens the imported database at [file], if there is one. Safe to call repeatedly. */
     fun load(file: File) {
         if (!file.exists()) {
-            database = null
-            cache.clear()
+            unload()
             return
         }
         val opened = MaxMindDb.open(file)
+        val previous = database
         database = opened
         cache.clear()
+        previous?.close()
         if (opened == null) {
             logger.warning("[GeoIP] ${file.name} is not a usable database")
         }
+    }
+
+    /**
+     * Drops the loaded database and releases its file, so the file can be
+     * deleted or replaced (which a mapped file cannot be on Windows).
+     */
+    private fun unload() {
+        val previous = database
+        database = null
+        cache.clear()
+        previous?.close()
     }
 
     /**
@@ -63,13 +75,24 @@ object GeoIpDatabase {
         return try {
             temp.outputStream().use { output -> input.copyTo(output) }
 
-            if (MaxMindDb.open(temp) == null) {
+            val probe = MaxMindDb.open(temp)
+            if (probe == null) {
                 temp.delete()
                 logger.warning("[GeoIP] Imported file is not a MaxMind database")
                 return false
             }
+            // The probe's mapping would pin the temp file against the rename
+            // the same way the loaded database pins the target.
+            probe.close()
+            unload()
 
-            if (target.exists()) target.delete()
+            if (target.exists() && !target.delete()) {
+                temp.delete()
+                logger.warning("[GeoIP] Could not replace ${target.name}: the current database is still in use")
+                // Put back what was there rather than leave routing without a database.
+                load(target)
+                return false
+            }
             val moved = temp.renameTo(target)
             if (!moved) {
                 temp.delete()
@@ -88,9 +111,10 @@ object GeoIpDatabase {
 
     /** Removes the imported database. */
     fun clear(file: File) {
-        file.delete()
-        database = null
-        cache.clear()
+        unload()
+        if (file.exists() && !file.delete()) {
+            logger.warning("[GeoIP] Could not delete ${file.name}; it will be loaded again on the next start")
+        }
     }
 
     /**

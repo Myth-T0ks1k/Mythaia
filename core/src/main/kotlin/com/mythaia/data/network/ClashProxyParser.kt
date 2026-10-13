@@ -169,7 +169,7 @@ object ClashProxyParser {
                     for (key in headers.keys()) {
                         val value = headers.optString(key, "")
                         wsHeaders[key] = value
-                        if (key == "Host") wsHost = value
+                        if (key.equals("Host", ignoreCase = true)) wsHost = value
                     }
                 }
             }
@@ -280,6 +280,7 @@ object ClashProxyParser {
         val tls = TlsConfiguration(
             serverName = sni,
             alpn = alpn,
+            allowInsecure = node.optBoolean("skip-cert-verify", false),
             fingerprint = fingerprint
         )
 
@@ -337,7 +338,8 @@ object ClashProxyParser {
             password = password,
             hysteriaUpMbps = bandwidthMbps(node, "up"),
             hysteriaDownMbps = bandwidthMbps(node, "down"),
-            obfuscation = node.optString("obfs", "").takeIf { it.isNotEmpty() }?.lowercase(),
+            // `obfs: none` means no obfuscation, not a type to refuse at dial.
+            obfuscation = node.optString("obfs", "").takeIf { it.isNotEmpty() && !it.equals("none", ignoreCase = true) }?.lowercase(),
             obfuscationPassword = node.optJSONObject("obfs-password")?.toString()
                 ?: node.optString("obfs-password", "").takeIf { it.isNotEmpty() }
         )

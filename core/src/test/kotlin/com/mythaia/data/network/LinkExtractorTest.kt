@@ -36,6 +36,15 @@ class LinkExtractorTest {
     }
 
     @Test
+    fun `a letter that grows when lowercased does not shift the link`() {
+        // "İ".lowercase() is two chars, so an offset found in a lowercased
+        // copy of the text landed one char into every link after it.
+        val link = "vless://5c8a1b9e-3f7d-4e2a-9b61-0d4c7e8f2a13@example.com:443?security=tls#Main"
+        assertEquals(listOf(link), LinkExtractor.extract("İşte: $link"))
+        assertEquals(listOf(link), LinkExtractor.extract("İİİ $link İİİ"))
+    }
+
+    @Test
     fun `a vmess link is not mistaken for shadowsocks and duplicates collapse`() {
         val vmess = "vmess://eyJhZGQiOiIxLjIuMy40In0="
         assertEquals(listOf(vmess), LinkExtractor.extract("$vmess\n$vmess"))

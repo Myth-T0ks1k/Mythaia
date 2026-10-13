@@ -1,7 +1,6 @@
 package com.mythaia.data.network
 
 import com.mythaia.data.model.ProxyConfiguration
-import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -9,6 +8,7 @@ import java.net.URL
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Date
+import java.util.zip.GZIPInputStream
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -55,15 +55,26 @@ object SubscriptionFetcher {
         frontTargets = subscription.frontTargets
     )
 
+    /**
+     * @param allowInsecure skip certificate and hostname checks. Never tied
+     *   to the proxy-server "allow insecure" setting: that one is about the
+     *   user's own self-signed server, whereas an unverified subscription
+     *   download lets anyone on the path replace every server in the list.
+     */
     suspend fun fetch(
         urlString: String,
-        allowInsecure: Boolean = CertificatePolicy.allowInsecure,
+        allowInsecure: Boolean = false,
         remnawaveHWID: String? = null,
         frontSni: String? = null,
         frontTargets: List<String> = emptyList()
     ): Result = withContext(Dispatchers.IO) {
         val url = runCatching { URL(urlString) }.getOrNull()
             ?: throw FetchError.InvalidUrl()
+        // URL() also accepts file: and ftp:, whose connections are not HTTP
+        // and would fail the cast below with a ClassCastException.
+        if (!url.protocol.equals("http", ignoreCase = true) && !url.protocol.equals("https", ignoreCase = true)) {
+            throw FetchError.InvalidUrl()
+        }
 
         val targets = frontTargets.map { it.trim() }.filter { it.isNotEmpty() }
         if (targets.isNotEmpty() && url.protocol.equals("https", ignoreCase = true)) {
@@ -82,9 +93,6 @@ object SubscriptionFetcher {
 
             // Accept self-signed certificates only when the caller has indicated allowInsecure.
             if (connection is HttpsURLConnection && allowInsecure) {
-                // Reached only when the user has turned "allow insecure" on
-                // for a panel on a self-signed host. Refusing to build it
-                // would make that setting do nothing.
                 val trustAllManager = object : X509TrustManager {
                     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
 
@@ -107,7 +115,10 @@ object SubscriptionFetcher {
                 throw FetchError.NetworkError("HTTP $responseCode")
             }
 
-            val data = readBounded(connection.inputStream, MAX_BODY_BYTES)
+            val data = gunzipIfNeeded(
+                readBounded(connection.inputStream, MAX_BODY_BYTES),
+                connection.getHeaderField("Content-Encoding")
+            )
 
             // The same parsing the fronted path and a pasted body get; a copy
             // of it here once missed JSON subscriptions entirely.
@@ -124,6 +135,26 @@ object SubscriptionFetcher {
 
     /** Panels do not serve lists this large; anything bigger is a misconfiguration, not a subscription. */
     private const val MAX_BODY_BYTES = 16 * 1024 * 1024
+
+    /**
+     * [body] decompressed when [contentEncoding] says it is gzip.
+     *
+     * Neither transport asks for compression, but some panels (and the CDNs
+     * in front of them) gzip regardless, and HttpURLConnection only
+     * decompresses on Android, and only when it added the Accept-Encoding
+     * itself. The decoded size is bounded like the raw one.
+     */
+    internal fun gunzipIfNeeded(body: ByteArray, contentEncoding: String?): ByteArray {
+        val encoding = contentEncoding?.trim()?.lowercase() ?: return body
+        if (encoding != "gzip" && encoding != "x-gzip") return body
+        return try {
+            GZIPInputStream(body.inputStream()).use { readBounded(it, MAX_BODY_BYTES) }
+        } catch (e: FetchError) {
+            throw e
+        } catch (e: java.io.IOException) {
+            throw FetchError.NetworkError("Response is not valid gzip: ${e.message ?: e}")
+        }
+    }
 
     /**
      * Downloads through each front in turn until one answers.
@@ -158,7 +189,7 @@ object SubscriptionFetcher {
                 continue
             }
             return parseBody(
-                data = response.body,
+                data = gunzipIfNeeded(response.body, response.header("content-encoding")),
                 profileTitle = decodeProfileTitle(response.header("profile-title")),
                 userInfo = parseUserInfoValue(response.header("subscription-userinfo")),
                 panel = panelInfo { response.header(it) }

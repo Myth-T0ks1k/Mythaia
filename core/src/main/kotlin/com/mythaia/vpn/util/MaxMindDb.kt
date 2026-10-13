@@ -4,6 +4,9 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 private val logger = MythaiaLogger("GeoIP")
 
@@ -31,23 +34,58 @@ class MaxMindDb private constructor(
     private val dataSectionStart = searchTreeSize + DATA_SEPARATOR_SIZE
 
     /**
+     * Lookups hold the read side, [close] the write side: a read from a
+     * buffer that has been unmapped is a crash, not an exception, so the
+     * unmap must wait for any walk in progress.
+     */
+    private val lifecycle = ReentrantReadWriteLock()
+
+    @Volatile
+    private var closed = false
+
+    /**
      * The ISO country code for [address], uppercase, or null when the database
-     * has no answer.
+     * has no answer (or has been closed).
      *
      * @param address 4 bytes for IPv4, 16 for IPv6.
      */
-    fun countryCode(address: ByteArray): String? = when {
-        address.size == 16 -> {
-            // A v6 address has no answer in a v4-only tree. Walking it anyway
-            // would follow its first four bytes and return whichever IPv4
-            // address happens to share them.
-            if (ipVersion == 4) null else lookup(address, startNode = 0)
+    fun countryCode(address: ByteArray): String? = lifecycle.read {
+        when {
+            closed -> null
+            address.size == 16 -> {
+                // A v6 address has no answer in a v4-only tree. Walking it anyway
+                // would follow its first four bytes and return whichever IPv4
+                // address happens to share them.
+                if (ipVersion == 4) null else lookup(address, startNode = 0)
+            }
+            // In a v6 tree the IPv4 data lives under ::/96, which is where the
+            // 32-bit walk has to begin. Some databases also alias ::ffff:0:0/96,
+            // but not all do, so the subtree is found rather than assumed.
+            address.size == 4 -> lookup(address, startNode = if (ipVersion == 6) ipv4StartNode else 0)
+            else -> null
         }
-        // In a v6 tree the IPv4 data lives under ::/96, which is where the
-        // 32-bit walk has to begin. Some databases also alias ::ffff:0:0/96,
-        // but not all do, so the subtree is found rather than assumed.
-        address.size == 4 -> lookup(address, startNode = if (ipVersion == 6) ipv4StartNode else 0)
-        else -> null
+    }
+
+    /**
+     * Releases the mapping, best-effort, after which lookups answer null.
+     *
+     * Left to the garbage collector the file stays mapped for an unbounded
+     * time, and on Windows a mapped file can be neither deleted nor renamed
+     * over: clearing or replacing the database would then fail until the
+     * next start.
+     */
+    fun close() = lifecycle.write {
+        if (closed) return@write
+        closed = true
+        try {
+            val unsafeClass = Class.forName("sun.misc.Unsafe")
+            val field = unsafeClass.getDeclaredField("theUnsafe")
+            field.isAccessible = true
+            unsafeClass.getMethod("invokeCleaner", ByteBuffer::class.java).invoke(field.get(null), buffer)
+        } catch (_: Throwable) {
+            // No invokeCleaner before JDK 9, and none on Android; the mapping
+            // is then released when the buffer is collected, as before.
+        }
     }
 
     /** The country at [address], starting the walk at [startNode]. */
@@ -215,7 +253,12 @@ class MaxMindDb private constructor(
     }
 
     /** The offset just past the value at [offset]. */
-    private fun skipValue(offset: Int): Int {
+    private fun skipValue(offset: Int, depth: Int = 0): Int {
+        // A map nested inside itself a few thousand levels deep takes only a
+        // few bytes to describe, and the recursion would overflow the stack.
+        // A StackOverflowError is not an Exception, so open()'s catch would
+        // not stop it; this is.
+        if (depth > MAX_NESTING) throw IllegalStateException("record nested deeper than $MAX_NESTING levels")
         val control = u8(offset)
         if (control shr 5 == TYPE_POINTER) {
             return when ((control shr 3) and 0x03) {
@@ -231,14 +274,14 @@ class MaxMindDb private constructor(
             TYPE_MAP -> {
                 var at = after
                 repeat(size) {
-                    at = skipValue(at)     // key
-                    at = skipValue(at)     // value
+                    at = skipValue(at, depth + 1)     // key
+                    at = skipValue(at, depth + 1)     // value
                 }
                 at
             }
             TYPE_ARRAY -> {
                 var at = after
-                repeat(size) { at = skipValue(at) }
+                repeat(size) { at = skipValue(at, depth + 1) }
                 at
             }
             // Booleans carry their value in the size field and occupy no payload.
@@ -259,6 +302,9 @@ class MaxMindDb private constructor(
 
     companion object {
         private const val DATA_SEPARATOR_SIZE = 16
+
+        /** Real records are a handful of levels deep; anything past this is a hostile file. */
+        private const val MAX_NESTING = 64
 
         private const val TYPE_EXTENDED = 0
         private const val TYPE_POINTER = 1

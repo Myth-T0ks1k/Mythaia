@@ -119,6 +119,12 @@ object XrayJsonImporter {
         val out = StringBuilder(text.length)
         var i = 0
         var inString = false
+        // Where the last comma outside a string landed in `out`, while only
+        // whitespace (or comments, which are not copied) has followed it. A
+        // closing bracket arriving then makes it a trailing comma. Done in
+        // the walk rather than with a regex afterwards so a `,}` inside a
+        // password is left alone.
+        var pendingComma = -1
         while (i < text.length) {
             val c = text[i]
             when {
@@ -127,7 +133,7 @@ object XrayJsonImporter {
                     if (c == '\\' && i + 1 < text.length) { out.append(text[i + 1]); i++ }
                     else if (c == '"') inString = false
                 }
-                c == '"' -> { inString = true; out.append(c) }
+                c == '"' -> { inString = true; pendingComma = -1; out.append(c) }
                 c == '/' && i + 1 < text.length && text[i + 1] == '/' -> {
                     while (i < text.length && text[i] != '\n') i++
                     continue
@@ -137,11 +143,18 @@ object XrayJsonImporter {
                     i = if (end < 0) text.length else end + 2
                     continue
                 }
-                else -> out.append(c)
+                c == ',' -> { pendingComma = out.length; out.append(c) }
+                (c == '}' || c == ']') && pendingComma >= 0 -> {
+                    out.deleteCharAt(pendingComma)
+                    pendingComma = -1
+                    out.append(c)
+                }
+                c.isWhitespace() -> out.append(c)
+                else -> { pendingComma = -1; out.append(c) }
             }
             i++
         }
-        return Regex(",(\\s*[}\\]])").replace(out.toString(), "$1")
+        return out.toString()
     }
 
     /** The outbounds of one config, and the name its `remarks` gives them. */
@@ -390,6 +403,9 @@ object XrayJsonImporter {
         val user = server.optJSONArray("users")?.optJSONObject(0)
             ?: throw ProxyError.InvalidUrl("vmess: no user in vnext")
         val params = streamParams(stream, null)
+        // The link has no spelling for Reality; written as `tls: ""` the
+        // outbound would import as plaintext VMess and never connect.
+        if (params["security"] == "reality") throw ProxyError.InvalidUrl("vmess: Reality is not supported")
         val json = JSONObject()
             .put("v", "2")
             .put("ps", name.ifEmpty { hostPort(server) })

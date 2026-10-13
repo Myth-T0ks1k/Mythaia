@@ -17,6 +17,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.FileOutputStream
+import java.io.SyncFailedException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -343,7 +345,14 @@ class MitmRepository(private val context: Context) {
      */
     private fun writeBytesAtomic(file: File, bytes: ByteArray) {
         val tmp = File(file.parentFile, "${file.name}.${UUID.randomUUID()}.tmp")
-        tmp.writeBytes(bytes)
+        // The rename is only atomic against a crash if the bytes are on disk
+        // first; without the sync a power loss can commit the name and leave
+        // a zero-length key behind it.
+        FileOutputStream(tmp).use { out ->
+            out.write(bytes)
+            out.flush()
+            try { out.fd.sync() } catch (_: SyncFailedException) {}
+        }
         try {
             Files.move(
                 tmp.toPath(),

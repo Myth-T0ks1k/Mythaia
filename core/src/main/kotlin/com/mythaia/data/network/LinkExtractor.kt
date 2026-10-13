@@ -37,10 +37,13 @@ object LinkExtractor {
     fun extract(text: String): List<String> {
         val found = LinkedHashSet<String>()
         var i = 0
-        val lower = text.lowercase()
         while (i < text.length) {
+            // Searched case-insensitively in place rather than in a lowercased
+            // copy: lowercasing can change the length (Turkish "İ" becomes
+            // two chars), and an offset found in the copy would then land
+            // mid-link in the original.
             val start = SCHEMES.mapNotNull { scheme ->
-                val at = lower.indexOf(scheme, i)
+                val at = text.indexOf(scheme, i, ignoreCase = true)
                 if (at < 0) null else at
             }.minOrNull() ?: break
             var end = start

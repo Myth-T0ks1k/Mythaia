@@ -120,7 +120,7 @@ object FrontedHttpClient {
         }
 
         val bodyStart = headerEnd + 4
-        val body = ByteArrayOutputStream()
+        val body = BodyBuffer()
         body.write(all, bodyStart, all.size - bodyStart)
 
         val contentLength = headers["content-length"]?.toIntOrNull()
@@ -133,7 +133,10 @@ object FrontedHttpClient {
         }
 
         if (chunked) {
-            while (!chunkedComplete(body.toByteArray())) {
+            // The full check walks the whole body, so it only runs once the
+            // tail looks like the end of one; before the gate it ran after
+            // every TLS record, quadratic in the body size.
+            while (!(mayEndChunkedBody(body) && chunkedComplete(body.toByteArray()))) {
                 val chunk = connection.receive() ?: break
                 body.write(chunk)
                 ensureBounded()
@@ -167,6 +170,39 @@ object FrontedHttpClient {
             ) return i
         }
         return -1
+    }
+
+    /** A body buffer whose tail can be inspected without copying the whole thing. */
+    private class BodyBuffer : ByteArrayOutputStream() {
+        fun byteAt(index: Int): Byte = buf[index]
+    }
+
+    private const val CR = '\r'.code.toByte()
+    private const val LF = '\n'.code.toByte()
+
+    /** How far back from the end a zero-size chunk line is looked for; trailers, if any, sit in between. */
+    private const val CHUNK_END_WINDOW = 4096
+
+    /**
+     * Whether [body] could be a complete chunked body: it ends with the blank
+     * line that closes one, and a line that is just `0` (or `0;extension`)
+     * sits within the last stretch. Chunk data can mimic that, so it is a
+     * gate in front of [chunkedComplete], not a replacement for it.
+     */
+    private fun mayEndChunkedBody(body: BodyBuffer): Boolean {
+        val n = body.size()
+        if (n < 5) return false
+        if (body.byteAt(n - 4) != CR || body.byteAt(n - 3) != LF ||
+            body.byteAt(n - 2) != CR || body.byteAt(n - 1) != LF
+        ) return false
+        val earliest = maxOf(0, n - CHUNK_END_WINDOW)
+        for (i in n - 5 downTo earliest) {
+            if (body.byteAt(i) != '0'.code.toByte()) continue
+            if (i > 0 && body.byteAt(i - 1) != LF) continue
+            val next = body.byteAt(i + 1)
+            if (next == CR || next == ';'.code.toByte()) return true
+        }
+        return false
     }
 
     /** True once the terminating zero-length chunk has arrived. */

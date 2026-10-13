@@ -38,9 +38,10 @@ class SubscriptionRefreshWorker(
         val context = applicationContext
 
         // A cold process started by WorkManager has no view model, so nothing
-        // has loaded these yet. Without allowInsecure a panel on a self-signed
-        // host fails every background refresh while pull-to-refresh in the app
-        // succeeds.
+        // has loaded these yet; the fetch dials through the same TLS stack
+        // the tunnel uses (fronting, fragments, encrypted DNS). Subscription
+        // downloads always verify the certificate, whatever the proxy-server
+        // "allow insecure" setting says.
         CertificatePolicy.reload(context)
         FragmentPolicy.reload(context)
         EncryptedDnsPolicy.reload(context)

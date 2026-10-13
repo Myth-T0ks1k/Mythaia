@@ -128,6 +128,32 @@ class XrayJsonImporterTest {
     }
 
     @Test
+    fun `a vmess outbound with Reality is refused rather than imported as plaintext`() {
+        val json = """
+        {"protocol":"vmess","tag":"r","settings":{"vnext":[{"address":"1.2.3.4","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},
+         "streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverName":"www.microsoft.com",
+           "publicKey":"SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc","shortId":"6ba85179e30d4fc2"}}}"""
+        try {
+            XrayJsonImporter.parse(json)
+            fail("expected a refusal")
+        } catch (e: ProxyError.InvalidUrl) {
+            assertTrue(e.message!!.contains("Reality"))
+        }
+    }
+
+    @Test
+    fun `trailing commas go but a comma and brace inside a string stay`() {
+        val cleaned = XrayJsonImporter.stripComments(
+            """{"a": [1, 2,], "pw": "x,}y", /* c */ "b": {"c": 1, // d
+            },}"""
+        )
+        val obj = org.json.JSONObject(cleaned)
+        assertEquals("x,}y", obj.getString("pw"))
+        assertEquals(2, obj.getJSONArray("a").length())
+        assertEquals(1, obj.getJSONObject("b").getInt("c"))
+    }
+
+    @Test
     fun `pinned certificates and a verify name map to pcs and vcn`() {
         val pin = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         val json = """

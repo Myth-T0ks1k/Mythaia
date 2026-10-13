@@ -704,18 +704,16 @@ enum class OutboundProtocol(val raw: String) {
         }
 
     /**
-     * Whether this protocol can embed the caller's first bytes inside its
-     * outbound handshake. Only VLESS does — every other protocol opens the
-     * tunnel first and the LWIP layer must forward the buffered first bytes
-     * via a separate `connection.send` after connect (and ACK them back to
-     * lwIP via `nativeTcpRecved`).
-     *
-     * Getting this wrong silently swallows the caller's first bytes for
-     * non-VLESS protocols — the bytes are sent over the wire but lwIP never
-     * ACKs them back to the local app, the app times out and sends RST.
+     * Whether the tunnel layer should wait briefly for the app's first bytes
+     * and hand them to the connect, so the protocol writes its request header
+     * and those bytes together (and, with nothing to wait for, the header
+     * alone). VLESS and VMess embed them in the handshake; Trojan and
+     * Shadowsocks write a lazy header that otherwise never left the client
+     * when the server speaks first (SSH, SMTP, IMAP). The tunnel layer ACKs
+     * the handed-over bytes back to lwIP after the connect.
      */
     val handshakeCarriesInitialData: Boolean
-        get() = this == VLESS || this == VMESS
+        get() = this == VLESS || this == VMESS || this == TROJAN || this == SHADOWSOCKS
 }
 
 object OutboundProtocolSerializer : KSerializer<OutboundProtocol> {
@@ -1314,7 +1312,10 @@ data class ProxyConfiguration(
         val user = urlEncode(naiveUsername ?: "")
         val pass = urlEncode(naivePassword ?: "")
         val fragment = urlEncode(name)
-        return "https://$user:$pass@$bracketedServerAddress:$serverPort#$fragment"
+        // The bare scheme reads back as HTTP/2, so an HTTPS (HTTP/1.1) proxy
+        // has to say so or it changes protocol on the way round.
+        val query = if (outboundProtocol == OutboundProtocol.NAIVE_HTTP11) "?http=1.1" else ""
+        return "https://$user:$pass@$bracketedServerAddress:$serverPort$query#$fragment"
     }
 
     private fun toSocks5Url(): String {
@@ -1470,9 +1471,11 @@ data class ProxyConfiguration(
             val colon = link.password.indexOf(':')
             if (colon <= 0) throw ProxyError.InvalidUrl("tuic:// needs uuid:password")
 
-            val uuid = runCatching { UUID.fromString(percentDecode(link.password.take(colon))) }
+            // Already percent-decoded by decomposeUserInfoLink; decoding again
+            // would turn a literal "%41" in the password into "A".
+            val uuid = runCatching { UUID.fromString(link.password.take(colon)) }
                 .getOrNull() ?: throw ProxyError.InvalidUrl("tuic:// user is not a UUID")
-            val password = percentDecode(link.password.substring(colon + 1))
+            val password = link.password.substring(colon + 1)
 
             val sni = link.params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
             val insecure = isTruthy(link.params["allow_insecure"]) ||
@@ -1897,9 +1900,12 @@ data class ProxyConfiguration(
             }
             // "type" is the header obfuscation (http camouflage etc.). Nothing
             // here speaks it, and a server expecting it never answers a plain
-            // request, so refuse rather than import a dead entry.
+            // request, so refuse rather than import a dead entry. Over gRPC
+            // the same field carries the mode instead ("multi"), which is
+            // what this exporter writes.
             val headerType = json.optString("type").trim()
-            if (headerType.isNotEmpty() && headerType != "none") {
+            val isGrpcMode = transport == "grpc" && headerType == "multi"
+            if (headerType.isNotEmpty() && headerType != "none" && !isGrpcMode) {
                 throw ProxyError.InvalidUrl("vmess: $headerType header obfuscation is not supported")
             }
 
@@ -2034,7 +2040,10 @@ data class ProxyConfiguration(
                 // Brutal over BBR, so no default is filled in here.
                 hysteriaUpMbps = params["upmbps"]?.toIntOrNull(),
                 hysteriaDownMbps = params["downmbps"]?.toIntOrNull(),
-                obfuscation = params["obfs"]?.takeIf { it.isNotEmpty() }?.lowercase()
+                // `obfs=none` is how some panels spell "no obfuscation"; kept
+                // verbatim it is refused at every dial as a type this build
+                // does not speak.
+                obfuscation = params["obfs"]?.takeIf { it.isNotEmpty() && !it.equals("none", ignoreCase = true) }?.lowercase()
                     ?: finalMaskSalamander(params["fm"])?.first,
                 obfuscationPassword = params["obfs-password"]?.takeIf { it.isNotEmpty() }
                     ?: finalMaskSalamander(params["fm"])?.second
@@ -2131,7 +2140,21 @@ data class ProxyConfiguration(
             val encryption = params["encryption"] ?: "none"
             val flow = params["flow"]
             val security = params["security"] ?: "none"
-            val transport = params["type"] ?: "tcp"
+            // kcp, quic, h2 and the rest have no dialer here; stored as they
+            // are they would only fail at connect time, with a vaguer message.
+            val type = params["type"]?.takeIf { it.isNotEmpty() } ?: "tcp"
+            val transport = when (type) {
+                "tcp", "ws", "httpupgrade", "grpc", "xhttp" -> type
+                "splithttp" -> "xhttp"
+                "raw" -> "tcp"
+                else -> throw ProxyError.InvalidUrl("vless: $type transport is not supported")
+            }
+            // Header obfuscation (http camouflage) is not spoken either, and a
+            // server expecting it never answers a plain request.
+            val headerType = params["headerType"]?.trim().orEmpty()
+            if (headerType.isNotEmpty() && headerType != "none") {
+                throw ProxyError.InvalidUrl("vless: $headerType header obfuscation is not supported")
+            }
 
             var testseed: List<UInt>? = null
             params["testseed"]?.let { str ->
@@ -2269,6 +2292,13 @@ data class ProxyConfiguration(
                 remaining = remaining.substring(0, hashIndex)
             }
 
+            var queryString: String? = null
+            val qIndex = remaining.indexOf('?')
+            if (qIndex >= 0) {
+                queryString = remaining.substring(qIndex + 1)
+                remaining = remaining.substring(0, qIndex)
+            }
+
             val atIndex = remaining.lastIndexOf('@')
             if (atIndex < 0) throw ProxyError.InvalidUrl("Missing @ separator in naive URL")
 
@@ -2285,9 +2315,15 @@ data class ProxyConfiguration(
             val username = percentDecode(userInfo.substring(0, colonIndex))
             val password = percentDecode(userInfo.substring(colonIndex + 1))
 
-            val (host, port) = parseHostPort(serverPart)
+            // An https:// link without a port means 443, as it would in a browser.
+            val (host, port) = parseHostPort(serverPart, defaultPort = 443u)
+            val params = parseQueryParams(queryString)
 
-            val proto = protocolOverride ?: OutboundProtocol.NAIVE_HTTP2
+            // `http=1.1` is this exporter's own marker for an HTTPS (HTTP/1.1)
+            // proxy; without it the scheme means HTTP/2, as it does to every
+            // other client.
+            val proto = protocolOverride
+                ?: if (params["http"] == "1.1") OutboundProtocol.NAIVE_HTTP11 else OutboundProtocol.NAIVE_HTTP2
             return ProxyConfiguration(
                 name = fragmentName ?: "Untitled",
                 serverAddress = host,
@@ -2318,6 +2354,11 @@ data class ProxyConfiguration(
                 fragmentName = percentDecode(remaining.substring(hashIndex + 1))
                 remaining = remaining.substring(0, hashIndex)
             }
+
+            // Nothing in the query is read, but left in place it would be
+            // taken for part of the port.
+            val qIndex = remaining.indexOf('?')
+            if (qIndex >= 0) remaining = remaining.substring(0, qIndex)
 
             var username: String? = null
             var password: String? = null

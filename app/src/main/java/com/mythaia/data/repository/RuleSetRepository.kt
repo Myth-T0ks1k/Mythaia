@@ -339,7 +339,15 @@ class RuleSetRepository(private val context: Context) {
         return runCatching {
             json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(CustomRuleSet.serializer()), stored)
         }.getOrElse {
+            // Set the text aside instead of letting the next save replace
+            // whatever was in it with an empty list: a downgrade past a schema
+            // change would otherwise erase every custom rule set. One copy is
+            // kept; a later failure does not overwrite it.
             logger.error("Failed to decode custom rule sets: $it")
+            if (prefs.getString(CUSTOM_RULE_SETS_QUARANTINE_KEY, null) == null) {
+                prefs.edit { putString(CUSTOM_RULE_SETS_QUARANTINE_KEY, stored) }
+                logger.error("Undecodable custom rule sets set aside under $CUSTOM_RULE_SETS_QUARANTINE_KEY")
+            }
             emptyList()
         }
     }
@@ -356,6 +364,7 @@ class RuleSetRepository(private val context: Context) {
         private val logger = MythaiaLogger("RuleSetStore")
         private const val ASSIGNMENTS_KEY = "ruleSetAssignments"
         private const val CUSTOM_RULE_SETS_KEY = "customRuleSets"
+        private const val CUSTOM_RULE_SETS_QUARANTINE_KEY = "customRuleSets.quarantine"
         private val defaultAssignments = mapOf("Direct" to "DIRECT")
     }
 }

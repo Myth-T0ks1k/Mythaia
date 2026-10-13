@@ -1,5 +1,6 @@
 package com.mythaia.data.network
 
+import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.repository.ConfigRepository
@@ -70,7 +71,14 @@ object SubscriptionUpdater {
             config.outboundProtocol.name,
             config.serverAddress.lowercase(),
             config.serverPort.toString(),
-            config.uuid.toString(),
+            // Only the protocols that authenticate by uuid carry a real one;
+            // the parsers fill in a fresh random placeholder for the rest, so
+            // keying on it there would make every refresh look like a new
+            // server and drop the ids a rename was meant to keep.
+            when (config.outboundProtocol) {
+                OutboundProtocol.VLESS, OutboundProtocol.VMESS, OutboundProtocol.TUIC -> config.uuid.toString()
+                else -> ""
+            },
             config.password ?: "",
             config.ssPassword ?: "",
             config.trojanPassword ?: "",

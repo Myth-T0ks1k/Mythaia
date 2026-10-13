@@ -76,6 +76,120 @@ class ShareLinkTest {
         assertEquals("example.com", config.serverAddress)
     }
 
+    @Test
+    fun `an obfs of none means no obfuscation`() {
+        // Some panels write it out; stored verbatim it was refused at every
+        // dial as an obfuscation type this build does not speak.
+        assertNull(ProxyConfiguration.fromUrl("hysteria2://p@example.com:443?obfs=none#N").obfuscation)
+        assertNull(ProxyConfiguration.fromUrl("hysteria2://p@example.com:443?obfs=NONE#N").obfuscation)
+        assertEquals("salamander", ProxyConfiguration.fromUrl("hysteria2://p@example.com:443?obfs=salamander#N").obfuscation)
+    }
+
+    // MARK: - VMess
+
+    private fun vmessLink(vararg fields: Pair<String, Any>): String {
+        val json = org.json.JSONObject()
+        for ((key, value) in fields) json.put(key, value)
+        return "vmess://" + java.util.Base64.getEncoder().encodeToString(json.toString().toByteArray(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `vmess over multi-mode grpc round-trips through its URL`() {
+        val original = ProxyConfiguration.fromUrl(vmessLink(
+            "v" to "2", "ps" to "Grpc", "add" to "example.com", "port" to "2053",
+            "id" to "b1a2c3d4-0000-4000-8000-000000000001", "aid" to "0",
+            "net" to "grpc", "type" to "multi", "path" to "svc", "tls" to "tls", "sni" to "g.example.com"
+        ))
+        assertEquals("grpc", original.transport)
+        assertEquals(true, original.grpc?.multiMode)
+        assertEquals("svc", original.grpc?.serviceName)
+
+        // The exporter writes the mode into `type`, where v2rayN keeps it;
+        // the parser must not read that as header obfuscation.
+        val reparsed = ProxyConfiguration.fromUrl(original.toUrl())
+        assertEquals(original.uuid, reparsed.uuid)
+        assertEquals("grpc", reparsed.transport)
+        assertEquals(true, reparsed.grpc?.multiMode)
+        assertEquals(original.grpc?.serviceName, reparsed.grpc?.serviceName)
+        assertEquals(original.tls?.serverName, reparsed.tls?.serverName)
+        assertEquals("Grpc", reparsed.name)
+    }
+
+    @Test
+    fun `vmess http header obfuscation is still refused`() {
+        for (net in listOf("tcp", "grpc")) {
+            try {
+                ProxyConfiguration.fromUrl(vmessLink(
+                    "add" to "example.com", "port" to "443",
+                    "id" to "b1a2c3d4-0000-4000-8000-000000000001", "net" to net, "type" to "http"
+                ))
+                fail("expected InvalidUrl for net=$net")
+            } catch (_: ProxyError.InvalidUrl) {
+                // expected
+            }
+        }
+    }
+
+    // MARK: - VLESS
+
+    @Test
+    fun `vless transports without a dialer are refused at import`() {
+        val base = "vless://b1a2c3d4-0000-4000-8000-000000000001@example.com:443"
+        for (query in listOf("type=kcp", "type=quic", "type=h2", "type=tcp&headerType=http")) {
+            try {
+                ProxyConfiguration.fromUrl("$base?$query#N")
+                fail("expected InvalidUrl for $query")
+            } catch (_: ProxyError.InvalidUrl) {
+                // expected
+            }
+        }
+        assertEquals("xhttp", ProxyConfiguration.fromUrl("$base?type=splithttp&security=tls#N").transport)
+        assertEquals("tcp", ProxyConfiguration.fromUrl("$base?type=raw&headerType=none#N").transport)
+        assertEquals("ws", ProxyConfiguration.fromUrl("$base?type=ws&path=%2Fws#N").transport)
+    }
+
+    // MARK: - Naive and SOCKS5
+
+    @Test
+    fun `an HTTPS proxy keeps HTTP 1-1 through its URL`() {
+        val original = ProxyConfiguration.fromUrl("https://u:p@example.com:8443#Proxy", OutboundProtocol.NAIVE_HTTP11)
+        assertEquals(OutboundProtocol.NAIVE_HTTP11, original.outboundProtocol)
+
+        val reparsed = ProxyConfiguration.fromUrl(original.toUrl())
+        assertEquals(OutboundProtocol.NAIVE_HTTP11, reparsed.outboundProtocol)
+        assertEquals(NaiveProtocol.HTTP11, reparsed.naiveProtocol)
+        assertEquals("u", reparsed.naiveUsername)
+        assertEquals("p", reparsed.naivePassword)
+        assertEquals(8443.toUShort(), reparsed.serverPort)
+        assertEquals("Proxy", reparsed.name)
+
+        // Without the marker the scheme means HTTP/2, and an explicit choice wins over the marker.
+        val http2 = ProxyConfiguration.fromUrl("https://u:p@example.com:8443#P")
+        assertEquals(OutboundProtocol.NAIVE_HTTP2, ProxyConfiguration.fromUrl(http2.toUrl()).outboundProtocol)
+        assertEquals(
+            OutboundProtocol.NAIVE_HTTP2,
+            ProxyConfiguration.fromUrl(original.toUrl(), OutboundProtocol.NAIVE_HTTP2).outboundProtocol
+        )
+    }
+
+    @Test
+    fun `a naive link without a port takes 443 and a query is not part of the port`() {
+        val config = ProxyConfiguration.fromUrl("https://u:p@example.com?x=1#P")
+        assertEquals(443.toUShort(), config.serverPort)
+        assertEquals("example.com", config.serverAddress)
+        assertEquals(8443.toUShort(), ProxyConfiguration.fromUrl("https://u:p@example.com:8443?x=1").serverPort)
+    }
+
+    @Test
+    fun `a socks5 link with a query still parses its port`() {
+        val config = ProxyConfiguration.fromUrl("socks5://u:p@example.com:1080?udp=1#S")
+        assertEquals(1080.toUShort(), config.serverPort)
+        assertEquals("u", config.socks5Username)
+        assertEquals("p", config.socks5Password)
+        assertEquals("S", config.name)
+        assertEquals(1080.toUShort(), ProxyConfiguration.fromUrl("socks5://example.com:1080?udp=1").serverPort)
+    }
+
     // MARK: - AnyTLS
 
     @Test

@@ -42,6 +42,15 @@ class TuicLinkTest {
     }
 
     @Test
+    fun `a percent sign in the password survives the round trip`() {
+        // The userinfo is decoded once, by the link splitter; decoding the
+        // password a second time turned "a%41b" into "aAb".
+        val original = ProxyConfiguration.fromUrl("tuic://$uuid:a%2541b@example.com:443#N")
+        assertEquals("a%41b", original.password)
+        assertEquals("a%41b", ProxyConfiguration.fromUrl(original.toUrl()).password)
+    }
+
+    @Test
     fun `a link round-trips back to itself`() {
         val original = ProxyConfiguration.fromUrl("tuic://$uuid:hunter2@example.com:8443#Tokyo")
         val reparsed = ProxyConfiguration.fromUrl(original.toUrl())
