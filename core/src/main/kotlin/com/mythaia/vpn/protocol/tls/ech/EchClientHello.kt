@@ -122,13 +122,15 @@ object EchClientHello {
         cipherSuite: EchCipherSuite,
         outerSessionId: ByteArray,
         innerServerName: String,
-        buildHello: (sessionId: ByteArray, serverName: String, extra: ByteArray?) -> ByteArray
+        buildHello: (sessionId: ByteArray, serverName: String, extra: ByteArray?, inner: Boolean) -> ByteArray
     ): Result {
         val context = EchClientContext.create(config, cipherSuite)
 
         // The encrypted inner carries no session id; the server puts the
-        // outer's back before using it.
-        val innerMessage = buildHello(ByteArray(0), innerServerName, null)
+        // outer's back before using it. It carries its own ECH extension, of
+        // the inner kind (§7.1): without it, or with the outer's GREASE stub
+        // in its place, a server that decrypts it rejects the hello.
+        val innerMessage = buildHello(ByteArray(0), innerServerName, innerExtension(), true)
         val encodedInner = encodeInner(innerMessage, innerServerName, config.maxNameLength)
         val ciphertextLength = encodedInner.size + EchClientContext.AEAD_TAG_LENGTH
 
@@ -138,7 +140,7 @@ object EchClientHello {
             config.configId, cipherSuite.kdfId, cipherSuite.aeadId,
             context.enc, ByteArray(ciphertextLength)
         )
-        val outerForAad = buildHello(outerSessionId, config.publicName, asExtension(zeroed))
+        val outerForAad = buildHello(outerSessionId, config.publicName, asExtension(zeroed), false)
         val aad = outerForAad.copyOfRange(4, outerForAad.size)
 
         val ciphertext = context.seal(encodedInner, aad)
@@ -153,12 +155,15 @@ object EchClientHello {
             config.configId, cipherSuite.kdfId, cipherSuite.aeadId,
             context.enc, ciphertext
         )
-        val outerMessage = buildHello(outerSessionId, config.publicName, asExtension(real))
+        val outerMessage = buildHello(outerSessionId, config.publicName, asExtension(real), false)
 
         return Result(
             outerMessage = outerMessage,
-            innerTranscript = buildHello(outerSessionId, innerServerName, null),
+            innerTranscript = buildHello(outerSessionId, innerServerName, innerExtension(), true),
             context = context
         )
     }
+
+    /** The `encrypted_client_hello` extension of type inner: one byte, ECHClientHelloType.inner. */
+    private fun innerExtension(): ByteArray = asExtension(byteArrayOf(0x01))
 }

@@ -12,11 +12,24 @@ import com.mythaia.vpn.protocol.tls.TlsHandshakeKeys
 import com.mythaia.vpn.protocol.tls.TlsRecordConnection
 import com.mythaia.vpn.protocol.vless.RealityError
 import com.mythaia.vpn.util.NioSocket
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+
+/** Where handshake watchdogs run; one scope for every client, nothing else uses it. */
+private val watchdogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+/** How long a server gets to finish its side of the handshake. */
+private const val HANDSHAKE_TIMEOUT_MS = 20_000L
 
 private val logger = MythaiaLogger("Reality")
 
@@ -85,7 +98,39 @@ class RealityClient(
             throw RealityError.HandshakeFailed("TCP connection failed: ${e.message}")
         }
 
-        return receiveServerResponse()
+        // Past the TCP connect the socket is ours to close on the way out:
+        // callers only take it over once connect() returns.
+        try {
+            return withHandshakeDeadline { receiveServerResponse() }
+        } catch (e: Throwable) {
+            runCatching { socket.forceCancel() }
+            throw e
+        }
+    }
+
+    /**
+     * Runs [block] with [HANDSHAKE_TIMEOUT_MS] to finish (see TlsClient): the
+     * watchdog closes the transport from outside, which is what wakes a
+     * receive with nothing to read, and the failure that causes is reported
+     * as the timeout it is.
+     */
+    private suspend fun <T> withHandshakeDeadline(block: suspend () -> T): T {
+        val expired = AtomicBoolean(false)
+        val watchdog = watchdogScope.launch {
+            delay(HANDSHAKE_TIMEOUT_MS)
+            expired.set(true)
+            runCatching { connection?.forceCancel() }
+        }
+        try {
+            return block()
+        } catch (e: Throwable) {
+            if (expired.get() && e !is CancellationException) {
+                throw RealityError.HandshakeFailed("Reality handshake timed out after ${HANDSHAKE_TIMEOUT_MS / 1000} s")
+            }
+            throw e
+        } finally {
+            watchdog.cancel()
+        }
     }
 
     /** Performs the Reality handshake over an existing transport (for proxy chaining). */
@@ -96,7 +141,7 @@ class RealityClient(
         mlkemEncapsulationKey = tryGenerateMLKEMKeyPair()
 
         connection = transport
-        return performRealityHandshake()
+        return withHandshakeDeadline { performRealityHandshake() }
     }
 
     fun cancel() {
@@ -447,38 +492,48 @@ class RealityClient(
         val kd = keyDerivation
             ?: throw RealityError.HandshakeFailed("Missing key derivation")
 
+        var buf = buffer
         var offset = startOffset
         var fullTranscript = handshakeTranscript ?: byteArrayOf()
         var foundServerFinished = false
 
-        while (offset + 5 <= buffer.size) {
-            val contentType = buffer[offset].toInt() and 0xFF
-            val recordLen = ((buffer[offset + 3].toInt() and 0xFF) shl 8) or
-                    (buffer[offset + 4].toInt() and 0xFF)
+        // A loop, not a recursion per read (as in TlsClient): a server
+        // trickling its flight nested a frame per piece, and an early EOF
+        // recursed without end.
+        while (!foundServerFinished) {
+            while (offset + 5 <= buf.size) {
+                val contentType = buf[offset].toInt() and 0xFF
+                val recordLen = ((buf[offset + 3].toInt() and 0xFF) shl 8) or
+                        (buf[offset + 4].toInt() and 0xFF)
 
-            if (offset + 5 + recordLen > buffer.size) break
+                if (offset + 5 + recordLen > buf.size) break
 
-            if (contentType == 0x14 || contentType == 0x16) {
-                // ChangeCipherSpec or plaintext handshake - skip
-                offset += 5 + recordLen
-                continue
-            } else if (contentType == 0x17) {
-                // Encrypted handshake (Application Data wrapper)
-                val recordHeader = buffer.copyOfRange(offset, offset + 5)
-                val ciphertext = buffer.copyOfRange(offset + 5, offset + 5 + recordLen)
+                if (contentType == 0x14 || contentType == 0x16) {
+                    // ChangeCipherSpec or plaintext handshake - skip
+                    offset += 5 + recordLen
+                    continue
+                } else if (contentType == 0x15) {
+                    val description = if (recordLen >= 2) buf[offset + 6].toInt() and 0xFF else -1
+                    throw RealityError.HandshakeFailed("Server sent alert $description during the handshake")
+                } else if (contentType == 0x17) {
+                    // Encrypted handshake (Application Data wrapper)
+                    val recordHeader = buf.copyOfRange(offset, offset + 5)
+                    val ciphertext = buf.copyOfRange(offset + 5, offset + 5 + recordLen)
 
-                try {
-                    val seqNum = serverHandshakeSeqNum
-                    val decrypted = decryptHandshakeRecord(
-                        ciphertext = ciphertext,
-                        key = keys.serverKey,
-                        iv = keys.serverIV,
-                        seqNum = seqNum,
-                        recordHeader = recordHeader
-                    )
+                    val decrypted = try {
+                        decryptHandshakeRecord(
+                            ciphertext = ciphertext,
+                            key = keys.serverKey,
+                            iv = keys.serverIV,
+                            seqNum = serverHandshakeSeqNum,
+                            recordHeader = recordHeader
+                        )
+                    } catch (e: Exception) {
+                        // Nothing after an unreadable record opens either.
+                        throw RealityError.HandshakeFailed("Could not decrypt a handshake record: ${e.message}")
+                    }
                     serverHandshakeSeqNum++
 
-                    // Add decrypted handshake messages to transcript
                     var hsOffset = 0
                     while (hsOffset + 4 <= decrypted.size) {
                         val hsType = decrypted[hsOffset].toInt() and 0xFF
@@ -489,86 +544,84 @@ class RealityClient(
                         if (hsOffset + 4 + hsLen > decrypted.size) break
 
                         val hsMessage = decrypted.copyOfRange(hsOffset, hsOffset + 4 + hsLen)
-                        fullTranscript = fullTranscript + hsMessage
+                        val hsBody = decrypted.copyOfRange(hsOffset + 4, hsOffset + 4 + hsLen)
 
-                        if (hsType == 0x0B) { // Certificate
-                            val certBody = decrypted.copyOfRange(hsOffset + 4, hsOffset + 4 + hsLen)
-                            serverCertVerified = verifyRealityCertificate(certBody)
-                        } else if (hsType == 0x19) { // CompressedCertificate (RFC 8879)
-                            val certBody = decrypted.copyOfRange(hsOffset + 4, hsOffset + 4 + hsLen)
-                            val decompressed = decompressCertificate(certBody)
-                            if (decompressed != null) {
-                                serverCertVerified = verifyRealityCertificate(decompressed)
-                            } else {
-                                logger.warning("[Reality] Failed to decompress CompressedCertificate")
+                        when (hsType) {
+                            0x0B -> { // Certificate
+                                serverCertVerified = verifyRealityCertificate(hsBody)
+                            }
+                            0x19 -> { // CompressedCertificate (RFC 8879)
+                                val decompressed = decompressCertificate(hsBody)
+                                if (decompressed != null) {
+                                    serverCertVerified = verifyRealityCertificate(decompressed)
+                                } else {
+                                    logger.warning("[Reality] Failed to decompress CompressedCertificate")
+                                }
+                            }
+                            0x14 -> { // Finished
+                                // RFC 8446 §4.4.4: checked against the transcript
+                                // before it, the way the server checks ours.
+                                val expected = kd.computeFinishedVerifyData(keys.serverTrafficSecret, fullTranscript)
+                                if (!java.security.MessageDigest.isEqual(hsBody, expected)) {
+                                    throw RealityError.HandshakeFailed("Server Finished verify data mismatch")
+                                }
+                                foundServerFinished = true
                             }
                         }
-
-                        if (hsType == 0x14) { // Finished
-                            foundServerFinished = true
-                        }
+                        // Add decrypted handshake messages to transcript
+                        fullTranscript = fullTranscript + hsMessage
 
                         hsOffset += 4 + hsLen
                     }
-                } catch (e: Exception) {
-                    logger.error("[Reality] Failed to decrypt handshake record: ${e.message}")
                 }
+
+                offset += 5 + recordLen
+
+                // After Server Finished, subsequent records (e.g. NewSessionTicket) are
+                // encrypted with application keys. Stop here and let TlsRecordConnection
+                // handle them so the sequence numbers stay in sync.
+                if (foundServerFinished) break
             }
-
-            offset += 5 + recordLen
-
-            // After Server Finished, subsequent records (e.g. NewSessionTicket) are
-            // encrypted with application keys. Stop here and let TlsRecordConnection
-            // handle them so the sequence numbers stay in sync.
             if (foundServerFinished) break
+
+            val conn = connection
+                ?: throw RealityError.HandshakeFailed("Connection cancelled")
+            val moreData = conn.receive()
+                ?: throw RealityError.HandshakeFailed("Connection closed during handshake")
+            buf = buf + moreData
         }
 
         val processedOffset = offset
         handshakeTranscript = fullTranscript
 
-        if (foundServerFinished) {
-            if (!serverCertVerified) {
-                throw RealityError.AuthenticationFailed()
-            }
-
-            applicationKeys = kd.deriveApplicationKeys(handshakeSecret!!, fullTranscript)
-
-            sendClientFinished()
-
-            val appKeys = applicationKeys
-                ?: throw RealityError.HandshakeFailed("Application keys not available")
-
-            val realityConnection = TlsRecordConnection(
-                clientKey = appKeys.clientKey,
-                clientIV = appKeys.clientIV,
-                serverKey = appKeys.serverKey,
-                serverIV = appKeys.serverIV,
-                cipherSuite = keyDerivation?.cipherSuite ?: TlsCipherSuite.TLS_AES_128_GCM_SHA256
-            )
-            realityConnection.connection = connection
-            connection = null
-
-            clearHandshakeState()
-            // Pass any remaining buffer data (e.g., NewSessionTicket) to the
-            // TlsRecordConnection so it isn't lost.
-            if (processedOffset < buffer.size) {
-                val remaining = buffer.copyOfRange(processedOffset, buffer.size)
-                realityConnection.prependToReceiveBuffer(remaining)
-            }
-            return realityConnection
-        } else {
-            // Need more handshake data
-            val conn = connection
-                ?: throw RealityError.HandshakeFailed("Connection cancelled")
-
-            val moreData = conn.receive()
-            var newBuffer = buffer
-            if (moreData != null) {
-                newBuffer = buffer + moreData
-            }
-
-            return consumeRemainingHandshake(newBuffer, processedOffset)
+        if (!serverCertVerified) {
+            throw RealityError.AuthenticationFailed()
         }
+
+        applicationKeys = kd.deriveApplicationKeys(handshakeSecret!!, fullTranscript)
+
+        sendClientFinished()
+
+        val appKeys = applicationKeys
+            ?: throw RealityError.HandshakeFailed("Application keys not available")
+
+        val realityConnection = TlsRecordConnection(
+            clientKey = appKeys.clientKey,
+            clientIV = appKeys.clientIV,
+            serverKey = appKeys.serverKey,
+            serverIV = appKeys.serverIV,
+            cipherSuite = keyDerivation?.cipherSuite ?: TlsCipherSuite.TLS_AES_128_GCM_SHA256
+        )
+        realityConnection.connection = connection
+        connection = null
+
+        clearHandshakeState()
+        // Pass any remaining buffer data (e.g., NewSessionTicket) to the
+        // TlsRecordConnection so it isn't lost.
+        if (processedOffset < buf.size) {
+            realityConnection.prependToReceiveBuffer(buf.copyOfRange(processedOffset, buf.size))
+        }
+        return realityConnection
     }
 
     /** Sends the ChangeCipherSpec and encrypted Client Finished messages. */

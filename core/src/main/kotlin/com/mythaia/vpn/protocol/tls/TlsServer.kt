@@ -6,6 +6,7 @@ import com.mythaia.vpn.mitm.MitmLeafCertificates
 import com.mythaia.vpn.mitm.TlsHandshakeAead
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.MythaiaLogger
+import com.mythaia.vpn.util.PacketUtil
 import java.security.SecureRandom
 import java.security.Signature
 
@@ -176,7 +177,10 @@ class TlsServer(
         )
 
         // Read and verify the client Finished.
-        val clientFinished = readClientFinished(suite, keys.clientKey, keys.clientIV)
+        val clientFinished = readClientFinished(
+            suite, keys.clientKey, keys.clientIV,
+            tolerateEarlyData = PacketUtil.clientHelloExtension(clientHelloMessage, EXTENSION_EARLY_DATA) != null
+        )
         val expectedClientVerify =
             kd.computeFinishedVerifyData(keys.clientTrafficSecret, transcriptThroughServerFinished)
         if (!constantTimeEquals(expectedClientVerify, clientFinished.verifyData)) {
@@ -262,11 +266,13 @@ class TlsServer(
     private suspend fun readClientFinished(
         cipherSuite: Int,
         clientKey: ByteArray,
-        clientIV: ByteArray
+        clientIV: ByteArray,
+        tolerateEarlyData: Boolean
     ): ClientFinished {
         var buffer = ByteArray(0)
         var offset = 0
         var sequence = 0L
+        var skippedEarlyData = 0
 
         while (true) {
             while (offset + RECORD_HEADER_LEN <= buffer.size) {
@@ -289,7 +295,20 @@ class TlsServer(
                     RECORD_APPLICATION_DATA -> {
                         val opened = TlsHandshakeAead.open(
                             cipherSuite, clientKey, clientIV, sequence, header, body
-                        ) ?: abort(ALERT_DECRYPT_ERROR, "could not open client handshake record")
+                        )
+                        if (opened == null) {
+                            // RFC 8446 §4.2.10: a client holding a ticket for the
+                            // origin may send early data before it learns we did
+                            // not accept it, under keys we never had. Those records
+                            // are skipped, within a bound; anything else that fails
+                            // to open is a broken handshake.
+                            if (tolerateEarlyData && skippedEarlyData + body.size <= MAX_SKIPPED_EARLY_DATA) {
+                                skippedEarlyData += body.size
+                                offset = recordEnd
+                                continue
+                            }
+                            abort(ALERT_DECRYPT_ERROR, "could not open client handshake record")
+                        }
                         sequence++
                         if (opened.innerType != TlsHandshakeAead.CONTENT_HANDSHAKE) {
                             abort(ALERT_UNEXPECTED_MESSAGE, "expected a handshake record, got inner type ${opened.innerType}")
@@ -430,6 +449,10 @@ class TlsServer(
 
         /** Largest a TLS record body may be: 2^14 plaintext plus AEAD expansion (RFC 8446 §5.2). */
         private const val MAX_CIPHERTEXT_RECORD = 16384 + 256
+        /** 0x002A, early_data: the client may be sending 0-RTT records we have to step over. */
+        private const val EXTENSION_EARLY_DATA = 0x002A
+        /** Rejected early data is skipped up to this many ciphertext bytes (RFC 8446 §4.2.10). */
+        private const val MAX_SKIPPED_EARLY_DATA = 64 * 1024
 
         private const val ALERT_LEVEL_FATAL = 2
 

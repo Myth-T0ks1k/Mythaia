@@ -82,7 +82,11 @@ object TlsClientHelloBuilder {
 
     /** 0x0000 -- Server Name Indication (SNI). */
     fun buildSNIExtension(serverName: String): ByteArray {
-        val nameBytes = serverName.toByteArray(Charsets.UTF_8)
+        // RFC 6066 §3: no SNI for an IP literal (browsers send none), and a
+        // name goes out as its A-label, the form the server matches against.
+        if (isIpLiteral(serverName)) return ByteArray(0)
+        val asciiName = runCatching { java.net.IDN.toASCII(serverName) }.getOrDefault(serverName)
+        val nameBytes = asciiName.toByteArray(Charsets.UTF_8)
         val payload = mutableListOf<Byte>()
         val listLen = nameBytes.size + 3
         payload.appendU16(listLen)
@@ -91,6 +95,9 @@ object TlsClientHelloBuilder {
         for (b in nameBytes) payload.add(b)
         return ext(0x0000, payload.toByteArray())
     }
+
+    private fun isIpLiteral(name: String): Boolean =
+        name.isNotEmpty() && (name.all { it.isDigit() || it == '.' } || name.contains(':'))
 
     /** 0x0005 -- OCSP status request. */
     private fun statusRequestExt(): ByteArray {
@@ -422,7 +429,13 @@ object TlsClientHelloBuilder {
          * no ECH slot it is appended. Null leaves every fingerprint exactly
          * as it was.
          */
-        echExtension: ByteArray? = null
+        echExtension: ByteArray? = null,
+        /**
+         * The hello is an ECH ClientHelloInner: supported_versions keeps only
+         * TLS 1.3 (draft-ietf-tls-esni §7.1 forbids offering 1.2 inside), the
+         * fingerprint is otherwise unchanged.
+         */
+        innerHello: Boolean = false
     ): ByteArray {
         val resolved: TlsFingerprint = if (fingerprint == TlsFingerprint.RANDOM) {
             val options = TlsFingerprint.concreteFingerprints
@@ -431,7 +444,7 @@ object TlsClientHelloBuilder {
             fingerprint
         }
 
-        val (suites, extensions, padded) = buildFingerprintedParts(
+        val (suites, builtExtensions, padded) = buildFingerprintedParts(
             fingerprint = resolved,
             random = random,
             serverName = serverName,
@@ -441,6 +454,7 @@ object TlsClientHelloBuilder {
             mlkemEncapsulationKey = mlkemEncapsulationKey,
             echExtension = echExtension
         )
+        val extensions = if (innerHello) withoutLegacyVersions(builtExtensions) else builtExtensions
 
         // Fingerprints without an ECH slot carry a real one appended; the
         // four that have a slot already consumed it above.
@@ -459,6 +473,35 @@ object TlsClientHelloBuilder {
             // carrying extra extensions is not padded.
             applyBoringPadding = padded && extra == null
         )
+    }
+
+    /**
+     * [extensions] with supported_versions (0x002B) reduced to TLS 1.3 and any
+     * GREASE value; every other extension is copied as it is.
+     */
+    private fun withoutLegacyVersions(extensions: ByteArray): ByteArray {
+        val out = mutableListOf<Byte>()
+        var i = 0
+        while (i + 4 <= extensions.size) {
+            val type = ((extensions[i].toInt() and 0xFF) shl 8) or (extensions[i + 1].toInt() and 0xFF)
+            val len = ((extensions[i + 2].toInt() and 0xFF) shl 8) or (extensions[i + 3].toInt() and 0xFF)
+            val end = i + 4 + len
+            if (end > extensions.size) break
+            if (type == 0x002B && len >= 1) {
+                val kept = mutableListOf<Int>()
+                var v = i + 5
+                while (v + 2 <= end) {
+                    val version = ((extensions[v].toInt() and 0xFF) shl 8) or (extensions[v + 1].toInt() and 0xFF)
+                    if (version >= 0x0304 || (version and 0x0F0F) == 0x0A0A) kept.add(version)
+                    v += 2
+                }
+                for (b in supportedVersionsExt(kept.toIntArray())) out.add(b)
+            } else {
+                for (k in i until end) out.add(extensions[k])
+            }
+            i = end
+        }
+        return out.toByteArray()
     }
 
     /**
@@ -689,7 +732,9 @@ object TlsClientHelloBuilder {
             )),
             pskKeyExchangeModesExt(),
             recordSizeLimitExt(0x4001),
-            compressCertExt(intArrayOf(0x0001, 0x0002, 0x0003)), // Zlib, Brotli, Zstd
+            // Firefox also offers zstd; nothing here can inflate it, and a
+            // server that picks it leaves us with no certificate at all.
+            compressCertExt(intArrayOf(0x0001, 0x0002)), // Zlib, Brotli
             echExtension ?: greaseECHExt(random, kdfId = 0x0001, aeadId = echAead, payloadLen = 239)
         )
 

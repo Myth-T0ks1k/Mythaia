@@ -150,7 +150,10 @@ object TlsPeerVerifier {
      * would let a certificate for a subdomain stand in for the site itself.
      */
     fun matchesDnsName(serverName: String, certificateName: String): Boolean {
-        val host = serverName.lowercase().trimEnd('.')
+        // Certificates carry A-labels; a name typed with non-ASCII letters is
+        // compared in that form too.
+        val host = runCatching { java.net.IDN.toASCII(serverName) }.getOrDefault(serverName)
+            .lowercase().trimEnd('.')
         val pattern = certificateName.lowercase().trimEnd('.')
         if (pattern.isEmpty()) return false
         if (!pattern.startsWith("*.")) return host == pattern
@@ -252,6 +255,15 @@ object TlsPeerVerifier {
         0x0601 -> "SHA512withRSA"
         0x0201 -> "SHA1withRSA"
         0x0807 -> "Ed25519"
-        else -> "SHA256withRSA"
+        0x0808 -> "Ed448"
+        0x0809 -> "SHA256withRSA/PSS"
+        0x080a -> "SHA384withRSA/PSS"
+        0x080b -> "SHA512withRSA/PSS"
+        // A scheme this table does not know must not be verified as if it
+        // were PKCS#1 SHA-256: the check would fail honestly at best and, with
+        // a matching key, pass a signature made under different rules.
+        else -> throw java.security.NoSuchAlgorithmException(
+            "unsupported TLS signature scheme 0x" + tlsAlgorithm.toString(16)
+        )
     }
 }

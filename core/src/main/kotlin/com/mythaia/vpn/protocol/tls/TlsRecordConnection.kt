@@ -218,9 +218,13 @@ class TlsRecordConnection private constructor(
     }
 
     private fun sendCloseNotify() {
-        runBlocking {
-            sendLock.withMutexLock {
-                val conn = connection ?: return@withMutexLock
+        // Best effort only. A send parked on the lock (the peer stopped
+        // reading) would hold cancel() with it, and cancel() closing the
+        // socket is the one thing that un-parks that send.
+        if (!sendLock.tryLock()) return
+        try {
+            run {
+                val conn = connection ?: return@run
 
                 val seqNum: Long
                 seqLock.withLock {
@@ -257,6 +261,8 @@ class TlsRecordConnection private constructor(
                 } catch (_: Exception) {
                 }
             }
+        } finally {
+            sendLock.unlock()
         }
     }
 
@@ -382,10 +388,40 @@ class TlsRecordConnection private constructor(
                     offset = receiveBufferLen
                     break
                 }
-            } else if (contentType == 0x15) { // Alert
+            } else if (contentType == 0x15 && !isTls13) {
+                // A TLS 1.2 alert is sealed and numbered like data. close_notify
+                // ends the stream quietly, as the transport EOF behind it will
+                // (the TLS 1.3 path does the same); a fatal one is an error.
+                val seqNum: Long
+                seqLock.withLock {
+                    seqNum = rxSeqNum
+                    rxSeqNum++
+                }
+                val alert = try {
+                    decryptTls12Record(
+                        receiveBuffer.copyOfRange(offset + 5, offset + totalLen),
+                        receiveBuffer.copyOfRange(offset, offset + 5),
+                        seqNum
+                    )
+                } catch (_: Exception) {
+                    ByteArray(0)
+                }
+                val level = alert.getOrNull(0)?.toInt()?.and(0xFF) ?: 2
+                val description = alert.getOrNull(1)?.toInt()?.and(0xFF) ?: -1
+                if (level == 2 && description != 0) {
+                    hasError = RealityError.HandshakeFailed("TLS alert $description from peer")
+                    offset += totalLen
+                    break
+                }
+            } else if (contentType == 0x15) { // a plaintext alert under TLS 1.3: the peer gave up on the record layer
                 hasError = RealityError.HandshakeFailed("TLS Alert received")
                 offset += totalLen
                 break
+            } else if (contentType == 0x16 && !isTls13) {
+                // A TLS 1.2 post-handshake record (a HelloRequest) is sealed and
+                // numbered like data; skipping it without its number put every
+                // later record out of step.
+                seqLock.withLock { rxSeqNum++ }
             }
             offset += totalLen
         }

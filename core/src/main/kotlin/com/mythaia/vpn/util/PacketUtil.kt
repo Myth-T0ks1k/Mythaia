@@ -201,6 +201,8 @@ object PacketUtil {
                 val extDataLen = ((data[sh + 2].toInt() and 0xFF) shl 8) or (data[sh + 3].toInt() and 0xFF)
                 sh += 4
 
+                val extDataStart = sh
+
                 if (extType == 0x0033) {
                     if (sh + 4 > data.size) return null
                     val group = ((data[sh].toInt() and 0xFF) shl 8) or (data[sh + 1].toInt() and 0xFF)
@@ -217,11 +219,91 @@ object PacketUtil {
                     }
                 }
 
-                sh += extDataLen
+                // From the extension's start, not from wherever the key_share
+                // branch stopped reading: a share for another group (or the
+                // group-only share of a HelloRetryRequest) left the walk four
+                // bytes adrift and every extension after it misread.
+                sh = extDataStart + extDataLen
             }
 
             return null
         }
         return null
+    }
+
+    /**
+     * Whether the ServerHello in [data] (TLS records) selects TLS 1.3 through
+     * supported_versions, whatever key share it carries.
+     */
+    fun serverHelloSelectsTls13(data: ByteArray): Boolean {
+        var offset = 0
+        while (offset + 5 <= data.size) {
+            if ((data[offset].toInt() and 0xFF) != 0x16) return false
+            val recordLen = ((data[offset + 3].toInt() and 0xFF) shl 8) or (data[offset + 4].toInt() and 0xFF)
+            offset += 5
+            if (offset + recordLen > data.size) return false
+            if ((data[offset].toInt() and 0xFF) != 0x02) {
+                offset += recordLen
+                continue
+            }
+            var sh = offset + 1 + 3 + 2 + 32
+            if (sh >= data.size) return false
+            sh += 1 + (data[sh].toInt() and 0xFF)
+            sh += 3 // cipher(2) + compression(1)
+            if (sh + 2 > data.size) return false
+            val extEnd = sh + 2 + (((data[sh].toInt() and 0xFF) shl 8) or (data[sh + 1].toInt() and 0xFF))
+            sh += 2
+            if (extEnd > data.size) return false
+            while (sh + 4 <= extEnd) {
+                val extType = ((data[sh].toInt() and 0xFF) shl 8) or (data[sh + 1].toInt() and 0xFF)
+                val extDataLen = ((data[sh + 2].toInt() and 0xFF) shl 8) or (data[sh + 3].toInt() and 0xFF)
+                sh += 4
+                if (extType == 0x002B && extDataLen == 2 && sh + 2 <= extEnd) {
+                    return data[sh].toInt() == 0x03 && data[sh + 1].toInt() == 0x04
+                }
+                sh += extDataLen
+            }
+            return false
+        }
+        return false
+    }
+
+    /**
+     * The body of extension [type] in [clientHello] (a handshake message, no
+     * record header), or null when the hello does not carry it.
+     */
+    fun clientHelloExtension(clientHello: ByteArray, type: Int): ByteArray? {
+        // type(1) length(3) version(2) random(32) session_id cipher_suites compression extensions
+        var i = 1 + 3 + 2 + 32
+        if (i >= clientHello.size) return null
+        i += 1 + (clientHello[i].toInt() and 0xFF)
+        if (i + 2 > clientHello.size) return null
+        i += 2 + (((clientHello[i].toInt() and 0xFF) shl 8) or (clientHello[i + 1].toInt() and 0xFF))
+        if (i >= clientHello.size) return null
+        i += 1 + (clientHello[i].toInt() and 0xFF)
+        if (i + 2 > clientHello.size) return null
+        val extEnd = i + 2 + (((clientHello[i].toInt() and 0xFF) shl 8) or (clientHello[i + 1].toInt() and 0xFF))
+        if (extEnd > clientHello.size) return null
+        i += 2
+        while (i + 4 <= extEnd) {
+            val extType = ((clientHello[i].toInt() and 0xFF) shl 8) or (clientHello[i + 1].toInt() and 0xFF)
+            val extLen = ((clientHello[i + 2].toInt() and 0xFF) shl 8) or (clientHello[i + 3].toInt() and 0xFF)
+            val dataStart = i + 4
+            if (dataStart + extLen > extEnd) return null
+            if (extType == type) return clientHello.copyOfRange(dataStart, dataStart + extLen)
+            i = dataStart + extLen
+        }
+        return null
+    }
+
+    /** Whether [clientHello] (a handshake message) lists TLS 1.3 in supported_versions. */
+    fun clientHelloOffersTls13(clientHello: ByteArray): Boolean {
+        val versions = clientHelloExtension(clientHello, 0x002B) ?: return false
+        var v = 1
+        while (v + 2 <= versions.size) {
+            if (versions[v].toInt() == 0x03 && versions[v + 1].toInt() == 0x04) return true
+            v += 2
+        }
+        return false
     }
 }
