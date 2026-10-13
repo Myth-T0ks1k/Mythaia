@@ -47,7 +47,7 @@ class AnyTlsStream(
     /** Set by [cancel], i.e. by this side giving up. */
     private val cancelled = AtomicBoolean(false)
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     override val isConnected: Boolean
         get() = !cancelled.get() && !session.isClosed

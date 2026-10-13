@@ -48,7 +48,7 @@ object AutoSelectEngine {
     @Volatile
     var uiVisible: Boolean = false
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private var loop: Job? = null
     private val json = Json { ignoreUnknownKeys = true }
 

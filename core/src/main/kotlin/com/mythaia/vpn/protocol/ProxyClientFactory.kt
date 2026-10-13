@@ -14,12 +14,13 @@ import com.mythaia.vpn.protocol.vmess.VmessClient
 object ProxyClientFactory {
 
     suspend fun connect(
-        config: ProxyConfiguration,
+        configuration: ProxyConfiguration,
         host: String,
         port: Int,
         initialData: ByteArray? = null,
         tunnel: ProxyConnection? = null
     ): ProxyConnection {
+        val config = configuration.withTransportHostSni()
         return when (config.outboundProtocol) {
             OutboundProtocol.VLESS -> VlessClient(config, tunnel).connect(host, port, initialData)
             OutboundProtocol.TROJAN -> TrojanClient(config, tunnel).connect(host, port, initialData)
@@ -66,11 +67,12 @@ object ProxyClientFactory {
      * NaiveProxy / HTTP doesn't carry UDP at all.
      */
     suspend fun connectUDP(
-        config: ProxyConfiguration,
+        configuration: ProxyConfiguration,
         host: String,
         port: Int,
         tunnel: ProxyConnection? = null
     ): ProxyConnection {
+        val config = configuration.withTransportHostSni()
         return when (config.outboundProtocol) {
             OutboundProtocol.VLESS -> VlessClient(config, tunnel).connectUDP(host, port)
             OutboundProtocol.TROJAN -> TrojanClient(config, tunnel).connectUDP(host, port)

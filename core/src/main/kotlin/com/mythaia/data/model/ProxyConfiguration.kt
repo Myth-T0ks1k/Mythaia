@@ -51,6 +51,28 @@ internal fun parseAlpn(raw: String?): List<String>? =
  * document in `fm=`, which says the same per piece.
  */
 /**
+ * The Host a link's transport sends (WebSocket, HTTPUpgrade, XHTTP) or its
+ * gRPC authority: the first name of a comma list, or null.
+ *
+ * v2rayN and v2rayNG use it as the TLS server name when a link has no `sni`,
+ * and the subscriptions written for them rely on that: a CDN server given by
+ * IP with only `host=` set got no usable name from us and answered
+ * 421 Misdirected Request.
+ */
+internal fun transportHostParam(params: Map<String, String>): String? {
+    val raw = when (params["type"]) {
+        "ws", "httpupgrade", "xhttp", "splithttp" -> params["host"]
+        "grpc" -> params["authority"]
+        else -> null
+    } ?: return null
+    return raw.split(',').map { it.trim() }.firstOrNull { it.isNotEmpty() }
+}
+
+/** A literal IPv4 or IPv6 address, which is never sent as a TLS server name (RFC 6066). */
+internal fun isIpLiteralHost(name: String): Boolean =
+    name.isNotEmpty() && (name.all { it.isDigit() || it == '.' } || name.contains(':'))
+
+/**
  * `pcs=` / `pinnedPeerCertSha256=` / `pinSHA256=` as lowercase hex SHA-256
  * fingerprints. Hex may carry colons; a 32-byte base64 value is accepted too.
  * Null when absent or nothing in it is a fingerprint.
@@ -229,7 +251,9 @@ data class TlsConfiguration(
     companion object {
         fun parse(params: Map<String, String>, serverAddress: String): TlsConfiguration? {
             if (params["security"] != "tls") return null
-            val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: serverAddress
+            val sni = params["sni"]?.takeIf { it.isNotEmpty() }
+                ?: transportHostParam(params)
+                ?: serverAddress
             val alpn = parseAlpn(params["alpn"])
             val allowInsecure = isTruthy(params["allowInsecure"]) || isTruthy(params["insecure"])
             val fp = params["fp"] ?: "chrome_133"
@@ -874,6 +898,39 @@ data class ProxyConfiguration(
     val skipsCertificateCheck: Boolean
         get() = effectiveTls?.let { it.allowInsecure && it.pinnedCertSha256.isNullOrEmpty() } ?: false
 
+    /** The Host this server's transport sends, or the gRPC authority; null for none. */
+    private val transportHost: String?
+        get() = when (transport) {
+            "ws" -> websocket?.host
+            "httpupgrade" -> httpUpgrade?.host
+            "xhttp" -> xhttp?.host
+            "grpc" -> grpc?.authority
+            else -> null
+        }?.split(',')?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
+
+    /** The server name a link without `sni` reads back as. */
+    private val impliedServerName: String
+        get() = transportHost ?: serverAddress
+
+    /**
+     * This server with its TLS name taken from the transport's Host when the
+     * name it has is an IP address.
+     *
+     * An IP is never sent as SNI, so such a server — a CDN given by IP with
+     * the domain only in `host=`, stored before links fell back to the Host
+     * — reached the CDN with no name and got 421 Misdirected Request. Applied
+     * where every dial starts, so stored servers work without a refresh.
+     */
+    fun withTransportHostSni(): ProxyConfiguration {
+        val host = transportHost?.takeIf { !isIpLiteralHost(it) } ?: return this
+        fun fixed(t: TlsConfiguration?): TlsConfiguration? =
+            t?.takeIf { isIpLiteralHost(it.serverName) || it.serverName.isBlank() }?.copy(serverName = host)
+        val tlsFixed = fixed(tls)
+        val trojanFixed = fixed(trojanTls)
+        if (tlsFixed == null && trojanFixed == null) return this
+        return copy(tls = tlsFixed ?: tls, trojanTls = trojanFixed ?: trojanTls)
+    }
+
     val displayEndpoint: String
         get() = "$bracketedServerAddress:$serverPort"
 
@@ -1240,7 +1297,7 @@ data class ProxyConfiguration(
         val password = urlEncode(trojanPassword ?: "")
         val params = mutableListOf<String>()
         trojanTls?.let { tls ->
-            if (tls.serverName != serverAddress) params.add("sni=${tls.serverName}")
+            if (tls.serverName != impliedServerName) params.add("sni=${tls.serverName}")
             tls.alpn?.takeIf { it.isNotEmpty() }?.let {
                 params.add("alpn=${urlEncode(it.joinToString(","))}")
             }
@@ -1311,7 +1368,7 @@ data class ProxyConfiguration(
      * maxVersion, fragment).
      */
     private fun appendTlsParams(params: MutableList<String>, tls: TlsConfiguration) {
-        if (tls.serverName != serverAddress) params.add("sni=${tls.serverName}")
+        if (tls.serverName != impliedServerName) params.add("sni=${tls.serverName}")
         tls.alpn?.takeIf { it.isNotEmpty() }?.let {
             params.add("alpn=${urlEncode(it.joinToString(","))}")
         }
@@ -1781,6 +1838,7 @@ data class ProxyConfiguration(
 
             val sni = params["sni"]?.takeIf { it.isNotEmpty() }
                 ?: params["peer"]?.takeIf { it.isNotEmpty() }
+                ?: transportHostParam(params)
                 ?: host
 
             val type = params["type"]?.takeIf { it.isNotEmpty() } ?: "tcp"

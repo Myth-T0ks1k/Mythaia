@@ -70,7 +70,7 @@ class GrpcConnection private constructor(
 
     private var keepaliveJob: Job? = null
     private val keepaliveScope: CoroutineScope by lazy {
-        CoroutineScope(Dispatchers.IO + SupervisorJob())
+        CoroutineScope(Dispatchers.IO + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
     }
 
     override val isConnected: Boolean

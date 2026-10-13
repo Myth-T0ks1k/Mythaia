@@ -74,7 +74,7 @@ class XHttpConnection private constructor(
     private var packetUpFlushPending = false
     private var packetUpLastFlushTime: Long = 0
     private val packetUpScope: CoroutineScope by lazy {
-        CoroutineScope(Dispatchers.IO + SupervisorJob())
+        CoroutineScope(Dispatchers.IO + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
     }
 
     private var uploadDrainJob: Job? = null
@@ -463,7 +463,7 @@ class XHttpConnection private constructor(
     }
 
     private fun startUploadResponseDrain() {
-        uploadDrainJob = CoroutineScope(Dispatchers.IO).launch {
+        uploadDrainJob = CoroutineScope(Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard).launch {
             drainNextUploadResponse()
         }
     }

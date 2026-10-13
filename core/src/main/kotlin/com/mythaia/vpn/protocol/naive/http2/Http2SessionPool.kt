@@ -22,7 +22,7 @@ object Http2SessionPool {
 
     private val sessions = mutableMapOf<String, MutableList<Http2Session>>()
 
-    private val poolScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val poolScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     /**
      * Acquires an [Http2Stream] for [destination]. When [tunnel] is non-null

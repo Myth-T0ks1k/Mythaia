@@ -173,6 +173,48 @@ class ShareLinkTest {
     }
 
     @Test
+    fun `a link without sni takes its name from the transport Host, as v2rayN does`() {
+        val id = "5c8a1b9e-3f7d-4e2a-9b61-0d4c7e8f2a13"
+        // A CDN given by IP, the domain only in host=: an IP is never sent as
+        // SNI, so the name has to come from the Host or the CDN answers 421.
+        val ws = ProxyConfiguration.fromUrl("vless://$id@104.16.1.1:443?security=tls&type=ws&host=site.example&path=%2Fws#W")
+        assertEquals("site.example", ws.tls!!.serverName)
+        val grpc = ProxyConfiguration.fromUrl("vless://$id@104.16.1.1:443?security=tls&type=grpc&authority=grpc.example&serviceName=s#G")
+        assertEquals("grpc.example", grpc.tls!!.serverName)
+        val trojan = ProxyConfiguration.fromUrl("trojan://pw@104.16.1.1:443?type=ws&host=t.example#T")
+        assertEquals("t.example", trojan.trojanTls!!.serverName)
+        // An explicit sni wins, and plain TCP keeps the address.
+        assertEquals("other.example", ProxyConfiguration.fromUrl(
+            "vless://$id@104.16.1.1:443?security=tls&type=ws&host=site.example&sni=other.example#W"
+        ).tls!!.serverName)
+        assertEquals("example.com", ProxyConfiguration.fromUrl("vless://$id@example.com:443?security=tls#V").tls!!.serverName)
+    }
+
+    @Test
+    fun `an sni equal to the address survives the round trip next to a different Host`() {
+        val id = "5c8a1b9e-3f7d-4e2a-9b61-0d4c7e8f2a13"
+        val config = ProxyConfiguration.fromUrl(
+            "vless://$id@front.example:443?security=tls&type=ws&host=site.example&sni=front.example#W"
+        )
+        assertEquals("front.example", config.tls!!.serverName)
+        assertEquals("front.example", ProxyConfiguration.fromUrl(config.toUrl()).tls!!.serverName)
+    }
+
+    @Test
+    fun `a stored server with an IP for its name dials with the Host`() {
+        val id = "5c8a1b9e-3f7d-4e2a-9b61-0d4c7e8f2a13"
+        val parsed = ProxyConfiguration.fromUrl("vless://$id@104.16.1.1:443?security=tls&type=ws&host=site.example#W")
+        // As saved by a build that still used the address.
+        val stored = parsed.copy(tls = parsed.tls!!.copy(serverName = "104.16.1.1"))
+        assertEquals("site.example", stored.withTransportHostSni().tls!!.serverName)
+        // A real name is left alone; so is a server with no Host to borrow.
+        val named = parsed.copy(tls = parsed.tls!!.copy(serverName = "front.example"))
+        assertEquals("front.example", named.withTransportHostSni().tls!!.serverName)
+        val tcp = ProxyConfiguration.fromUrl("vless://$id@104.16.1.1:443?security=tls#V")
+        assertEquals("104.16.1.1", tcp.withTransportHostSni().tls!!.serverName)
+    }
+
+    @Test
     fun `a naive link carries allow insecure, its name and its pin both ways`() {
         val link = "https://u:p@1.2.3.4:443?sni=proxy.example&insecure=1&pcs=PIN&vcn=cert.example#N"
             .replace("PIN", "abababababababababababababababababababababababababababababababab")

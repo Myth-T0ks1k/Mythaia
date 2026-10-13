@@ -103,7 +103,7 @@ object ProtocolProbe {
         )
     }
 
-    private val detached = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val detached = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     private suspend fun httpGet(
         config: ProxyConfiguration,

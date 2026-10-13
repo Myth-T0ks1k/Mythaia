@@ -169,7 +169,7 @@ class MuxClient(
         connecting = true
 
         try {
-            val client = VlessClient(configuration)
+            val client = VlessClient(configuration.withTransportHostSni())
             this.vlessClient = client
 
             val connection = client.connectMux()

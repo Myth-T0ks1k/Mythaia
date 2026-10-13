@@ -28,7 +28,7 @@ private val logger = MythaiaLogger("H2-POOL")
 object Http2StreamPool {
 
     private val sessions = HashMap<String, MutableList<Http2Session>>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private var reaper: Job? = null
 
     private const val IDLE_CLOSE_MS = 60_000L

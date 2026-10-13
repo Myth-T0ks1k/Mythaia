@@ -42,7 +42,7 @@ class QuicStream(
     @Volatile
     private var resetCause: QuicStreamReset? = null
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     /**
      * Receive-side flow control, deferred to consume time.

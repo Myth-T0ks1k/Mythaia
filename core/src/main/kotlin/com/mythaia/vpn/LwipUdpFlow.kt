@@ -46,7 +46,7 @@ class LwipUdpFlow(
 ) {
     // Coroutine scope for protocol operations, dispatched on the lwIP executor
     private val scopeJob = SupervisorJob()
-    private val scope = CoroutineScope(lwipExecutor.asCoroutineDispatcher() + scopeJob)
+    private val scope = CoroutineScope(lwipExecutor.asCoroutineDispatcher() + scopeJob + com.mythaia.vpn.tunnelCrashGuard)
 
     var lastActivity: Double = System.nanoTime() / 1_000_000_000.0
         private set
@@ -540,20 +540,30 @@ class LwipUdpFlow(
 
     private fun startProxyReceiving(connection: ProxyConnection) {
         scope.launch {
-            connection.startReceiving(
-                handler = { data ->
-                    handleRemoteData(data)
-                },
-                errorHandler = { error ->
-                    if (error != null) {
-                        logger.debug("[UDP] VLESS recv error: $flowKey: ${error.message}")
+            try {
+                connection.startReceiving(
+                    handler = { data ->
+                        handleRemoteData(data)
+                    },
+                    errorHandler = { error ->
+                        if (error != null) {
+                            logger.debug("[UDP] VLESS recv error: $flowKey: ${error.message}")
+                        }
+                        lwipExecutor.execute {
+                            close()
+                            host.removeUdpFlow(flowKey)
+                        }
                     }
-                    lwipExecutor.execute {
-                        close()
-                        host.removeUdpFlow(flowKey)
-                    }
+                )
+            } catch (_: CancellationException) {
+            } catch (e: Exception) {
+                // One flow's failure ends that flow, never the tunnel.
+                logger.debug("[UDP] receive loop ended: $flowKey: ${e.message}")
+                lwipExecutor.execute {
+                    close()
+                    host.removeUdpFlow(flowKey)
                 }
-            )
+            }
         }
     }
 

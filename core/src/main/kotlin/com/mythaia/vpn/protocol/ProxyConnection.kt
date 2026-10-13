@@ -2,7 +2,7 @@ package com.mythaia.vpn.protocol
 
 import com.mythaia.data.model.TlsVersion
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import java.util.concurrent.atomic.AtomicLong
 
 /** Common interface implemented by every proxy connection (VLESS, Trojan, Shadowsocks, SOCKS5, Naive). */
@@ -67,10 +67,17 @@ abstract class ProxyConnection : ProxyConnectionProtocol {
     override suspend fun startReceiving(
         handler: suspend (ByteArray) -> Unit,
         errorHandler: suspend (Exception?) -> Unit
-    ) = coroutineScope {
+    ) = supervisorScope {
         // Pipeline: kick off the next receive BEFORE awaiting the handler so a
         // slow handler doesn't stall further frame ingest. Mirrors iOS
         // ProxyConnection.swift:132-149.
+        //
+        // supervisorScope, not coroutineScope: a receive that fails (a server
+        // resetting the stream, a 421 on a pooled HTTP/2 connection) must
+        // reach the catch below through await(). Under coroutineScope the
+        // failed child also cancelled the scope, which rethrew the error past
+        // the catch to whoever launched this loop — and the UDP flow that did
+        // had nothing to catch it, so the whole VPN process died.
         var pending = async { receive() }
         try {
             while (true) {

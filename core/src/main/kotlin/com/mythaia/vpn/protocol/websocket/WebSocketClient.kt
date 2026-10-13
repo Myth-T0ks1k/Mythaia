@@ -32,7 +32,7 @@ class WebSocketConnection private constructor(
     private val lock = ReentrantLock()
     private var _isConnected = true
     private var upgraded = false
-    private val heartbeatScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val heartbeatScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
     private var heartbeatJob: Job? = null
 
     val isConnected: Boolean

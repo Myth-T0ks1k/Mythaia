@@ -154,7 +154,7 @@ class NowhereSession(val configuration: NowhereConfiguration) {
     @Volatile
     private var idleSince = 0L
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     val isClosed: Boolean get() = phase.get() == Phase.CLOSED
 

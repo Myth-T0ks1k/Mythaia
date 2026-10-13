@@ -68,7 +68,7 @@ class LwipTcpConnection(
 
     // Coroutine scope for protocol operations, dispatched on the lwIP executor
     private val scopeJob = SupervisorJob()
-    private val scope = CoroutineScope(lwipExecutor.asCoroutineDispatcher() + scopeJob)
+    private val scope = CoroutineScope(lwipExecutor.asCoroutineDispatcher() + scopeJob + com.mythaia.vpn.tunnelCrashGuard)
 
     // Connection paths (mutually exclusive)
     private var vlessConnection: ProxyConnection? = null

@@ -24,7 +24,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /** Where handshake watchdogs run; one scope for every client, nothing else uses it. */
-private val watchdogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+private val watchdogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
 private val logger = MythaiaLogger("TLS")
 

@@ -50,7 +50,7 @@ class AnyTlsSession(
     @Volatile
     var onIdle: (() -> Unit)? = null
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private var receiveJob: Job? = null
 
     /**

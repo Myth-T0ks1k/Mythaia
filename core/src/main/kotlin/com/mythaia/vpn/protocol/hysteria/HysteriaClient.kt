@@ -56,7 +56,7 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
     var udpEnabled: Boolean = false
         private set
 
-    private val udpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val udpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private val udpFlows = ConcurrentHashMap<Long, QuicUdpFlow>()
     private val nextUdpSession = AtomicLong((System.nanoTime() and 0x7FFF_FFFFL))
     private val nextPacketId = AtomicInteger(0)

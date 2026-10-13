@@ -41,7 +41,7 @@ class TuicClient(private val configuration: ProxyConfiguration) {
 
     private val lock = Mutex()
     private var quic: QuicConnection? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private val udpFlows = ConcurrentHashMap<Int, QuicUdpFlow>()
     private val nextAssociation = AtomicInteger((System.nanoTime() and 0xFFFF).toInt())
     private val nextPacketId = AtomicInteger(0)

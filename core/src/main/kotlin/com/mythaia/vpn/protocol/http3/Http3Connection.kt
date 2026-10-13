@@ -33,7 +33,7 @@ class Http3Connection(
     private val settings: List<Pair<Long, Long>> = Http3Framer.CLIENT_SETTINGS
 ) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private val started = AtomicBoolean(false)
 
     /** Our control stream, which stays open for the life of the connection. */

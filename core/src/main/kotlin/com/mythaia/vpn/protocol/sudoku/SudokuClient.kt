@@ -130,7 +130,7 @@ class SudokuStreamConnection internal constructor(
 ) : ProxyConnection() {
 
     private val closed = AtomicBoolean(false)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     override val isConnected: Boolean
         get() = !closed.get() && session.isConnected
@@ -184,7 +184,7 @@ class SudokuUdpConnection internal constructor(
 ) : ProxyConnection() {
 
     private val closed = AtomicBoolean(false)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     override val isConnected: Boolean
         get() = !closed.get() && session.isConnected
