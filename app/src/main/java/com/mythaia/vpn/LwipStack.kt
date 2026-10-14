@@ -117,9 +117,19 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     val totalBytesIn = AtomicLong(0)
     val totalBytesOut = AtomicLong(0)
 
-    /** All proxy server addresses (domains and resolved IPs) from all configurations.
-     *  Prevents routing loops when proxy server domains match routing rules. */
+    /**
+     * Every proxy server the app has asked about (domains and resolved IPs,
+     * lower-case): their names get real DNS answers, so a latency test or a
+     * dial resolves a server to where it really is rather than to a fake IP.
+     */
     private var proxyServerAddresses: Set<String> = emptySet()
+
+    /**
+     * The tunnel's own server and its chain, with what their names resolved
+     * to: the only addresses that go around the tunnel. See [isProxyServerAddress].
+     */
+    @Volatile
+    private var activeServerAddresses: Set<String> = emptySet()
 
     /** Mux manager for multiplexing UDP flows (created when Vision+Mux is active). */
     override var muxManager: MuxManager? = null
@@ -250,21 +260,28 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         udpFlows.remove(flowKey)
     }
 
-    /** Returns true if the given host matches any proxy server address across all
-     *  configurations. Prevents routing loops and ensures latency tests bypass the tunnel. */
+    /**
+     * Whether [host] is the tunnel's own server (or a hop of its chain), whose
+     * traffic must go around the tunnel.
+     *
+     * Only the live server counts. Every server the app had measured used to:
+     * with a big subscription fronted by a CDN, those addresses are the CDN's
+     * shared ones, so ordinary websites on the same CDN left the tunnel in
+     * the clear. The app's own sockets (latency tests, dials) are protected
+     * and never enter the tunnel, so they need no bypass.
+     */
     private fun isProxyServerAddress(host: String): Boolean {
-        // Fast path: direct set lookup (covers domains and resolved IPs)
-        if (proxyServerAddresses.contains(host)) return true
-        // Fallback: check active config in case proxyServerAddresses hasn't been populated yet
+        val key = host.lowercase()
+        if (activeServerAddresses.contains(key)) return true
+        // Covers a switch whose names have not been resolved here yet.
         val config = configuration ?: return false
-        if (host == config.serverAddress || host == config.resolvedIP) return true
-        val chain = config.chain
-        if (chain != null) {
-            for (proxy in chain) {
-                if (host == proxy.serverAddress || host == proxy.resolvedIP) return true
-            }
-        }
-        return false
+        return isAddressOf(config, key)
+    }
+
+    private fun isAddressOf(config: ProxyConfiguration, host: String): Boolean {
+        if (host.equals(config.serverAddress, ignoreCase = true) || host == config.resolvedIP) return true
+        if (DnsCache.cachedIPs(config.serverAddress)?.contains(host) == true) return true
+        return config.chain?.any { isAddressOf(it, host) } == true
     }
 
     /** Updates the set of proxy server addresses from the app.
@@ -277,7 +294,12 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     }
 
     private fun loadProxyServerAddresses() {
-        val stored = prefs.getString("proxyServerAddresses", null) ?: return
+        // Kept in a file of its own since thousands of servers made it a
+        // megabyte inside the settings; the old key is read once after an update.
+        val stored = context.getSharedPreferences(PROXY_ADDRESSES_PREFS, Context.MODE_PRIVATE)
+            .getString("proxyServerAddresses", null)
+            ?: prefs.getString("proxyServerAddresses", null)
+            ?: return
         val parsed = runCatching {
             val array = JSONArray(stored)
             buildList(array.length()) {
@@ -294,13 +316,14 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     }
 
     private fun seedProxyServerAddresses(config: ProxyConfiguration) {
-        val addresses = collectProxyServerAddresses(config)
+        val addresses = normalizeProxyServerAddresses(collectProxyServerAddresses(config))
         proxyServerAddresses = proxyServerAddresses + addresses
+        activeServerAddresses = addresses
         // Resolve domain names in background to catch DNS-resolved IPs.
         resolveProxyDomains(addresses)
     }
 
-    /** Resolves proxy server domain names in background and adds resolved IPs. */
+    /** Resolves the live server's domain names in background and adds the IPs to its bypass. */
     private fun resolveProxyDomains(addresses: Set<String>) {
         Thread {
             for (address in addresses) {
@@ -308,10 +331,14 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 if (address.contains(':') || address.matches(Regex("""^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"""))) continue
                 try {
                     val resolved = java.net.InetAddress.getAllByName(address)
-                    val ips = resolved.mapNotNull { it.hostAddress }.toSet()
+                    val ips = resolved.mapNotNull { it.hostAddress?.lowercase() }.toSet()
                     if (ips.isNotEmpty()) {
                         lwipExecutor.execute {
                             proxyServerAddresses = proxyServerAddresses + ips
+                            // Only while that server is still the live one.
+                            if (activeServerAddresses.contains(address)) {
+                                activeServerAddresses = activeServerAddresses + ips
+                            }
                         }
                     }
                 } catch (_: Exception) {
@@ -332,10 +359,12 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     }
 
     private fun normalizeProxyServerAddresses(addresses: Collection<String>): Set<String> {
+        // Lower-case, so a lookup is one set probe: the DNS path used to scan
+        // the whole list per query, thousands of entries with a bulk list.
         return addresses.asSequence()
-            .map(String::trim)
+            .map { it.trim().lowercase() }
             .filter(String::isNotEmpty)
-            .toCollection(linkedSetOf())
+            .toCollection(HashSet())
     }
 
     private fun loadBypassCountry() {
@@ -813,9 +842,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             muxManager = MuxManager(config, lwipExecutor.asCoroutineDispatcher())
         }
 
-        // Don't re-resolve proxy server addresses on restart — they're populated
-        // once on initial start() and refreshed via updateProxyServerAddresses()
-        // IPC. Mirrors iOS LWIPStack+Lifecycle.swift:217 (`shouldLoadProxyServerAddresses=false`).
+        // The full list is not reloaded on restart: it is populated once on
+        // start() and refreshed via updateProxyServerAddresses(). The live
+        // server's own bypass follows the new configuration.
+        seedProxyServerAddresses(config)
         loadRoutingConfigurationForMode()
         NativeBridge.nativeInit()
         startTimeoutTimer()
@@ -1366,7 +1396,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     /** Names that must resolve to their real address, never a fake IP. [domain] is lower-case. */
     private fun isRealAnswerDomain(domain: String): Boolean {
         if (domain.isEmpty()) return false
-        if (proxyServerAddresses.any { it.equals(domain, ignoreCase = true) } && !DnsCache.isIpAddress(domain)) return true
+        if (proxyServerAddresses.contains(domain) && !DnsCache.isIpAddress(domain)) return true
         if (EncryptedDnsPolicy.upstream.bootstrapHost?.equals(domain, ignoreCase = true) == true) return true
         return domainRouter.isBypassDomain(domain)
     }
@@ -1533,6 +1563,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
     companion object {
         private val logger = MythaiaLogger("LWIPStack")
+
+        /** The preferences file holding the proxy server address list, apart from the settings. */
+        const val PROXY_ADDRESSES_PREFS = "mythaia_addresses"
+
         /** How long an address our DNS gave a bypass name keeps routing direct. */
         private const val BYPASS_ANSWER_TTL_MS = 30 * 60 * 1000L
         private const val MAX_BYPASS_ANSWERS = 4096
