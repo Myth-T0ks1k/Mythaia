@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -33,11 +34,11 @@ class ConfigRepository(context: Context) {
      */
     private var undecodable: List<JsonElement> = emptyList()
 
-    init {
-        _configurations.value = loadFromDisk()
-    }
+    /** Set by loadFromDisk when the file on disk is in the old pretty-printed form. */
+    private var rewriteCompact = false
 
-    fun getAll(): List<ProxyConfiguration> = _configurations.value
+    /** Set while a save is queued; mutations meanwhile ride on it. */
+    private val saveQueued = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * The list indexed by id, rebuilt only when the list changes: get() is
@@ -46,6 +47,15 @@ class ConfigRepository(context: Context) {
      */
     @Volatile
     private var index: Pair<List<ProxyConfiguration>, Map<UUID, ProxyConfiguration>>? = null
+
+    // After every field it uses: init may queue a save (see rewriteCompact),
+    // and a field declared below this block would still be null then.
+    init {
+        _configurations.value = loadFromDisk()
+        if (rewriteCompact) saveToDisk()
+    }
+
+    fun getAll(): List<ProxyConfiguration> = _configurations.value
 
     fun get(id: UUID): ProxyConfiguration? {
         val list = _configurations.value
@@ -103,8 +113,25 @@ class ConfigRepository(context: Context) {
      */
     private fun loadFromDisk(): List<ProxyConfiguration> {
         if (!file.exists()) return emptyList()
+        val text = runCatching { file.readText() }.getOrElse {
+            logger.error("Failed to read configurations: $it")
+            return emptyList()
+        }
+        // One streaming pass when every entry decodes, which is nearly
+        // always: building the JSON tree first and decoding each element
+        // from it cost twice as much, and this runs while the app starts
+        // (seconds with 10,000 servers). The slower path below is only for
+        // a file holding entries this build cannot read.
+        runCatching { json.decodeFromString(ListSerializer(ProxyConfiguration.serializer()), text) }
+            .getOrNull()
+            ?.let {
+                undecodable = emptyList()
+                // Written pretty by builds before 1.0.2: rewrite it compact once.
+                rewriteCompact = text.length > 1 && text[1] == '\n'
+                return it
+            }
         return runCatching {
-            val array = json.parseToJsonElement(file.readText()).jsonArray
+            val array = json.parseToJsonElement(text).jsonArray
             val kept = mutableListOf<JsonElement>()
             val decoded = array.mapNotNull { element ->
                 runCatching {
@@ -125,9 +152,6 @@ class ConfigRepository(context: Context) {
             emptyList()
         }
     }
-
-    /** Set while a save is queued; mutations meanwhile ride on it. */
-    private val saveQueued = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * Writes the store on the writer thread.
