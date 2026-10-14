@@ -1,0 +1,13 @@
+# Vendored third-party C sources: kept out of the language statistics and
+# collapsed in diffs. The project's own JNI bridges stay counted.
+app/src/main/jni/blake3/** linguist-vendored
+app/src/main/jni/libyaml/** linguist-vendored
+app/src/main/jni/lwip/** linguist-vendored
+app/src/main/jni/mbedtls/** linguist-vendored
+app/src/main/jni/ngtcp2/** linguist-vendored
+app/src/main/jni/compat/** linguist-vendored
+
+# Generated and binary data.
+app/src/main/assets/Rules.db binary linguist-generated
+gradlew linguist-vendored
+gradlew.bat linguist-vendored

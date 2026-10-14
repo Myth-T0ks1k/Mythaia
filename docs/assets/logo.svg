@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Mythaia">
+  <rect width="256" height="256" rx="58" fill="#24548F"/>
+  <g transform="translate(26 26) scale(2.04)" fill="none" stroke="#F6F3EC" stroke-linecap="round">
+    <path d="M20 82 Q21 32 82 20" stroke-width="8.5"/>
+    <path d="M20 82 Q29 47 69 38" stroke-width="8"/>
+    <path d="M20 82 Q36 61 57 55" stroke-width="7.5"/>
+  </g>
+</svg>

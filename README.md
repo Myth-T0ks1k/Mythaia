@@ -1,108 +1,180 @@
 <div align="center">
 
-# Mythaia Pro for Android
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+  <img alt="Mythaia — Reach anywhere." src="docs/assets/banner-light.svg" width="100%">
+</picture>
 
-**Reach anywhere.**
+<br>
 
-Mythaia takes its name and mark from Hermes' winged sandal — the WingMark is
-three feather strokes fanning out from a single point: one origin, every
-direction. The app is a native, zero-dependency proxy client built entirely in
-Kotlin, wrapped in a calm, papery, editorial interface — bone and paper
-surfaces, ink text, a single azure accent.
+[![Release](https://img.shields.io/github/v/release/Myth-T0ks1k/Mythaia?style=flat-square&color=24548F&label=release)](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Myth-T0ks1k/Mythaia/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Myth-T0ks1k/Mythaia/actions/workflows/ci.yml)
+[![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#download)
+[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#download)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](LICENSE.txt)
 
-No Electron. No WebView. No sing-box wrapper. Pure protocol implementation from the ground up.
+**English** · [Русский](docs/readme/README.ru.md) · [Türkmençe](docs/readme/README.tk.md) · [简体中文](docs/readme/README.zh-CN.md) · [فارسی](docs/readme/README.fa.md)
+
+[Download](#download) · [Features](#features) · [Fronting in one link](#fronting-in-one-link) · [Build](#building-from-source) · [Changelog](CHANGELOG.md)
 
 </div>
 
 ---
 
-## Why Mythaia?
+Mythaia is a proxy client for **Android** and **Windows** with its own protocol stack, written from
+the ground up in Kotlin. It speaks VLESS with Reality, Hysteria2, TUIC, Trojan, Shadowsocks,
+WireGuard and more without wrapping Xray-core or sing-box, and it is built for networks that filter
+hard: domain fronting, ClientHello fragmentation, ECH, automatic server selection and a country
+bypass are part of the app, not add-ons.
 
-Most Android proxy clients wrap sing-box or Xray-core in a Go/C++ bridge. Mythaia implements the protocol, transport, and routing layers directly in Kotlin, and calls into a small set of vendored C libraries (lwIP, BLAKE3, libyaml) through JNI for the parts that benefit from native code. The result is a smaller binary, lower memory usage, and no Go runtime overhead.
+<div align="center">
+  <img src="docs/assets/screenshots/home.png" width="24%" alt="Home screen, connected">
+  <img src="docs/assets/screenshots/proxies.png" width="24%" alt="Servers of a subscription">
+  <img src="docs/assets/screenshots/add-fronting.png" width="24%" alt="Adding a subscription with fronting">
+  <img src="docs/assets/screenshots/settings.png" width="24%" alt="Settings">
+</div>
+
+## Why Mythaia
+
+- **One native stack.** Protocols, transports, TLS and routing are Kotlin. A few small vendored C
+  libraries (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) cover what native code does best. No Go runtime, no
+  bridge, a small APK.
+- **Two platforms, one core.** The Android and Windows apps share the same `core` module, so a
+  link, a subscription or a fix behaves the same on both.
+- **Made for filtered networks.** Subscriptions download through a front, servers are re-measured
+  and switched automatically, local traffic stays local, and insecure settings are spelled out in
+  red rather than hidden.
 
 ## Features
 
-### Protocols & Security
+| | |
+|---|---|
+| **Protocols** | VLESS (Vision, Reality, ML-KEM encryption), VMess, Trojan, Shadowsocks (AEAD and 2022), Hysteria2 (Salamander, Brutal), TUIC v5, AnyTLS, NaiveProxy (HTTP/1.1, HTTP/2), WireGuard, SOCKS5, Sudoku |
+| **Transports** | TCP, WebSocket with early data, HTTPUpgrade, gRPC, XHTTP (stream-one, stream-up, packet-up), QUIC |
+| **TLS** | Browser fingerprints (Chrome, Firefox, Safari, iOS, Edge), Reality, ECH, ClientHello fragmentation, certificate pinning, per-server *allow insecure* with a visible warning |
+| **Routing** | Rule and global modes, rule sets by domain, IP and GeoIP, country bypass, per-app split tunnelling, ad blocking, Fake-IP DNS, DNS over HTTPS and TLS, IPv6 |
+| **Servers** | Share links, QR codes, Clash YAML, Xray and sing-box JSON, proxy chains, Mux with XUDP, latency by TCP, handshake or a real HTTP request |
+| **Subscriptions** | Usage and expiry from the panel, auto refresh, provider announcements, Remnawave HWID, **domain fronting for the download** |
+| **Auto** | Picks the fastest server of a group, keeps re-measuring and moves only for a clear gain; reconnects on its own when a server is blocked |
+| **Android** | Quick Settings tile, home-screen widget, Always-on VPN, Android TV, Wear OS companion, HTTPS interception with your own CA, 9 languages |
+| **Windows** | System-proxy mode (SOCKS5 and HTTP on one port) or full TUN mode over Wintun, tray icon, the same servers, subscriptions and Auto |
 
-- **VLESS** with full Vision (XTLS-RPRX-Vision) flow control and adaptive padding
-- **Trojan** over TLS with UDP-over-TCP relay
-- **Shadowsocks** (AEAD and Shadowsocks 2022)
-- **SOCKS5** with optional authentication
-- **Naive Proxy** (HTTP/1.1, HTTP/2) with padding negotiation
-- **Reality** with X25519 key exchange and TLS 1.3 fingerprint spoofing
-- **TLS** with SNI, ALPN, custom trusted certificates, and optional insecure mode
-- **Transports:** TCP, WebSocket (with early data), HTTP Upgrade, gRPC, XHTTP (stream-one, stream-up, and packet-up over HTTP/1.1 and HTTP/2)
-- **Mux** multiplexing with **XUDP** (GlobalID-based, BLAKE3 keyed hashing)
-- **Fingerprints:** Chrome, Firefox, Safari, iOS, Edge
+## Download
 
-### App
+Get the latest build from **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)**.
 
-- **ASR™ Smart Routing** — reduce latency while routing through proxy on demand
-- **One-tap connect** with animated status UI and real-time traffic stats
-- **Proxy chains** — cascade traffic through multiple outbounds
-- **Subscription import** with auto-detection, auto-refresh, and profile metadata
-- **Deep link support** for quick proxy/subscription import
-- **QR code scanner** for instant config import
-- **Latency testing** per-configuration
-- **Custom routing rule sets** with domain/IP/GeoIP matching (MaxMind GeoLite2)
-- **Country bypass** — exclude traffic by destination country
-- **Built-in ad blocking** rule set
-- **Encrypted DNS** (DNS-over-HTTPS, DNS-over-TLS) with auto-upgrade
-- **IPv6** support with configurable behavior
-- **Always On** / on-demand VPN
-- **Trusted certificate** management for private CAs
-- **Xray-core compatible** — works with standard V2Ray/Xray server deployments
+| Platform | File | Notes |
+|---|---|---|
+| Android | `Mythaia-1.0.0-android-universal.apk` | Every device: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.0.0-android-arm64-v8a.apk` | Smaller, for modern phones |
+| Wear OS | `Mythaia-1.0.0-wear-os.apk` | Companion for the phone app, Wear OS 3 or newer |
+| Windows | `Mythaia-Pro-1.0.0-windows-x64-setup.exe` | Installer, per user, no administrator rights needed |
+| Windows | `Mythaia-Pro-1.0.0-windows-x64.msi` | The same as an MSI package |
+| Windows | `Mythaia-Pro-1.0.0-windows-x64-portable.zip` | Unzip anywhere and run `Mythaia Pro.exe` |
 
-### Architecture
+Every release lists the SHA-256 of each file in `SHA256SUMS.txt`. Android 8.0 or newer and
+Windows 10 or 11 (x64) are required; TUN mode on Windows asks for administrator rights.
 
-- **Minimal dependencies** — Android frameworks, vendored C libraries (lwIP, blake3, libyaml)
-- **Native VPN Service** — system-wide VPN via `VpnService` with a userspace TCP/IP stack
-- **Fake-IP DNS** — transparent domain-based routing for all apps
-- **Vendored native code** — lwIP (TCP/IP), BLAKE3 (keyed hashing), libyaml (Clash parsing); bundled into a single native library
-- **Jetpack Compose** UI with Material 3 and the Mythaia "Wing" theme
-- **arm64-v8a** native binaries
+## Fronting in one link
 
-## Getting Started
+A panel whose domain is blocked can often still be reached through a CDN that is not. Mythaia
+downloads the subscription by connecting to the **front** (a CDN address or another domain on it),
+sending an innocent **SNI** in the TLS handshake and the panel's real name in the HTTP `Host`
+header.
 
-### Build from Source
+The fronting can travel inside the link, so whoever you share it with adds the subscription in one
+step, with nothing to type:
 
-```bash
-git clone <your-fork-url>
-cd mythaia-android
+```text
+https://panel.example.com/sub/TOKEN#front=104.16.1.1,cdn.example.net:443&sni=www.example.org
 ```
 
-Open the project in Android Studio, sync Gradle, select the `app` configuration, choose your device, and hit Run. Building a release requires a signing keystore configured via `local.properties` (`KEYSTORE_FILE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).
-
-### Mythaia Pro for Windows
-
-The same protocol stack runs as a Windows desktop app (`desktop/`, Compose for
-Desktop) on top of the shared `core` module. It works in system-proxy mode:
-a local SOCKS5 and HTTP proxy (both ports accept either protocol; SOCKS5 UDP
-ASSOCIATE included) is routed by rule or global mode and dialled through the
-selected server; while connected, the Windows system proxy points at it and
-is put back on disconnect. Auto picks the fastest server by real ping and
-keeps rechecking, as on Android.
-
-Build steps, on a machine with Visual Studio 2022 (MSVC, CMake, Ninja) and a
-JDK 21 that ships `jmods` (the path goes in `local.properties` as `desktop.jdk`):
-
-```bash
-desktop
-ativeuild.cmd
-./gradlew :desktop:createDistributable
+```text
+mythaia://import?url=https%3A%2F%2Fpanel.example.com%2Fsub%2FTOKEN&front=104.16.1.1&sni=www.example.org
 ```
 
-The app image lands in `desktop/build/compose/binaries/main/app/Mythaia Pro/`;
-run `Mythaia Pro.exe` from there. With WiX 3.14 on the PATH (unzip
-`wix314-binaries.zip` into `desktop/tools/wix314`), `:desktop:packageMsi` and
-`:desktop:packageExe` produce installers. `./gradlew :desktop:run` starts it
-from sources. Data lives in `%APPDATA%\Mythaia`. Links (`vless://` …,
-`mythaia://add-proxy?link=`), Xray JSON and QR codes on screen import; the
-server table sorts and batch-selects; chains, the full server editor,
-subscription auto-update and a status bar are there. Not yet on Windows:
-WireGuard.
+| Parameter | Meaning |
+|---|---|
+| `front` | Hosts actually dialled: an IP or a domain, optionally with `:port` (IPv6 as `[addr]:port`). Separate them with commas or repeat the key; they are tried in order. |
+| `sni` | The name sent in the TLS handshake (`front-sni` works too). With `sni` alone, the panel's own address is dialled under that name. |
+| `name` | Optional name for the group. |
+
+- The first form is an ordinary URL: the part after `#` never reaches the panel, so the same link
+  still works in other clients.
+- The second form opens Mythaia straight from a browser or a messenger.
+- Pasting, scanning or opening either form fills in the **Fronting** fields of the Add sheet, so
+  you can check them before anything is downloaded.
+- **Subscription settings → Copy link with fronting** turns a subscription you already have into such a
+  link, on Android and on Windows.
+
+## Building from source
+
+**Requirements:** JDK 21 and the Android SDK with platform 36. The NDK and CMake are installed by
+the Android Gradle Plugin on the first build.
+
+```bash
+git clone https://github.com/Myth-T0ks1k/Mythaia.git
+cd Mythaia
+./gradlew :app:assembleDebug                  # Android debug APK
+./gradlew :core:test :app:testDebugUnitTest   # unit tests
+```
+
+Release builds are signed with your own key. Put these lines in `local.properties`, which is never
+committed, or set them as environment variables:
+
+```properties
+KEYSTORE_FILE=/path/to/release.jks
+KEYSTORE_PASSWORD=...
+KEY_ALIAS=...
+KEY_PASSWORD=...
+```
+
+`./gradlew :app:assembleRelease` builds an arm64 APK; add `-Pmythaia.universal=true` for every ABI.
+
+<details>
+<summary><b>Windows app</b></summary>
+
+<br>
+
+The native library needs Visual Studio 2022 with MSVC, CMake and Ninja; packaging needs a JDK 21
+that ships `jmods`, whose path goes into `local.properties` as `desktop.jdk`.
+
+```bat
+desktop\native\build.cmd
+gradlew :desktop:run
+gradlew :desktop:packageExe :desktop:packageMsi
+```
+
+The installers need WiX 3.14 on the `PATH`. User data lives in `%APPDATA%\Mythaia`.
+
+</details>
+
+## Project layout
+
+| Module | What it is |
+|---|---|
+| [`core`](core) | Platform-free Kotlin: models, share links, subscriptions, every protocol and the TLS stack |
+| [`app`](app) | Android app: Jetpack Compose UI, `VpnService` and an lwIP-based userspace TCP/IP stack |
+| [`wear`](wear) | Wear OS companion: connection status and a one-tap toggle |
+| [`desktop`](desktop) | Windows app: Compose for Desktop, system-proxy and Wintun TUN engines |
+
+The `core` module is also published to
+[GitHub Packages](https://github.com/Myth-T0ks1k?tab=packages&repo_name=Mythaia) as
+`com.mythaia:mythaia-core`.
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md)
+first, and report security problems privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-Mythaia is distributed under the **GNU General Public License v3.0** — see
-[LICENSE.txt](LICENSE.txt).
+Mythaia is free software under the [GNU General Public License v3.0](LICENSE.txt).
+
+It builds on Anywhere by NodePassProject (GPL-3.0) and includes
+[lwIP](https://savannah.nongnu.org/projects/lwip/), [BLAKE3](https://github.com/BLAKE3-team/BLAKE3),
+[libyaml](https://github.com/yaml/libyaml), [ngtcp2](https://github.com/ngtcp2/ngtcp2), [Mbed TLS](https://github.com/Mbed-TLS/mbedtls),
+[Wintun](https://www.wintun.net), [Bouncy Castle](https://www.bouncycastle.org) and
+[Brotli](https://github.com/google/brotli) under their own licenses. Product names in the routing
+rule sets belong to their owners.

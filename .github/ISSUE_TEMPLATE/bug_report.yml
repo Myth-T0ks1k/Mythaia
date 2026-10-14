@@ -1,0 +1,82 @@
+name: Bug report
+description: Something does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem.
+        **Remove server addresses, UUIDs, passwords and subscription URLs** from everything you paste below.
+        Security issues go through [private reporting](https://github.com/Myth-T0ks1k/Mythaia/security/advisories/new), not here.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - Android TV
+        - Wear OS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Mythaia version
+      description: On Android, system Settings → Apps → Mythaia Pro; on Windows, the Settings screen.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS version
+      placeholder: "Android 14, Pixel 7 / Windows 11 23H2"
+    validations:
+      required: true
+  - type: input
+    id: protocol
+    attributes:
+      label: Protocol and transport
+      description: What the server speaks, if the problem is about a connection.
+      placeholder: "VLESS + Reality + XHTTP"
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Routing mode
+      options:
+        - Rule
+        - Global
+        - Not relevant
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a subscription with …
+        2. Connect in rule mode
+        3. Open …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Settings → Logs on Android, `%APPDATA%\Mythaia\logs` on Windows.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I removed server addresses, UUIDs, passwords and subscription URLs from this report.
+          required: true
