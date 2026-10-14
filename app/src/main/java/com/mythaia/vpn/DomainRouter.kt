@@ -113,8 +113,15 @@ class DomainRouter(private val context: Context) {
     /**
      * Reads routing descriptor from `filesDir/routing.json`, inserts country-bypass
      * rules first as [RouteAction.Direct], then user rules that overwrite on conflict.
+     *
+     * [bypassOnly] is global mode: the user's rules and their configurations
+     * stay out (everything goes through the proxy), but the country bypass is
+     * still loaded — the home country's own addresses never belong on the
+     * proxy. Global mode used to skip this file altogether, so the bypass
+     * lookups it relies on always came back empty and every Turkmen address
+     * went through the VPN.
      */
-    fun loadRoutingConfiguration() {
+    fun loadRoutingConfiguration(bypassOnly: Boolean = false) {
         reset()
 
         // Opened here so a database imported since the last load is picked up
@@ -176,6 +183,7 @@ class DomainRouter(private val context: Context) {
         if (bypassDomainCount > 0 || bypassIPCount > 0) {
             logger.debug("[DomainRouter] Loaded $bypassDomainCount bypass domain rules, $bypassIPCount bypass IP rules")
         }
+        if (bypassOnly) return
 
         // Configurations
         jsonObj.optJSONObject("configs")?.let { configs ->

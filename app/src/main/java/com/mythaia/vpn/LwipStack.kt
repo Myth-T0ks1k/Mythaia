@@ -367,15 +367,35 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     }
 
     private fun loadRoutingConfigurationForMode() {
-        if (proxyMode == "global") {
-            domainRouter.reset()
-            // Global mode skips the routing load, but MITM interception is gated
-            // independently of proxy mode, so prime the store here too or a
-            // UI-less global-mode start would never pick up a configured CA/rules.
-            domainRouter.primeMitmStore()
-        } else {
-            domainRouter.loadRoutingConfiguration()
+        // Global mode loads only the country bypass (the user's rules do not
+        // apply there); the load primes the MITM store either way.
+        domainRouter.loadRoutingConfiguration(bypassOnly = proxyMode == "global")
+        bypassAnsweredIps.clear()
+    }
+
+    /**
+     * Addresses this tunnel's DNS handed out for country-bypass names, with
+     * when they stop counting. Such a name gets its real address instead of a
+     * fake one, so the connection that follows arrives by IP and the name is
+     * gone; without this, a `.tm` site hosted outside the country's ranges
+     * went through the proxy unless its SNI could be read (plain HTTP, QUIC).
+     */
+    private val bypassAnsweredIps = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun rememberBypassAnswer(ip: String) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (bypassAnsweredIps.size >= MAX_BYPASS_ANSWERS) {
+            bypassAnsweredIps.entries.removeIf { it.value < now }
+            if (bypassAnsweredIps.size >= MAX_BYPASS_ANSWERS) bypassAnsweredIps.clear()
         }
+        bypassAnsweredIps[ip] = now + BYPASS_ANSWER_TTL_MS
+    }
+
+    /** Whether [ip] is a country-bypass address: in the bypass ranges, or one our DNS gave a bypass name. */
+    private fun isBypassAddress(ip: String): Boolean {
+        if (domainRouter.isBypassIp(ip)) return true
+        val until = bypassAnsweredIps[ip] ?: return false
+        return until > android.os.SystemClock.elapsedRealtime()
     }
 
     /**
@@ -1061,7 +1081,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 // In global mode, skip IP routing rules — all traffic goes
                 // through the proxy, except the home country's own ranges.
                 if (proxyMode == "global") {
-                    if (domainRouter.isBypassIp(dstIpString)) forceBypass = true
+                    if (isBypassAddress(dstIpString)) forceBypass = true
+                } else if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
+                    // A bypass name answered with its real address: no rule names
+                    // this IP, but the name it came from goes direct.
+                    forceBypass = true
                 } else {
                     domainRouter.matchIP(dstIpString)?.let { action ->
                         when (action) {
@@ -1092,6 +1116,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             }
             FakeIpResolution.Drop, FakeIpResolution.Unreachable -> return 0L
         }
+
+        // One line per connection in debug builds: whether a country or rule
+        // bypass caught it is otherwise invisible from the outside.
+        logger.debug("[TCP] $dstIpString:$dstPort ($dstHost) -> ${if (forceBypass) "direct" else "proxy"} [$proxyMode]")
 
         val connId = nextConnId.getAndIncrement()
         val connection = LwipTcpConnection(
@@ -1186,7 +1214,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 // In global mode, skip IP routing rules — all traffic goes
                 // through the proxy, except the home country's own ranges.
                 if (proxyMode == "global") {
-                    if (domainRouter.isBypassIp(dstIpString)) forceBypass = true
+                    if (isBypassAddress(dstIpString)) forceBypass = true
+                } else if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
+                    // A bypass name answered with its real address: no rule names
+                    // this IP, but the name it came from goes direct.
+                    forceBypass = true
                 } else {
                     domainRouter.matchIP(dstIpString)?.let { action ->
                         when (action) {
@@ -1230,6 +1262,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             return
         }
 
+        logger.debug("[UDP] $dstIpString:$dstPort -> ${if (forceBypass) "direct" else "proxy"} [$proxyMode]")
         val flow = LwipUdpFlow(
             flowKey = flowKey,
             srcHost = srcHost, srcPort = srcPort,
@@ -1349,6 +1382,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 val bytes = chosen?.let { runCatching { InetAddress.getByName(it).address }.getOrNull() }
                     ?.takeIf { it.size == (if (wantV6) 16 else 4) }
                 val response = PacketUtil.generateDnsResponse(payload, bytes, qtype) ?: return@execute
+                if (chosen != null && domainRouter.isBypassDomain(domain)) rememberBypassAnswer(chosen)
                 lwipExecutor.execute {
                     if (!running) return@execute
                     NativeBridge.nativeUdpSendto(dstIp, dstPort, srcIp, srcPort, isIpv6, response, response.size)
@@ -1491,6 +1525,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
     companion object {
         private val logger = MythaiaLogger("LWIPStack")
+        /** How long an address our DNS gave a bypass name keeps routing direct. */
+        private const val BYPASS_ANSWER_TTL_MS = 30 * 60 * 1000L
+        private const val MAX_BYPASS_ANSWERS = 4096
         private const val MAX_PACKET_POOL_SIZE = 256
         // Kept in sync with lwipopts.h MEMP_NUM_TCP_PCB (512). A PCB is small,
         // so a higher ceiling costs little and avoids silently RST'ing the
