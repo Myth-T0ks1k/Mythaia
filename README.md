@@ -66,12 +66,12 @@ Get the latest build from **[Releases](https://github.com/Myth-T0ks1k/Mythaia/re
 
 | Platform | File | Notes |
 |---|---|---|
-| Android | `Mythaia-1.0.1-android-universal.apk` | Every device: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.0.1-android-arm64-v8a.apk` | Smaller, for modern phones |
-| Wear OS | `Mythaia-1.0.1-wear-os.apk` | Companion for the phone app, Wear OS 3 or newer |
-| Windows | `Mythaia-Pro-1.0.1-windows-x64-setup.exe` | Installer, per user, no administrator rights needed |
-| Windows | `Mythaia-Pro-1.0.1-windows-x64.msi` | The same as an MSI package |
-| Windows | `Mythaia-Pro-1.0.1-windows-x64-portable.zip` | Unzip anywhere and run `Mythaia Pro.exe` |
+| Android | `Mythaia-1.0.2-android-universal.apk` | Every device: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.0.2-android-arm64-v8a.apk` | Smaller, for modern phones |
+| Wear OS | `Mythaia-1.0.2-wear-os.apk` | Companion for the phone app, Wear OS 3 or newer |
+| Windows | `Mythaia-Pro-1.0.2-windows-x64-setup.exe` | Installer, per user, no administrator rights needed |
+| Windows | `Mythaia-Pro-1.0.2-windows-x64.msi` | The same as an MSI package |
+| Windows | `Mythaia-Pro-1.0.2-windows-x64-portable.zip` | Unzip anywhere and run `Mythaia Pro.exe` |
 
 Every release lists the SHA-256 of each file in `SHA256SUMS.txt`. Android 8.0 or newer and
 Windows 10 or 11 (x64) are required; TUN mode on Windows asks for administrator rights.

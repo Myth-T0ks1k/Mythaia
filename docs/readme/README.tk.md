@@ -66,12 +66,12 @@ Iň täze wersiýa **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/
 
 | Platforma | Faýl | Bellik |
 |---|---|---|
-| Android | `Mythaia-1.0.1-android-universal.apk` | Islendik enjam üçin: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.0.1-android-arm64-v8a.apk` | Has ýeňil, häzirki zaman telefonlary üçin |
-| Wear OS | `Mythaia-1.0.1-wear-os.apk` | Telefon programmasyna goşmaça, Wear OS 3 we täzesi |
-| Windows | `Mythaia-Pro-1.0.1-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
-| Windows | `Mythaia-Pro-1.0.1-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
-| Windows | `Mythaia-Pro-1.0.1-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
+| Android | `Mythaia-1.0.2-android-universal.apk` | Islendik enjam üçin: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.0.2-android-arm64-v8a.apk` | Has ýeňil, häzirki zaman telefonlary üçin |
+| Wear OS | `Mythaia-1.0.2-wear-os.apk` | Telefon programmasyna goşmaça, Wear OS 3 we täzesi |
+| Windows | `Mythaia-Pro-1.0.2-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
+| Windows | `Mythaia-Pro-1.0.2-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
+| Windows | `Mythaia-Pro-1.0.2-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
 
 Her neşirde ähli faýllaryň SHA-256 jemleri bilen `SHA256SUMS.txt` bar. Android 8.0 ýa-da täzesi we
 Windows 10 ýa-da 11 (x64) gerek; TUN režimi üçin Windows administrator hukuklaryny sorar.

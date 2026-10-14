@@ -4,6 +4,36 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-10-15
+
+Bulk server lists: tested with a subscription of 10,000 servers.
+
+### Fixed
+
+- **Auto and “Test all” no longer freeze the app** on a big group. Results used to be copied into
+  the latency map one server at a time on the main thread, which turned 10,000 servers into an
+  “isn't responding” dialog; they now land in batches.
+- **Auto measures at most 48 servers per round**: the live one, the fastest of late and a random
+  share of the rest, so successive rounds still reach every server. A round of 10,000 used to take
+  hours, and recovering from a blocked server waited for all of it.
+- **Latency tests close what they open.** Hysteria2, TUIC, AnyTLS, NaiveProxy and Nowhere tests
+  left a pooled connection (with its threads and socket) per server; testing thousands of them
+  could run the app out of threads and memory. The live tunnel's connection is never touched.
+- **Pasting thousands of links** or an Xray JSON with thousands of outbounds is processed in linear
+  time and saved in one write, and the Add sheet no longer crashes when it goes to the background
+  holding a huge paste.
+- **The server store** is saved off the main thread, once per burst of changes, in a compact file,
+  and loaded in a single pass: the app starts several times faster with a big list.
+- **Refreshing a big subscription** merges the servers in linear time, off the main thread.
+- **Routing rules** pick their server from a searchable list that only draws what is on screen.
+- A subscription link's `name` works without fronting too.
+
+### Security
+
+- **Only the live server goes around the tunnel.** Every server ever measured used to, so with a
+  big CDN-fronted subscription the CDN's shared addresses — and other websites behind them — left
+  the tunnel unencrypted.
+
 ## [1.0.1] — 2026-10-15
 
 ### Fixed
@@ -58,5 +88,6 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[1.0.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Myth-T0ks1k/Mythaia/releases/tag/v1.0.0
