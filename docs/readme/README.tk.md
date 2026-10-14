@@ -90,7 +90,7 @@ https://panel.example.com/sub/TOKEN#front=104.16.1.1,cdn.example.net:443&sni=www
 ```
 
 ```text
-mythaia://import?url=https%3A%2F%2Fpanel.example.com%2Fsub%2FTOKEN&front=104.16.1.1&sni=www.example.org
+mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=www.example.org
 ```
 
 | Parametr | Manysy |
