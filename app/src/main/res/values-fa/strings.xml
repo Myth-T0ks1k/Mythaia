@@ -366,7 +366,9 @@
     <string name="group_settings">تنظیمات اشتراک</string>
     <string name="fronting">فرانتینگ</string>
     <string name="front_targets">اهداف (هر خط یکی)</string>
-    <string name="fronting_hint">اشتراک با اتصال به این میزبان‌ها به جای میزبان لینک دانلود می‌شود و SNI بالا در هندشیک TLS استفاده می‌شود. برای پنل‌هایی که دامنه‌شان مسدود است اما CDN آن‌ها نه.</string>
+    <string name="fronting_hint">اشتراک با اتصال به این میزبان‌ها به جای میزبان لینک دانلود می‌شود و SNI پایین در هندشیک TLS استفاده می‌شود. برای پنل‌هایی که دامنه‌شان مسدود است اما CDN آن‌ها نه.</string>
+    <string name="fronting_link_hint">فرانتینگ را می‌توان در خود لینک هم گذاشت: ‎#front=1.2.3.4&amp;sni=example.org را به آدرس اضافه کنید یا یک لینک mythaia://import باز کنید.</string>
+    <string name="copy_fronted_link">کپی لینک همراه با فرانتینگ</string>
     <string name="no_servers_in_group">هنوز سروری در این گروه نیست.</string>
 
     <string name="no_connectivity">متصل · از این سرور اینترنتی نیست</string>

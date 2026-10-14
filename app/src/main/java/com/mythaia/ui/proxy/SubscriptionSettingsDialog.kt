@@ -1,5 +1,7 @@
 package com.mythaia.ui.proxy
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -41,6 +44,7 @@ fun SubscriptionSettingsDialog(
     var name by remember(subscription.id) { mutableStateOf(subscription.name) }
     var sni by remember(subscription.id) { mutableStateOf(subscription.frontSni ?: "") }
     var targets by remember(subscription.id) { mutableStateOf(subscription.frontTargets.joinToString("\n")) }
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -96,6 +100,29 @@ fun SubscriptionSettingsDialog(
                     textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                     modifier = Modifier.fillMaxWidth()
                 )
+                // One link with the fronting in it, for another phone: opening
+                // it adds the subscription already fronted.
+                val targetList = targets.split('\n', ',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+                if (targetList.isNotEmpty() || sni.isNotBlank()) {
+                    TextButton(
+                        onClick = {
+                            val link = com.mythaia.data.network.SubscriptionLink(
+                                url = subscription.url,
+                                frontSni = sni.trim().takeIf { it.isNotEmpty() },
+                                frontTargets = targetList
+                            ).toAppLink()
+                            val clip = ClipData.newPlainText("subscription_url", link)
+                            // The link holds the account's token.
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                clip.description.extras = android.os.PersistableBundle().apply {
+                                    putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                                }
+                            }
+                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+                        },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) { Text(stringResource(R.string.copy_fronted_link)) }
+                }
             }
         },
         confirmButton = {

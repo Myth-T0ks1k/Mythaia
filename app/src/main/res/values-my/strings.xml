@@ -362,7 +362,9 @@
     <string name="group_settings">စာရင်းသွင်းမှု ဆက်တင်</string>
     <string name="fronting">Fronting</string>
     <string name="front_targets">ပစ်မှတ်များ (တစ်ကြောင်းတစ်ခု)</string>
-    <string name="fronting_hint">လင့်ခ်၏ host အစား ဤ host များကို ချိတ်ဆက်ပြီး TLS handshake တွင် အထက်ပါ SNI သုံး၍ စာရင်းသွင်းမှုကို ဒေါင်းလုဒ်ဆွဲသည်။ ဒိုမိန်း ပိတ်ထားသော်လည်း CDN မပိတ်သော panel များအတွက်။</string>
+    <string name="fronting_hint">လင့်ခ်၏ host အစား ဤ host များကို ချိတ်ဆက်ပြီး TLS handshake တွင် အောက်ပါ SNI သုံး၍ စာရင်းသွင်းမှုကို ဒေါင်းလုဒ်ဆွဲသည်။ ဒိုမိန်း ပိတ်ထားသော်လည်း CDN မပိတ်သော panel များအတွက်။</string>
+    <string name="fronting_link_hint">Fronting ကို လင့်ခ်ထဲတွင်လည်း ထည့်နိုင်သည်- URL နောက်တွင် #front=1.2.3.4&amp;sni=example.org ထည့်ပါ သို့မဟုတ် mythaia://import လင့်ခ်ကို ဖွင့်ပါ။</string>
+    <string name="copy_fronted_link">Fronting ပါသော လင့်ခ်ကို ကူးယူရန်</string>
     <string name="no_servers_in_group">ဤအုပ်စုတွင် ဆာဗာ မရှိသေးပါ။</string>
 
     <string name="no_connectivity">ချိတ်ဆက်ပြီး · ဤဆာဗာမှ အင်တာနက် မရ</string>

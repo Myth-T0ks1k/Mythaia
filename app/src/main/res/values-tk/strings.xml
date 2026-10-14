@@ -366,7 +366,9 @@
     <string name="group_settings">Abuna sazlamalary</string>
     <string name="fronting">Fronting</string>
     <string name="front_targets">Maksatlar (her setirde biri)</string>
-    <string name="fronting_hint">Abuna baglanyşygyň öz hostuna däl-de, şu hostlara birigip, TLS handshake-de ýokardaky SNI bilen ýüklenýär. Domeni petiklenen, ýöne CDN-i petiklenmedik paneller üçin.</string>
+    <string name="fronting_hint">Abuna baglanyşygyň öz hostuna däl-de, şu hostlara birigip, TLS handshake-de aşakdaky SNI bilen ýüklenýär. Domeni petiklenen, ýöne CDN-i petiklenmedik paneller üçin.</string>
+    <string name="fronting_link_hint">Fronting salgynyň özünde hem berlip bilner: salga #front=1.2.3.4&amp;sni=example.org goşuň ýa-da mythaia://import salgysyny açyň.</string>
+    <string name="copy_fronted_link">Fronting bilen salgyny göçür</string>
     <string name="no_servers_in_group">Bu toparda entek serwer ýok.</string>
 
     <string name="no_connectivity">Baglanyldy · bu serwer arkaly internet ýok</string>

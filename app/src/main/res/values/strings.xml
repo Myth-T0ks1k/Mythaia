@@ -392,7 +392,9 @@
     <string name="fronting">Fronting</string>
     <string name="front_sni" translatable="false">SNI</string>
     <string name="front_targets">Targets (one per line)</string>
-    <string name="fronting_hint">The subscription is downloaded by connecting to these hosts instead of the link\'s own, with the SNI above in the TLS handshake. For panels whose domain is blocked but whose CDN is not.</string>
+    <string name="fronting_hint">The subscription is downloaded by connecting to these hosts instead of the link\'s own, with the SNI below in the TLS handshake. For panels whose domain is blocked but whose CDN is not.</string>
+    <string name="fronting_link_hint">Fronting can also come in the link itself: add #front=1.2.3.4&amp;sni=example.org to the URL, or open a mythaia://import link.</string>
+    <string name="copy_fronted_link">Copy link with fronting</string>
     <string name="no_servers_in_group">No servers in this group yet.</string>
 
     <!-- Connectivity and settings sheet -->

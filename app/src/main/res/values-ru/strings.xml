@@ -375,6 +375,8 @@
     <string name="fronting">Фронтинг</string>
     <string name="front_targets">Target-адреса (по одному в строке)</string>
     <string name="fronting_hint">Подписка скачивается через подключение к этим адресам вместо хоста из ссылки, с указанным SNI в TLS. Для панелей, чей домен заблокирован, а CDN нет.</string>
+    <string name="fronting_link_hint">Фронтинг можно передать прямо в ссылке: допишите к ней #front=1.2.3.4&amp;sni=example.org или откройте ссылку mythaia://import.</string>
+    <string name="copy_fronted_link">Скопировать ссылку с фронтингом</string>
     <string name="no_servers_in_group">В этой группе пока нет серверов.</string>
 
     <string name="no_connectivity">Подключено · через этот сервер нет интернета</string>

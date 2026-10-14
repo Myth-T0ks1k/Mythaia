@@ -775,10 +775,14 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val added = mutableListOf<ProxyConfiguration>()
-        val subscriptionUrls = mutableListOf<String>()
+        val subscriptionUrls = mutableListOf<com.mythaia.data.network.SubscriptionLink>()
         for (line in lines) {
-            if (isSubscriptionUrl(line)) {
-                subscriptionUrls += line
+            // A subscription, possibly with its fronting written in
+            // (`…#front=…&sni=…` or mythaia://import?url=…&front=…).
+            if (isSubscriptionUrl(line) || line.startsWith("mythaia://import?", ignoreCase = true)) {
+                com.mythaia.data.network.SubscriptionLink.parse(line)
+                    ?.takeIf { isSubscriptionUrl(it.url) }
+                    ?.let { subscriptionUrls += it }
                 continue
             }
             if (!ProxyConfiguration.canParseUrl(line)) continue
@@ -790,7 +794,15 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             mutateConfigurations { it + added }
             notify(tr("added_n", added.size))
         }
-        subscriptionUrls.forEach { addSubscription(it, subscriptionName, frontSni, frontTargets) }
+        // What the dialog's fields say wins; the link fills what they leave empty.
+        subscriptionUrls.forEach { link ->
+            addSubscription(
+                url = link.url,
+                name = subscriptionName?.takeIf { it.isNotBlank() } ?: link.name,
+                frontSni = frontSni?.takeIf { it.isNotBlank() } ?: link.frontSni,
+                frontTargets = frontTargets.ifEmpty { link.frontTargets }
+            )
+        }
         if (added.isEmpty() && subscriptionUrls.isEmpty()) notify(tr("nothing_parsed"))
     }
 

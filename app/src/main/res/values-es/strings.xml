@@ -371,6 +371,8 @@
     <string name="fronting">Fronting</string>
     <string name="front_targets">Destinos (uno por línea)</string>
     <string name="fronting_hint">La suscripción se descarga conectando a estos hosts en lugar del de la URL, con el SNI indicado en el handshake TLS. Para paneles cuyo dominio está bloqueado pero su CDN no.</string>
+    <string name="fronting_link_hint">El fronting también puede ir en el propio enlace: añade #front=1.2.3.4&amp;sni=example.org a la URL o abre un enlace mythaia://import.</string>
+    <string name="copy_fronted_link">Copiar enlace con fronting</string>
     <string name="no_servers_in_group">Aún no hay servidores en este grupo.</string>
 
     <string name="no_connectivity">Conectado · sin internet a través de este servidor</string>

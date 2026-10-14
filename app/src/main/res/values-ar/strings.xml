@@ -382,7 +382,9 @@
     <string name="group_settings">إعدادات الاشتراك</string>
     <string name="fronting">التخفي (Fronting)</string>
     <string name="front_targets">الأهداف (واحد في كل سطر)</string>
-    <string name="fronting_hint">يُحمَّل الاشتراك بالاتصال بهذه المضيفات بدل مضيف الرابط، مع SNI أعلاه في مصافحة TLS. للوحات التي حُجب نطاقها دون شبكة CDN الخاصة بها.</string>
+    <string name="fronting_hint">يُحمَّل الاشتراك بالاتصال بهذه المضيفات بدل مضيف الرابط، مع SNI أدناه في مصافحة TLS. للوحات التي حُجب نطاقها دون شبكة CDN الخاصة بها.</string>
+    <string name="fronting_link_hint">يمكن وضع التخفي في الرابط نفسه: أضف ‎#front=1.2.3.4&amp;sni=example.org إلى العنوان أو افتح رابط mythaia://import.</string>
+    <string name="copy_fronted_link">نسخ الرابط مع التخفي</string>
     <string name="no_servers_in_group">لا توجد خوادم في هذه المجموعة بعد.</string>
 
     <string name="no_connectivity">متصل · لا إنترنت عبر هذا الخادم</string>

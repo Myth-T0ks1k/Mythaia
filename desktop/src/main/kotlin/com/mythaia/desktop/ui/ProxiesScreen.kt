@@ -629,12 +629,13 @@ private fun AddDialog(onDismiss: () -> Unit, onAdd: (String, String?, String?, L
                     }) { Text(tr("add_from_clipboard")) }
                     TextButton(onClick = { fronting = !fronting }) { Text(tr("front_sni")) }
                 }
-                if (text.lineSequence().any { it.trim().startsWith("http", ignoreCase = true) } || fronting) {
+                if (text.lineSequence().any { it.trim().let { l -> l.startsWith("http", ignoreCase = true) || l.startsWith("mythaia://import", ignoreCase = true) } } || fronting) {
                     WingField(name, { name = it }, tr("subscription_name"))
                 }
                 if (fronting) {
                     WingField(sni, { sni = it }, tr("front_sni"))
                     WingField(targets, { targets = it }, tr("front_targets"))
+                    Text(tr("fronting_link_hint"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -659,6 +660,22 @@ private fun SubscriptionDialog(sub: Subscription, onDismiss: () -> Unit, onSave:
                 WingField(name, { name = it }, tr("subscription_name"))
                 WingField(sni, { sni = it }, tr("front_sni"))
                 WingField(targets, { targets = it }, tr("front_targets"))
+                // One link with the fronting in it: opening or pasting it adds
+                // the subscription already fronted, here or on a phone.
+                val targetList = targets.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                if (targetList.isNotEmpty() || sni.isNotBlank()) {
+                    TextButton(onClick = {
+                        val link = com.mythaia.data.network.SubscriptionLink(
+                            url = sub.url,
+                            frontSni = sni.trim().ifBlank { null },
+                            frontTargets = targetList
+                        ).toAppLink()
+                        runCatching {
+                            Toolkit.getDefaultToolkit().systemClipboard
+                                .setContents(java.awt.datatransfer.StringSelection(link), null)
+                        }
+                    }) { Text(tr("copy_fronted_link")) }
+                }
             }
         },
         confirmButton = { Button(onClick = { onSave(name, sni.ifBlank { null }, targets.split(',').map { it.trim() }.filter { it.isNotEmpty() }) }) { Text(tr("save")) } },

@@ -59,6 +59,11 @@ object LinkExtractor {
     /** The real link inside another client's import link, or [link] itself. */
     fun unwrap(link: String): String? {
         val lower = link.lowercase()
+        // Our own import link may carry fronting beside the URL; it comes out
+        // as the URL with the fronting in its fragment, which the add screen reads.
+        if (lower.startsWith("mythaia://import?")) {
+            SubscriptionLink.parse(link)?.let { return it.toFragmentLink() }
+        }
         for (wrapper in WRAPPERS) {
             if (lower.startsWith(wrapper)) {
                 val inner = link.substring(wrapper.length).substringBefore("#name=")

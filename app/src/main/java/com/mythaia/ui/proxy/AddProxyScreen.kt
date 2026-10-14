@@ -126,6 +126,28 @@ fun AddProxyScreen(
     var frontTargetsText by rememberSaveable { mutableStateOf("") }
     fun frontTargets(): List<String> =
         frontTargetsText.split('\n', ',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+    // A group name the link carried (`name=`), kept once the link is unpacked,
+    // with the URL it belongs to: a different link pasted after it is not named by it.
+    var linkGroupName by rememberSaveable { mutableStateOf<String?>(null) }
+    var linkGroupNameUrl by rememberSaveable { mutableStateOf("") }
+
+    // A link with its fronting written in (`…#front=…&sni=…` or
+    // mythaia://import?url=…&front=…): unpacked into the fields below, so the
+    // URL shows as the panel gave it and the fronting can be checked or edited
+    // before anything is downloaded.
+    LaunchedEffect(linkURL) {
+        val single = com.mythaia.data.network.LinkExtractor.extract(linkURL.trim()).singleOrNull()
+            ?: return@LaunchedEffect
+        val link = com.mythaia.data.network.SubscriptionLink.parse(single) ?: return@LaunchedEffect
+        if (!link.isFronted) return@LaunchedEffect
+        linkType = LinkType.SUBSCRIPTION
+        frontSni = link.frontSni.orEmpty()
+        frontTargetsText = link.frontTargets.joinToString("\n")
+        linkGroupName = link.name
+        linkGroupNameUrl = link.url
+        frontingExpanded = true
+        linkURL = link.url
+    }
 
     val isContinueDisabled = when (selectedMethod) {
         ImportMethod.LINK -> linkURL.isBlank() || isLoading
@@ -157,16 +179,20 @@ fun AddProxyScreen(
     // on the first proxy of a pasted list, and a download launched here was
     // cancelled with it — and the subscription silently never added.
     fun fetchSubscription(url: String, withRemnawaveHWID: Boolean) {
+        // Fronting the link carries (from a QR code or a pasted list, which
+        // skip the fields) fills in what the fields leave empty.
+        val link = com.mythaia.data.network.SubscriptionLink.parse(url)
         viewModel.importSubscription(
-            url = url,
+            url = link?.url ?: url,
             withRemnawaveHWID = withRemnawaveHWID,
-            frontSni = frontSni.trim().takeIf { it.isNotEmpty() },
-            frontTargets = frontTargets(),
+            frontSni = frontSni.trim().takeIf { it.isNotEmpty() } ?: link?.frontSni,
+            frontTargets = frontTargets().ifEmpty { link?.frontTargets.orEmpty() },
             onImported = onSubscriptionImport,
             onFailed = { message ->
                 linkErrorMessage = message
                 showLinkError = true
-            }
+            },
+            name = link?.name ?: linkGroupName?.takeIf { linkGroupNameUrl == (link?.url ?: url) }
         )
     }
 
@@ -244,7 +270,10 @@ fun AddProxyScreen(
         // http(s) — for http(s) URLs the user's link-type selection decides.
         val isDefiniteProxy = ProxyConfiguration.canParseUrl(trimmed) && !isHTTP
 
-        if (isDefiniteProxy || (isHTTP && effectiveLinkType != LinkType.SUBSCRIPTION)) {
+        // A link with fronting written in is a subscription whatever the picker says.
+        val isFrontedSubscription = com.mythaia.data.network.SubscriptionLink.isFrontedLink(trimmed)
+
+        if (isDefiniteProxy || (isHTTP && effectiveLinkType != LinkType.SUBSCRIPTION && !isFrontedSubscription)) {
             val naiveProtocol: OutboundProtocol? = when (effectiveLinkType) {
                 LinkType.HTTPS_PROXY -> OutboundProtocol.NAIVE_HTTP11
                 LinkType.HTTP2_PROXY -> OutboundProtocol.NAIVE_HTTP2
@@ -262,7 +291,9 @@ fun AddProxyScreen(
         } else {
             // Treat as subscription URL. Some panels require the HWID header to
             // release configs — prompt the user to enable it first if needed.
-            val requiresRemnawaveHWID = SubscriptionDomainHelper.shouldRequireRemnawaveHWID(trimmed)
+            val requiresRemnawaveHWID = SubscriptionDomainHelper.shouldRequireRemnawaveHWID(
+                com.mythaia.data.network.SubscriptionLink.parse(trimmed)?.url ?: trimmed
+            )
             if (requiresRemnawaveHWID && !viewModel.remnawaveHWIDEnabled) {
                 pendingSubscriptionURL = trimmed
                 showRemnawaveHWIDAlert = true
@@ -437,6 +468,12 @@ fun AddProxyScreen(
                 if (frontingExpanded) {
                     Text(
                         text = stringResource(R.string.fronting_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+                    )
+                    Text(
+                        text = stringResource(R.string.fronting_link_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)

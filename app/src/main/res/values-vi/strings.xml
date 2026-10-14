@@ -362,7 +362,9 @@
     <string name="group_settings">Cài đặt gói đăng ký</string>
     <string name="fronting">Fronting</string>
     <string name="front_targets">Đích (mỗi dòng một)</string>
-    <string name="fronting_hint">Gói đăng ký được tải bằng cách kết nối tới các máy chủ này thay cho máy chủ trong liên kết, với SNI ở trên trong handshake TLS. Dành cho panel bị chặn tên miền nhưng CDN thì không.</string>
+    <string name="fronting_hint">Gói đăng ký được tải bằng cách kết nối tới các máy chủ này thay cho máy chủ trong liên kết, với SNI bên dưới trong handshake TLS. Dành cho panel bị chặn tên miền nhưng CDN thì không.</string>
+    <string name="fronting_link_hint">Fronting cũng có thể nằm ngay trong liên kết: thêm #front=1.2.3.4&amp;sni=example.org vào URL hoặc mở liên kết mythaia://import.</string>
+    <string name="copy_fronted_link">Sao chép liên kết kèm fronting</string>
     <string name="no_servers_in_group">Nhóm này chưa có máy chủ.</string>
 
     <string name="no_connectivity">Đã kết nối · không có internet qua máy chủ này</string>

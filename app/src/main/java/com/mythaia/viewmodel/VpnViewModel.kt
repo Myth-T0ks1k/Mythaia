@@ -247,6 +247,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         return
                     }
                 }
+                // mythaia://import?url=…&front=…&sni=…: a subscription, its
+                // fronting included, for the Add sheet to fill in.
+                if (uri.host == "import") {
+                    _pendingDeepLinkUrl.value =
+                        com.mythaia.data.network.LinkExtractor.unwrap(uri.toString()) ?: return
+                    return
+                }
                 if (uri.host != "add-proxy") return
                 val full = uri.toString()
                 val marker = "?link="
@@ -1576,7 +1583,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         frontSni: String?,
         frontTargets: List<String>,
         onImported: (List<ProxyConfiguration>, Subscription) -> Unit,
-        onFailed: (String) -> Unit
+        onFailed: (String) -> Unit,
+        /** A name the link itself gave the group; it wins over the panel's. */
+        name: String? = null
     ) {
         _subscriptionImporting.value = true
         viewModelScope.launch {
@@ -1585,12 +1594,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val result = SubscriptionFetcher.fetch(
                     url, remnawaveHWID = hwid, frontSni = frontSni, frontTargets = frontTargets
                 )
-                val name = result.name
+                val linkName = name?.trim()?.takeIf { it.isNotEmpty() }
+                val groupName = linkName
+                    ?: result.name
                     ?: runCatching { URL(url).host }.getOrNull()
                     ?: getApplication<Application>().getString(R.string.subscription)
                 val subscription = Subscription(
-                    name = name,
+                    name = groupName,
                     url = url,
+                    isNameCustomized = linkName != null,
                     lastUpdate = System.currentTimeMillis(),
                     upload = result.upload,
                     download = result.download,
