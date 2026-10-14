@@ -18,7 +18,9 @@ import java.util.UUID
 private val logger = com.mythaia.vpn.util.MythaiaLogger("ConfigStore")
 
 class ConfigRepository(context: Context) {
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    // Compact: pretty-printing made a 10,000-server store several times
+    // larger to write, read and hold in memory. Older pretty files still load.
+    private val json = Json { ignoreUnknownKeys = true }
     private val file = File(context.filesDir, "configurations.json")
 
     private val _configurations = MutableStateFlow<List<ProxyConfiguration>>(emptyList())
@@ -37,7 +39,21 @@ class ConfigRepository(context: Context) {
 
     fun getAll(): List<ProxyConfiguration> = _configurations.value
 
-    fun get(id: UUID): ProxyConfiguration? = _configurations.value.find { it.id == id }
+    /**
+     * The list indexed by id, rebuilt only when the list changes: get() is
+     * called per result and per frame, and a scan of thousands of servers
+     * each time added up to seconds on the main thread.
+     */
+    @Volatile
+    private var index: Pair<List<ProxyConfiguration>, Map<UUID, ProxyConfiguration>>? = null
+
+    fun get(id: UUID): ProxyConfiguration? {
+        val list = _configurations.value
+        val cached = index
+        val byId = if (cached != null && cached.first === list) cached.second
+        else list.associateBy { it.id }.also { index = list to it }
+        return byId[id]
+    }
 
     // Every mutation goes through update {} (a CAS loop): the background
     // refresh worker and the UI both write here, and a plain read-then-assign
@@ -110,13 +126,31 @@ class ConfigRepository(context: Context) {
         }
     }
 
+    /** Set while a save is queued; mutations meanwhile ride on it. */
+    private val saveQueued = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Writes the store on the writer thread.
+     *
+     * Serialising thousands of servers takes seconds, and it used to run on
+     * the caller's thread, usually the main one, once per change: a pasted
+     * list of 5,000 links meant 5,000 full serialisations and froze the app.
+     * A change now only queues a save; the save takes the latest snapshot
+     * when it runs, so a burst of changes costs one serialisation. The
+     * writer runs one job at a time, in order, so a newer snapshot is never
+     * overwritten by an older one.
+     */
     private fun saveToDisk() {
-        // Snapshot here so an in-flight write doesn't observe a later mutation.
-        // Mirrors iOS `Task.detached { try data.write(to: url, options: .atomic) }`.
-        val decoded = json.encodeToJsonElement(_configurations.value).jsonArray
-        val payload = json.encodeToString(JsonArray.serializer(), JsonArray(decoded + undecodable))
-        file.writeTextAsync(payload) {
-            logger.error("Failed to save configurations: $it")
+        if (!saveQueued.compareAndSet(false, true)) return
+        launchOnRepositoryWriter {
+            saveQueued.set(false)
+            try {
+                val decoded = json.encodeToJsonElement(_configurations.value).jsonArray
+                val payload = json.encodeToString(JsonArray.serializer(), JsonArray(decoded + undecodable))
+                file.writeTextAtomic(payload)
+            } catch (e: Throwable) {
+                logger.error("Failed to save configurations: $e")
+            }
         }
     }
 

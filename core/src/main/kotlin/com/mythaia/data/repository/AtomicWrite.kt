@@ -61,6 +61,11 @@ fun File.writeTextAtomic(text: String) {
 internal val repositoryWriterScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
+/** Runs [block] on the repository writer, after every write queued before it. */
+fun launchOnRepositoryWriter(block: suspend CoroutineScope.() -> Unit) {
+    repositoryWriterScope.launch(block = block)
+}
+
 /** Schedules an async write. Errors are swallowed and printed; the in-memory state is the source of truth. */
 fun File.writeTextAsync(text: String, onError: ((Throwable) -> Unit)? = null) {
     repositoryWriterScope.launch {
