@@ -99,6 +99,20 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs: SharedPreferences =
         application.getSharedPreferences("mythaia_settings", Context.MODE_PRIVATE)
+
+    /**
+     * The latency cache and the proxy server address list live apart from the
+     * settings: with thousands of servers they made the settings file a
+     * megabyte, rewritten (and waited for by the main thread) on every change
+     * of any setting.
+     */
+    private val latencyPrefs: SharedPreferences =
+        application.getSharedPreferences("mythaia_latency", Context.MODE_PRIVATE)
+    private val addressPrefs: SharedPreferences =
+        application.getSharedPreferences(com.mythaia.vpn.LwipStack.PROXY_ADDRESSES_PREFS, Context.MODE_PRIVATE)
+
+    /** Stores the address list in order, off the main thread. */
+    private val addressWriter = Dispatchers.Default.limitedParallelism(1)
     private val json = Json { ignoreUnknownKeys = true }
 
     private val _vpnStatus = MutableStateFlow(VpnStatus.DISCONNECTED)
@@ -537,22 +551,30 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * successes are kept; a failure from an hour ago says nothing now.
      */
     private fun restoreLatencyCache() {
-        val raw = prefs.getString(LATENCY_CACHE_KEY, null) ?: return
+        val raw = latencyPrefs.getString(LATENCY_CACHE_KEY, null)
+            ?: prefs.getString(LATENCY_CACHE_KEY, null) // where it was before 1.0.2
+            ?: return
         val now = System.currentTimeMillis()
+        // One set, not a lookup per entry: that was a scan of the whole list
+        // each, and with 10,000 cached servers the restore took seconds.
+        val known = configRepository.getAll().mapTo(HashSet()) { it.id }
         val restored = raw.split(';').mapNotNull { entry ->
             val parts = entry.split(',')
             if (parts.size != 3) return@mapNotNull null
             val id = runCatching { UUID.fromString(parts[0]) }.getOrNull() ?: return@mapNotNull null
             val ms = parts[1].toIntOrNull() ?: return@mapNotNull null
             val at = parts[2].toLongOrNull() ?: return@mapNotNull null
-            if (now - at > LATENCY_CACHE_TTL_MS || configRepository.get(id) == null) null
+            if (now - at > LATENCY_CACHE_TTL_MS || id !in known) null
             else id to (LatencyResult.Success(ms) as LatencyResult)
         }.toMap()
         if (restored.isNotEmpty()) _latencyResults.value = restored + _latencyResults.value
     }
 
     private fun startLatencyCachePersistence() {
-        viewModelScope.launch {
+        if (prefs.contains(LATENCY_CACHE_KEY)) prefs.edit { remove(LATENCY_CACHE_KEY) }
+        // Off the main thread, and at most every few seconds: a run publishes
+        // several times a second, and each write rebuilt the whole cache.
+        viewModelScope.launch(Dispatchers.Default) {
             var stamps = HashMap<UUID, Pair<Int, Long>>()
             _latencyResults.collect { results ->
                 val now = System.currentTimeMillis()
@@ -563,14 +585,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     next[id] = if (previous != null && previous.first == result.ms) previous else result.ms to now
                 }
                 stamps = next
-                prefs.edit {
+                latencyPrefs.edit {
                     putString(LATENCY_CACHE_KEY, next.entries.joinToString(";") { (id, v) -> "$id,${v.first},${v.second}" })
                 }
+                delay(LATENCY_CACHE_WRITE_MS)
             }
         }
     }
 
+    /** Moves the address list out of the settings file, where builds before 1.0.2 kept it. */
+    private fun migrateStoredAddresses() {
+        val old = prefs.getString("proxyServerAddresses", null) ?: return
+        if (!addressPrefs.contains("proxyServerAddresses")) {
+            addressPrefs.edit { putString("proxyServerAddresses", old) }
+        }
+        prefs.edit { remove("proxyServerAddresses") }
+    }
+
     init {
+        migrateStoredAddresses()
         restoreLatencyCache()
         startLatencyCachePersistence()
         com.mythaia.vpn.AutoSelectEngine.uiAlive = true
@@ -856,7 +889,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     suspend fun autoSelectFastest(groupId: String = _activeGroupId.value): ProxyConfiguration? {
         if (_autoSelecting.value) return null
-        val candidates = autoCandidates(groupId)
+        // A big group is measured a sample at a time (see AutoPolicy.roundSample).
+        val candidates = com.mythaia.vpn.AutoPolicy.roundSample(
+            autoCandidates(groupId), MythaiaVpnService.activeConfigId, knownLatencies()
+        )
         if (candidates.isEmpty()) return null
 
         _autoSelecting.value = true
@@ -889,10 +925,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** One round's measuring and moving; see [autoSelectFastest]. */
     private suspend fun measureGroup(groupId: String, candidates: List<ProxyConfiguration>): ProxyConfiguration? {
         _latencyKind.value = LatencyKind.HTTP
-        syncProxyServerAddresses(candidates)
-        candidates.forEach { config ->
-            _latencyResults.value = _latencyResults.value + (config.id to LatencyResult.Testing)
-        }
+        syncProxyServerAddressesInBackground(candidates)
+        markTesting(candidates)
+        val published = LatencyBatch()
 
         val results = HashMap<UUID, Int>()
         // The server on the wire, and what we know about it so far. Kept
@@ -901,37 +936,41 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         var liveId: UUID? = MythaiaVpnService.activeConfigId
         var liveMs: Int? = null
         var liveFailed = _connectivityOk.value == false
-        LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) }, LatencyKind.HTTP)
-            .collect { (id, result) ->
-                _latencyResults.value = _latencyResults.value + (id to result)
-                if (result is LatencyResult.Success) results[id] = result.ms
+        try {
+            LatencyTester.testAll(candidates.map { applyGlobalAllowInsecure(it) }, LatencyKind.HTTP)
+                .collect { (id, result) ->
+                    published.add(id, result)
+                    if (result is LatencyResult.Success) results[id] = result.ms
 
-                if (id == liveId) {
-                    if (result is LatencyResult.Success) { liveMs = result.ms; liveFailed = false }
-                    else if (result !is LatencyResult.Testing) liveFailed = true
-                }
+                    if (id == liveId) {
+                        if (result is LatencyResult.Success) { liveMs = result.ms; liveFailed = false }
+                        else if (result !is LatencyResult.Testing) liveFailed = true
+                    }
 
-                // Real-time only when the wire is dead: move to the first
-                // server that answers. A live server that works waits for
-                // the end of the round, so a round moves the tunnel at
-                // most once (each move drops every open connection).
-                val canSwitch = groupId == _activeGroupId.value && activeIsAuto &&
-                    _vpnStatus.value == VpnStatus.CONNECTED
-                if (canSwitch && result is LatencyResult.Success && id != liveId) {
-                    val better = liveFailed || liveId == null
-                    if (better) {
-                        configRepository.get(id)?.let { next ->
-                            logger.info("[AutoSelect] ${next.name} at ${result.ms}ms beats the live server; switching")
-                            switchConfig(next)
-                            _autoChoice.value = _autoChoice.value + (groupId to next.id)
-                            recomputeSelection()
-                            liveId = next.id
-                            liveMs = result.ms
-                            liveFailed = false
+                    // Real-time only when the wire is dead: move to the first
+                    // server that answers. A live server that works waits for
+                    // the end of the round, so a round moves the tunnel at
+                    // most once (each move drops every open connection).
+                    val canSwitch = groupId == _activeGroupId.value && activeIsAuto &&
+                        _vpnStatus.value == VpnStatus.CONNECTED
+                    if (canSwitch && result is LatencyResult.Success && id != liveId) {
+                        val better = liveFailed || liveId == null
+                        if (better) {
+                            configRepository.get(id)?.let { next ->
+                                logger.info("[AutoSelect] ${next.name} at ${result.ms}ms beats the live server; switching")
+                                switchConfig(next)
+                                _autoChoice.value = _autoChoice.value + (groupId to next.id)
+                                recomputeSelection()
+                                liveId = next.id
+                                liveMs = result.ms
+                                liveFailed = false
+                            }
                         }
                     }
                 }
-            }
+        } finally {
+            published.flush()
+        }
 
         val bestEntry = results.minByOrNull { it.value } ?: return null
         val winner = configRepository.get(bestEntry.key) ?: return null
@@ -1415,6 +1454,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         recomputeSelection()
     }
 
+    /** Adds a pasted list in one go: one change of the store, one save. */
+    fun addConfigurations(configs: List<ProxyConfiguration>) {
+        if (configs.isEmpty()) return
+        configRepository.addAll(configs)
+        recomputeSelection()
+    }
+
     fun updateConfiguration(config: ProxyConfiguration) {
         configRepository.update(config)
         // The server on the wire is this one: hand the tunnel the new
@@ -1652,18 +1698,56 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun testLatencies(forConfigs: List<ProxyConfiguration>, kind: LatencyKind = _latencyKind.value) {
         if (forConfigs.isEmpty()) return
-        syncProxyServerAddresses(forConfigs)
         if (_latencyKind.value != kind) {
             _latencyKind.value = kind
             _latencyResults.value = emptyMap()
         }
-        forConfigs.forEach { config ->
-            _latencyResults.value = _latencyResults.value + (config.id to LatencyResult.Testing)
-        }
+        markTesting(forConfigs)
         viewModelScope.launch {
-            LatencyTester.testAll(forConfigs.map { applyGlobalAllowInsecure(it) }, kind).collect { (id, result) ->
-                _latencyResults.value = _latencyResults.value + (id to result)
+            // Before the first dial: the servers' names must get real answers.
+            syncProxyServerAddressesInBackground(forConfigs)
+            val published = LatencyBatch()
+            try {
+                LatencyTester.testAll(forConfigs.map { applyGlobalAllowInsecure(it) }, kind).collect { (id, result) ->
+                    published.add(id, result)
+                }
+            } finally {
+                published.flush()
             }
+        }
+    }
+
+    /** Marks [configs] as being measured, in one update of the map rather than one per server. */
+    private fun markTesting(configs: List<ProxyConfiguration>) {
+        _latencyResults.value = _latencyResults.value + configs.associate { it.id to LatencyResult.Testing }
+    }
+
+    /** The last successful time of every server measured so far. */
+    private fun knownLatencies(): Map<UUID, Int> =
+        _latencyResults.value.mapNotNull { (id, result) -> (result as? LatencyResult.Success)?.let { id to it.ms } }.toMap()
+
+    /**
+     * Publishes the results of one measuring run in batches. Copying the
+     * whole map once per result was quadratic work on the main thread: a
+     * group of 10,000 servers froze the app into "not responding". Results
+     * are gathered here and land at most every [LATENCY_FLUSH_MS], so the
+     * list still fills in live.
+     */
+    private inner class LatencyBatch {
+        private val pending = HashMap<UUID, LatencyResult>()
+        private var flushedAt = 0L
+
+        fun add(id: UUID, result: LatencyResult) {
+            pending[id] = result
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - flushedAt >= LATENCY_FLUSH_MS) flush(now)
+        }
+
+        fun flush(now: Long = android.os.SystemClock.elapsedRealtime()) {
+            flushedAt = now
+            if (pending.isEmpty()) return
+            _latencyResults.value = _latencyResults.value + pending
+            pending.clear()
         }
     }
 
@@ -1805,14 +1889,31 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun syncProxyServerAddresses(configurations: List<ProxyConfiguration>) {
+        publishProxyServerAddresses(allProxyServerAddresses(configurations))
+    }
+
+    /**
+     * The same for a whole group, with the collecting off the main thread:
+     * thousands of servers make it megabytes of work. Returns once the
+     * service has the list, so the dials that follow resolve correctly.
+     */
+    private suspend fun syncProxyServerAddressesInBackground(configurations: List<ProxyConfiguration>) {
+        publishProxyServerAddresses(withContext(Dispatchers.Default) { allProxyServerAddresses(configurations) })
+    }
+
+    private fun allProxyServerAddresses(configurations: List<ProxyConfiguration>): List<String> {
         val addresses = linkedSetOf<String>()
         for (config in configurations) {
             collectProxyServerAddresses(config, addresses)
         }
+        return addresses.toList()
+    }
 
-        val persisted = addresses.toList()
-        prefs.edit { putString("proxyServerAddresses", json.encodeToString(persisted)) }
-        vpnService?.updateProxyServerAddresses(persisted)
+    private fun publishProxyServerAddresses(addresses: List<String>) {
+        vpnService?.updateProxyServerAddresses(addresses)
+        viewModelScope.launch(addressWriter) {
+            addressPrefs.edit { putString("proxyServerAddresses", json.encodeToString(addresses)) }
+        }
     }
 
     private fun collectProxyServerAddresses(
@@ -1989,6 +2090,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         private const val LATENCY_CACHE_KEY = "latencyCache"
+        private const val LATENCY_CACHE_WRITE_MS = 3_000L
+        private const val LATENCY_FLUSH_MS = 250L
         private const val LATENCY_CACHE_TTL_MS = 30 * 60_000L
 
         /** One second: fast enough to read as live, slow enough to cost nothing. */

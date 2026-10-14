@@ -64,4 +64,39 @@ object AutoPolicy {
 
     /** Between checks of [roundDue] in the loops; cheap, nothing goes out unless a round is due. */
     const val DUE_CHECK_MS = 60 * 1000L
+
+    /**
+     * The most servers one round measures. A bulk list of 10,000 servers
+     * measured whole, six at a time with a ten-second timeout, made a round
+     * of several hours; a recovery after a block waited for all of it.
+     */
+    const val MAX_ROUND = 48
+
+    /**
+     * The servers one round measures out of [candidates]. A group of up to
+     * [MAX_ROUND] is measured whole. A bigger one gets the live server
+     * ([liveId]), the half that answered fastest lately ([known]: id to the
+     * last successful time), and a random share of the rest: each round
+     * stays short, and over successive rounds every server gets its turn.
+     */
+    fun roundSample(
+        candidates: List<com.mythaia.data.model.ProxyConfiguration>,
+        liveId: java.util.UUID?,
+        known: Map<java.util.UUID, Int>,
+        random: kotlin.random.Random = kotlin.random.Random.Default
+    ): List<com.mythaia.data.model.ProxyConfiguration> {
+        if (candidates.size <= MAX_ROUND) return candidates
+        val picked = LinkedHashMap<java.util.UUID, com.mythaia.data.model.ProxyConfiguration>()
+        if (liveId != null) candidates.firstOrNull { it.id == liveId }?.let { picked[it.id] = it }
+        candidates.asSequence()
+            .filter { it.id in known }
+            .sortedBy { known.getValue(it.id) }
+            .take(MAX_ROUND / 2)
+            .forEach { picked.putIfAbsent(it.id, it) }
+        for (config in candidates.filter { it.id !in picked }.shuffled(random)) {
+            if (picked.size >= MAX_ROUND) break
+            picked[config.id] = config
+        }
+        return picked.values.toList()
+    }
 }

@@ -52,6 +52,9 @@ object AutoSelectEngine {
     private var loop: Job? = null
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Last successful time per server, so a sampled round of a big group starts from the fast ones. */
+    private val lastKnown = java.util.concurrent.ConcurrentHashMap<UUID, Int>()
+
     private val reconnectTimes = ArrayDeque<Long>()
 
     /** Called when a tunnel comes up; checks every minute whether a round is owed ([AutoPolicy.roundDue]). */
@@ -128,7 +131,9 @@ object AutoSelectEngine {
         scope.launch {
             reloadPolicies(app)
             val gid = activeGroupId(prefs)
-            val candidates = candidates(app, gid).filter { it.id != failed }
+            val candidates = AutoPolicy.roundSample(
+                candidates(app, gid).filter { it.id != failed }, liveId = null, known = lastKnown
+            )
             val best = measure(candidates) ?: return@launch
             rememberChoice(prefs, gid, best.id)
             logger.info("Reconnecting on ${best.name} after a failure")
@@ -142,12 +147,13 @@ object AutoSelectEngine {
         reloadPolicies(app)
 
         val gid = activeGroupId(prefs)
-        val candidates = candidates(app, gid)
+        val candidates = AutoPolicy.roundSample(candidates(app, gid), MythaiaVpnService.activeConfigId, lastKnown)
         if (candidates.isEmpty()) return
 
         val results = HashMap<UUID, Int>()
         LatencyTester.testAll(candidates, LatencyKind.HTTP).collect { (id, result) ->
-            if (result is LatencyResult.Success) results[id] = result.ms
+            if (result is LatencyResult.Success) { results[id] = result.ms; lastKnown[id] = result.ms }
+            else if (result !is LatencyResult.Testing) lastKnown.remove(id)
         }
         val bestEntry = results.minByOrNull { it.value } ?: return
         val best = candidates.firstOrNull { it.id == bestEntry.key } ?: return
@@ -166,7 +172,8 @@ object AutoSelectEngine {
         if (candidates.isEmpty()) return null
         val results = HashMap<UUID, Int>()
         LatencyTester.testAll(candidates, LatencyKind.HTTP).collect { (id, result) ->
-            if (result is LatencyResult.Success) results[id] = result.ms
+            if (result is LatencyResult.Success) { results[id] = result.ms; lastKnown[id] = result.ms }
+            else if (result !is LatencyResult.Testing) lastKnown.remove(id)
         }
         val bestId = results.minByOrNull { it.value }?.key ?: return null
         return candidates.firstOrNull { it.id == bestId }

@@ -42,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -88,7 +89,7 @@ fun AddProxyScreen(
     // When opened via a deep link, start directly on the Link method with the URL pre-filled.
     // Saveable, so a rotation or a theme switch keeps what was pasted.
     var selectedMethod by rememberSaveable { mutableStateOf<ImportMethod?>(if (initialLink != null) ImportMethod.LINK else null) }
-    var linkURL by rememberSaveable { mutableStateOf(initialLink ?: "") }
+    var linkURL by rememberSaveable(stateSaver = BoundedTextSaver) { mutableStateOf(initialLink ?: "") }
     var linkType by rememberSaveable { mutableStateOf(LinkType.SUBSCRIPTION) }
 
     // A deep link that arrives while the sheet is already open replaces
@@ -117,7 +118,7 @@ fun AddProxyScreen(
     var pendingSubscriptionURL by rememberSaveable { mutableStateOf("") }
     // Proxy links from a pasted list, held while the HWID prompt for its
     // subscription is up: importing one closes the sheet, prompt and all.
-    var heldProxyLinks by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var heldProxyLinks by rememberSaveable(stateSaver = BoundedLinksSaver) { mutableStateOf<List<String>>(emptyList()) }
 
     // Fronting for the subscription download: shown only for an http(s)
     // link imported as a subscription, folded away until wanted.
@@ -196,14 +197,26 @@ fun AddProxyScreen(
         )
     }
 
+    /**
+     * Adds [configs] in one write and hands the last to [onImport], which
+     * closes the sheet. One onImport per server meant one full save of the
+     * store each: a list of thousands froze the app.
+     */
+    fun importAll(configs: List<ProxyConfiguration>) {
+        if (configs.isEmpty()) return
+        if (configs.size > 1) viewModel.addConfigurations(configs.dropLast(1))
+        onImport(configs.last())
+    }
+
     /** Adds every link that parses; returns how many did not. */
     fun importProxyLinks(links: List<String>): Int {
         var failures = 0
-        links.forEach { link ->
+        val parsed = links.mapNotNull { link ->
             runCatching { ProxyConfiguration.fromUrl(link) }
-                .onSuccess { onImport(it) }
                 .onFailure { failures++ }
+                .getOrNull()
         }
+        importAll(parsed)
         return failures
     }
 
@@ -214,7 +227,7 @@ fun AddProxyScreen(
         // outbound in it is imported.
         if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(trimmed)) {
             try {
-                com.mythaia.data.network.XrayJsonImporter.parse(trimmed).forEach { onImport(it) }
+                importAll(com.mythaia.data.network.XrayJsonImporter.parse(trimmed))
             } catch (e: Exception) {
                 linkErrorMessage = e.message ?: context.getString(R.string.invalid_url)
                 showLinkError = true
@@ -600,3 +613,22 @@ fun AddProxyScreen(
         )
     }
 }
+
+/**
+ * The most pasted text the sheet keeps across a rotation or a trip to the
+ * background. The saved state goes through a Binder transaction with a
+ * limit of about a megabyte: a list of thousands of links went over it, and
+ * the activity crashed with TransactionTooLargeException when it stopped.
+ * Longer text is simply not restored.
+ */
+private const val MAX_SAVED_TEXT = 64 * 1024
+
+private val BoundedTextSaver = Saver<String, String>(
+    save = { if (it.length <= MAX_SAVED_TEXT) it else "" },
+    restore = { it }
+)
+
+private val BoundedLinksSaver = Saver<List<String>, ArrayList<String>>(
+    save = { links -> if (links.sumOf { it.length } <= MAX_SAVED_TEXT) ArrayList(links) else ArrayList() },
+    restore = { it }
+)
