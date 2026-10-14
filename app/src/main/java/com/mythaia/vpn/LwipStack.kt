@@ -367,9 +367,18 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     }
 
     private fun loadRoutingConfigurationForMode() {
-        // Global mode loads only the country bypass (the user's rules do not
-        // apply there); the load primes the MITM store either way.
-        domainRouter.loadRoutingConfiguration(bypassOnly = proxyMode == "global")
+        if (proxyMode == "global") {
+            // Global mode sends everything through the proxy, the home
+            // country included: no rules and no country bypass, which applies
+            // in rule mode only (the settings hide it in global mode).
+            domainRouter.reset()
+            // MITM interception is gated independently of proxy mode, so prime
+            // the store here too or a UI-less global-mode start would never
+            // pick up a configured CA/rules.
+            domainRouter.primeMitmStore()
+        } else {
+            domainRouter.loadRoutingConfiguration()
+        }
         bypassAnsweredIps.clear()
     }
 
@@ -1078,28 +1087,28 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
         when (val resolution = resolveFakeIp(dstIpString, dstPort, "TCP")) {
             FakeIpResolution.Passthrough -> {
-                // In global mode, skip IP routing rules — all traffic goes
-                // through the proxy, except the home country's own ranges.
-                if (proxyMode == "global") {
-                    if (isBypassAddress(dstIpString)) forceBypass = true
-                } else if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
-                    // A bypass name answered with its real address: no rule names
-                    // this IP, but the name it came from goes direct.
-                    forceBypass = true
-                } else {
-                    domainRouter.matchIP(dstIpString)?.let { action ->
-                        when (action) {
-                            RouteAction.Direct -> forceBypass = true
-                            RouteAction.Reject -> {
-                                logger.debug("[TCP] IP rejected by routing rule: $dstIpString:$dstPort")
-                                return 0L
-                            }
-                            is RouteAction.Proxy -> {
-                                val resolved = domainRouter.resolveConfiguration(action)
-                                if (resolved != null) {
-                                    connectionConfig = inheritChain(defaultConfig, resolved)
-                                } else {
-                                    logger.warning("[TCP] Routing config not found for $dstIpString")
+                // Global mode skips IP routing rules and the country bypass:
+                // all traffic goes through the proxy.
+                if (proxyMode != "global") {
+                    if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
+                        // A bypass name answered with its real address: no rule names
+                        // this IP, but the name it came from goes direct.
+                        forceBypass = true
+                    } else {
+                        domainRouter.matchIP(dstIpString)?.let { action ->
+                            when (action) {
+                                RouteAction.Direct -> forceBypass = true
+                                RouteAction.Reject -> {
+                                    logger.debug("[TCP] IP rejected by routing rule: $dstIpString:$dstPort")
+                                    return 0L
+                                }
+                                is RouteAction.Proxy -> {
+                                    val resolved = domainRouter.resolveConfiguration(action)
+                                    if (resolved != null) {
+                                        connectionConfig = inheritChain(defaultConfig, resolved)
+                                    } else {
+                                        logger.warning("[TCP] Routing config not found for $dstIpString")
+                                    }
                                 }
                             }
                         }
@@ -1211,28 +1220,28 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
         when (val resolution = resolveFakeIp(dstIpString, dstPort, "UDP")) {
             FakeIpResolution.Passthrough -> {
-                // In global mode, skip IP routing rules — all traffic goes
-                // through the proxy, except the home country's own ranges.
-                if (proxyMode == "global") {
-                    if (isBypassAddress(dstIpString)) forceBypass = true
-                } else if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
-                    // A bypass name answered with its real address: no rule names
-                    // this IP, but the name it came from goes direct.
-                    forceBypass = true
-                } else {
-                    domainRouter.matchIP(dstIpString)?.let { action ->
-                        when (action) {
-                            RouteAction.Direct -> forceBypass = true
-                            RouteAction.Reject -> {
-                                sendIcmpPortUnreachable(srcIp, srcPort, dstIp, dstPort, isIpv6, data.size)
-                                return
-                            }
-                            is RouteAction.Proxy -> {
-                                val resolved = domainRouter.resolveConfiguration(action)
-                                if (resolved != null) {
-                                    flowConfig = inheritChain(defaultConfig, resolved)
-                                } else {
-                                    logger.warning("[UDP] Routing config not found for $dstIpString")
+                // Global mode skips IP routing rules and the country bypass:
+                // all traffic goes through the proxy.
+                if (proxyMode != "global") {
+                    if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
+                        // A bypass name answered with its real address: no rule names
+                        // this IP, but the name it came from goes direct.
+                        forceBypass = true
+                    } else {
+                        domainRouter.matchIP(dstIpString)?.let { action ->
+                            when (action) {
+                                RouteAction.Direct -> forceBypass = true
+                                RouteAction.Reject -> {
+                                    sendIcmpPortUnreachable(srcIp, srcPort, dstIp, dstPort, isIpv6, data.size)
+                                    return
+                                }
+                                is RouteAction.Proxy -> {
+                                    val resolved = domainRouter.resolveConfiguration(action)
+                                    if (resolved != null) {
+                                        flowConfig = inheritChain(defaultConfig, resolved)
+                                    } else {
+                                        logger.warning("[UDP] Routing config not found for $dstIpString")
+                                    }
                                 }
                             }
                         }
@@ -1283,11 +1292,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         if (!FakeIpPool.isFakeIp(ip)) return FakeIpResolution.Passthrough
 
         val entry = fakeIpPool.lookup(ip) ?: return FakeIpResolution.Unreachable
-        // In global mode, skip routing rules — all traffic goes through the
-        // proxy, except the home country's own services, which a foreign exit
-        // could not reach anyway.
+        // In global mode, skip routing rules and the country bypass — all
+        // traffic goes through the proxy.
         if (proxyMode == "global") {
-            return FakeIpResolution.Resolved(entry.domain, null, domainRouter.isBypassDomain(entry.domain))
+            return FakeIpResolution.Resolved(entry.domain, null, false)
         }
 
         return when (val action = domainRouter.matchDomain(entry.domain)) {

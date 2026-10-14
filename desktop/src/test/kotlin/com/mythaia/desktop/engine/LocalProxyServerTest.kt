@@ -135,13 +135,22 @@ class LocalProxyServerTest {
     }
 
     @Test
-    fun `router keeps private and turkmen addresses direct`() = runBlocking {
-        val router = Router(emptyList(), global = true, bypassCountries = listOf("TM"))
+    fun `rule mode keeps private and turkmen addresses direct`() = runBlocking {
+        val router = Router(emptyList(), global = false, bypassCountries = listOf("TM"))
         assertEquals(com.mythaia.desktop.model.RouteTarget.DIRECT, router.decide("192.168.1.10"))
         assertEquals(com.mythaia.desktop.model.RouteTarget.DIRECT, router.decide("177.93.143.20"))
         assertEquals(com.mythaia.desktop.model.RouteTarget.DIRECT, router.decide("gov.tm"))
         assertEquals(com.mythaia.desktop.model.RouteTarget.PROXY, router.decide("example.com"))
         assertEquals(com.mythaia.desktop.model.RouteTarget.PROXY, router.decide("8.8.8.8"))
+    }
+
+    @Test
+    fun `global mode sends turkmen addresses through the proxy`() = runBlocking {
+        val router = Router(emptyList(), global = true, bypassCountries = listOf("TM"))
+        assertEquals(com.mythaia.desktop.model.RouteTarget.DIRECT, router.decide("192.168.1.10"))
+        assertEquals(com.mythaia.desktop.model.RouteTarget.PROXY, router.decide("177.93.143.20"))
+        assertEquals(com.mythaia.desktop.model.RouteTarget.PROXY, router.decide("gov.tm"))
+        assertEquals(com.mythaia.desktop.model.RouteTarget.PROXY, router.decide("example.com"))
     }
 
     @Test

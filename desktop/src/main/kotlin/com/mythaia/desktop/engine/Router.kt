@@ -12,16 +12,18 @@ import java.net.InetAddress
 /**
  * Decides where one connection goes. Rule mode sends everything through the
  * proxy except what a rule, the private ranges or the country bypass send
- * direct; global mode ignores the user's rules but still keeps the private
- * ranges and the country bypass off the proxy, since those are addresses a
- * proxy cannot reach at all.
+ * direct; global mode sends everything through the proxy, the home country
+ * included, and keeps only the private ranges off it, since those are
+ * addresses a proxy cannot reach at all.
  */
 class Router(
     private val rules: List<RouteRule>,
     private val global: Boolean,
     bypassCountries: List<String>
 ) {
-    private val bypassExtras: List<DomainRule> = bypassCountries.flatMap { CountryBypassExtras.rulesFor(it) }
+    /** The country bypass applies in rule mode only, as on Android. */
+    private val bypassExtras: List<DomainRule> =
+        if (global) emptyList() else bypassCountries.flatMap { CountryBypassExtras.rulesFor(it) }
 
     private val suffixRules = rules.filter { it.type == DomainRuleType.DOMAIN_SUFFIX }
         .map { it.value.trim().trimStart('.').lowercase() to it.action }

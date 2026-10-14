@@ -188,9 +188,9 @@ class AnyTlsProtocolTest {
 
     @Test
     fun `settings name the version, the client and the scheme digest`() {
-        val text = String(AnyTlsProtocol.settings("mythaia/1.9", AnyTlsPaddingScheme.DEFAULT.md5))
+        val text = String(AnyTlsProtocol.settings("mythaia/1.0", AnyTlsPaddingScheme.DEFAULT.md5))
         assertEquals(
-            "v=2\nclient=mythaia/1.9\npadding-md5=75cff2ad89aadf5e257059ee571ebe11",
+            "v=2\nclient=mythaia/1.0\npadding-md5=75cff2ad89aadf5e257059ee571ebe11",
             text
         )
     }

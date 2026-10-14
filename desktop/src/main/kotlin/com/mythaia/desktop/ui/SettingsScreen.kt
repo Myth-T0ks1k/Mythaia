@@ -142,7 +142,9 @@ fun SettingsScreen(state: AppState) {
                     Text(tr("route_mode"), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                     ModePill(settings.isGlobal) { g -> state.updateSettings { it.copy(routeMode = if (g) "global" else "rule") } }
                 }
-                SwitchRow(tr("bypass_tm"), settings.bypassTurkmenistan) { v -> state.updateSettings { it.copy(bypassTurkmenistan = v) } }
+                if (!settings.isGlobal) {
+                    SwitchRow(tr("bypass_tm"), settings.bypassTurkmenistan) { v -> state.updateSettings { it.copy(bypassTurkmenistan = v) } }
+                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(horizontal = 18.dp))
                 var geoLoaded by remember { mutableStateOf(GeoIpDatabase.isLoaded) }
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {

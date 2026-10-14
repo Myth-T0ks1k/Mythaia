@@ -250,7 +250,7 @@ class AnyTlsClient(
          * to give their real name and version rather than impersonate the
          * reference one, so a server can tell implementations apart.
          */
-        private const val CLIENT_NAME = "mythaia/1.9"
+        private const val CLIENT_NAME = "mythaia/1.0"
 
         /** Releases every pooled session and its TLS connection. */
         suspend fun shutdown() = Pool.shutdownAll()
