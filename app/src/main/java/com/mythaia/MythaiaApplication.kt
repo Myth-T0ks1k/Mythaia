@@ -14,6 +14,11 @@ class MythaiaApplication : Application() {
         MythaiaLogger.backend = LogCatBackend
         MythaiaLogger.debugEnabled = BuildConfig.DEBUG
         TransportErrorLogger.errnoReader = { (it as? ErrnoException)?.errno }
+        // Start reading the server store now, off the main thread: with a bulk
+        // list it takes seconds, and the activity would otherwise wait for it
+        // from scratch. ConfigRepository.get is synchronized, so the screen
+        // takes the same instance, finished or nearly so.
+        Thread({ com.mythaia.data.repository.ConfigRepository.get(this) }, "config-preload").start()
     }
 }
 
