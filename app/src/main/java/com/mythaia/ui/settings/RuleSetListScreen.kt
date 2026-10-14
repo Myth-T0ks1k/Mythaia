@@ -30,13 +30,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -60,10 +57,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mythaia.R
-import com.mythaia.data.model.Subscription
-import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.repository.RuleSetRepository
 import com.mythaia.ui.components.AppIconView
+import com.mythaia.ui.components.RouteTargetField
+import com.mythaia.ui.components.RouteTargets
+import com.mythaia.ui.components.rememberRouteTargets
+import com.mythaia.ui.components.routeTargetLabel
 import com.mythaia.ui.components.wingTextFieldColors
 import com.mythaia.viewmodel.VpnViewModel
 
@@ -117,15 +116,7 @@ private fun RuleSetListRoot(
         ruleSets.filter { !it.isCustom && it.name != "ADBlock" && it.id != "Direct" }
     }
 
-    val standaloneConfigs = remember(configurations) {
-        configurations.filter { it.subscriptionId == null }
-    }
-    val subscribedGroups = remember(configurations, subscriptions) {
-        subscriptions.mapNotNull { subscription ->
-            val configs = configurations.filter { it.subscriptionId == subscription.id }
-            if (configs.isEmpty()) null else subscription to configs
-        }
-    }
+    val routeTargets = rememberRouteTargets(configurations, subscriptions)
 
     val experimentalEnabled = remember { viewModel.experimentalEnabled }
     var menuOpen by remember { mutableStateOf(false) }
@@ -196,8 +187,7 @@ private fun RuleSetListRoot(
                         key(ruleSet.id) {
                             RuleSetRow(
                                 ruleSet = ruleSet,
-                                standaloneConfigs = standaloneConfigs,
-                                subscribedGroups = subscribedGroups,
+                                routeTargets = routeTargets,
                                 onAssign = { configId ->
                                     viewModel.ruleSetRepository.updateAssignment(ruleSet, configId)
                                     viewModel.syncRoutingConfigurationToNE()
@@ -232,7 +222,7 @@ private fun RuleSetListRoot(
                                 CustomRuleSetRow(
                                     name = custom.name,
                                     ruleCount = custom.rules.size,
-                                    assignmentLabel = assignmentLabel(assignment, standaloneConfigs, subscribedGroups),
+                                    assignmentLabel = routeTargetLabel(assignment, routeTargets),
                                     onOpen = { onOpenCustom(custom.id) },
                                     onDelete = { pendingDeleteId = custom.id }
                                 )
@@ -366,24 +356,6 @@ private fun RuleSetIconTile(icon: ImageVector) {
 }
 
 @Composable
-private fun assignmentLabel(
-    assignedId: String?,
-    standaloneConfigs: List<ProxyConfiguration>,
-    subscribedGroups: List<Pair<Subscription, List<ProxyConfiguration>>>
-): String {
-    val default = stringResource(R.string.default_value)
-    return when (assignedId) {
-        null -> default
-        "DIRECT" -> stringResource(R.string.direct)
-        "REJECT" -> stringResource(R.string.reject)
-        else -> {
-            val all = standaloneConfigs + subscribedGroups.flatMap { it.second }
-            all.firstOrNull { it.id.toString() == assignedId }?.name ?: default
-        }
-    }
-}
-
-@Composable
 private fun CustomRuleSetRow(
     name: String,
     ruleCount: Int,
@@ -469,27 +441,12 @@ private fun NewRuleSetDialog(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RuleSetRow(
     ruleSet: RuleSetRepository.RuleSet,
-    standaloneConfigs: List<ProxyConfiguration>,
-    subscribedGroups: List<Pair<Subscription, List<ProxyConfiguration>>>,
+    routeTargets: RouteTargets,
     onAssign: (String?) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-
-    val displayText = when (ruleSet.assignedConfigurationId) {
-        null -> stringResource(R.string.default_value)
-        "DIRECT" -> stringResource(R.string.direct)
-        "REJECT" -> stringResource(R.string.reject)
-        else -> {
-            val allConfigs = standaloneConfigs + subscribedGroups.flatMap { it.second }
-            allConfigs.find { it.id.toString() == ruleSet.assignedConfigurationId }?.name
-                ?: stringResource(R.string.default_value)
-        }
-    }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -507,82 +464,14 @@ private fun RuleSetRow(
             )
             Spacer(modifier = Modifier.height(4.dp))
 
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = it }
-            ) {
-                OutlinedTextField(
-                    value = displayText,
-                    onValueChange = {},
-                    readOnly = true,
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = wingTextFieldColors(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                    textStyle = MaterialTheme.typography.bodySmall
-                )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.default_value)) },
-                        onClick = {
-                            onAssign(null)
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.direct)) },
-                        onClick = {
-                            onAssign("DIRECT")
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.reject)) },
-                        onClick = {
-                            onAssign("REJECT")
-                            expanded = false
-                        }
-                    )
-
-                    standaloneConfigs.forEach { config ->
-                        DropdownMenuItem(
-                            text = { Text(config.name) },
-                            onClick = {
-                                onAssign(config.id.toString())
-                                expanded = false
-                            }
-                        )
-                    }
-
-                    subscribedGroups.forEach { (subscription, configs) ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = subscription.name,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            onClick = {},
-                            enabled = false
-                        )
-                        configs.forEach { config ->
-                            DropdownMenuItem(
-                                text = { Text("  ${config.name}") },
-                                onClick = {
-                                    onAssign(config.id.toString())
-                                    expanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-            }
+            RouteTargetField(
+                assignedId = ruleSet.assignedConfigurationId,
+                targets = routeTargets,
+                onAssign = onAssign,
+                ruleSetName = ruleSet.name,
+                textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
