@@ -55,8 +55,8 @@ data class SubscriptionLink(
 
         /**
          * Reads [link] in either form. Null when it is neither an http(s) URL
-         * nor a `mythaia://import` link; an http(s) URL with no fronting in its
-         * fragment comes back exactly as given.
+         * nor a `mythaia://import` link; an http(s) URL whose fragment holds
+         * none of the keys above comes back exactly as given.
          */
         fun parse(link: String): SubscriptionLink? {
             val s = link.trim()
@@ -65,7 +65,9 @@ data class SubscriptionLink(
             val hash = s.indexOf('#')
             if (hash < 0) return SubscriptionLink(s)
             val params = parseParams(s.substring(hash + 1))
-            if (params.none { it.first == "front" || it.first in SNI_KEYS }) return SubscriptionLink(s)
+            // A name alone is read too: an import link with a name and no
+            // fronting used to leave "#name=…" on the stored URL.
+            if (params.none { it.first in OWN_KEYS }) return SubscriptionLink(s)
             return fromParams(s.substring(0, hash), params)
         }
 

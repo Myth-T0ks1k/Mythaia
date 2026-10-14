@@ -23,8 +23,7 @@ class SubscriptionLinkTest {
     fun `a URL without fronting comes back exactly as given`() {
         for (url in listOf(
             "https://sub.example.com/abc?token=1",
-            "https://sub.example.com/abc#My%20VPN",
-            "https://sub.example.com/abc#name=Home"
+            "https://sub.example.com/abc#My%20VPN"
         )) {
             val link = SubscriptionLink.parse(url)!!
             assertEquals(url, link.url)
@@ -33,6 +32,17 @@ class SubscriptionLinkTest {
         }
         assertNull(SubscriptionLink.parse("vless://id@example.com:443"))
         assertNull(SubscriptionLink.parse("not a link"))
+    }
+
+    @Test
+    fun `a name alone in the fragment names the group and leaves the URL clean`() {
+        val link = SubscriptionLink.parse("https://sub.example.com/abc?x=1#name=Home%20VPN")!!
+        assertEquals("https://sub.example.com/abc?x=1", link.url)
+        assertEquals("Home VPN", link.name)
+        assertFalse(link.isFronted)
+        val app = SubscriptionLink.parse("mythaia://import?url=https%3A%2F%2Fsub.example.com%2Fabc&name=Bulk")!!
+        assertEquals("https://sub.example.com/abc", SubscriptionLink.parse(app.toFragmentLink())!!.url)
+        assertEquals("Bulk", SubscriptionLink.parse(app.toFragmentLink())!!.name)
     }
 
     @Test
