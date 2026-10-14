@@ -79,7 +79,7 @@
     <!-- Onboarding -->
     <string name="country_bypass_title">Country Bypass</string>
     <string name="country_bypass_description">Route traffic to your home country directly, bypassing the proxy for faster local access.</string>
-    <string name="ad_blocking_title">AD Blocking</string>
+    <string name="ad_blocking_title">Ad Blocking</string>
     <string name="ad_blocking_description">Block ads and trackers at the network level for a cleaner browsing experience.</string>
     <string name="enable_ad_blocking">Enable AD Blocking</string>
     <string name="get_started">Get Started</string>
