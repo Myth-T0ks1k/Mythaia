@@ -4,6 +4,19 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- WebSocket servers: a normal close from the server (`1000`, `1001`, or the empty `1005` a CDN
+  often sends) now ends the connection cleanly. It used to be treated as a failure, so the app on
+  the other end got a reset instead of the end of the data and the log filled with
+  “WebSocket closed (1005)”.
+- An empty close frame is answered with an empty one; the reply used to carry the reserved
+  code 1005.
+- A failed connection to the server is logged once as “TCP connection failed: Connection timed
+  out” instead of repeating “Connection failed” three times.
+
 ## [1.0.0] — 2026-10-14
 
 The first public release of Mythaia for Android, Wear OS and Windows.
@@ -45,4 +58,5 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[Unreleased]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/Myth-T0ks1k/Mythaia/releases/tag/v1.0.0
