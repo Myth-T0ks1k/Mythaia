@@ -23,8 +23,8 @@ android {
         applicationId = "com.mythaia"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.0"
+        versionCode = 23
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

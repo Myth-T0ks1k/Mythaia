@@ -62,12 +62,12 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| Android | `Mythaia-1.0.0-android-universal.apk` | 适用于所有设备：arm64、armeabi-v7a、x86、x86_64 |
-| Android | `Mythaia-1.0.0-android-arm64-v8a.apk` | 体积更小，适用于现代手机 |
-| Wear OS | `Mythaia-1.0.0-wear-os.apk` | 手机应用的配套应用，需要 Wear OS 3 或更高版本 |
-| Windows | `Mythaia-Pro-1.0.0-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
-| Windows | `Mythaia-Pro-1.0.0-windows-x64.msi` | 同上，MSI 安装包 |
-| Windows | `Mythaia-Pro-1.0.0-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
+| Android | `Mythaia-1.0.1-android-universal.apk` | 适用于所有设备：arm64、armeabi-v7a、x86、x86_64 |
+| Android | `Mythaia-1.0.1-android-arm64-v8a.apk` | 体积更小，适用于现代手机 |
+| Wear OS | `Mythaia-1.0.1-wear-os.apk` | 手机应用的配套应用，需要 Wear OS 3 或更高版本 |
+| Windows | `Mythaia-Pro-1.0.1-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
+| Windows | `Mythaia-Pro-1.0.1-windows-x64.msi` | 同上，MSI 安装包 |
+| Windows | `Mythaia-Pro-1.0.1-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
 
 每个版本都附有 `SHA256SUMS.txt`，列出所有文件的 SHA-256 校验值。需要 Android 8.0 或更高版本，
 以及 Windows 10 或 11（x64）；在 Windows 上使用 TUN 模式时会请求管理员权限。
