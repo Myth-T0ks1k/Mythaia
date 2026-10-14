@@ -54,7 +54,12 @@ android {
         }
     }
 
-    val wantsRelease = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+    // Only this module's release tasks need the key; the Windows app's
+    // createReleaseDistributable must not trip the check on a machine (or a
+    // CI runner) that has none.
+    val wantsRelease = gradle.startParameter.taskNames.any { name ->
+        name.contains("Release", ignoreCase = true) && (name.startsWith(":app:") || !name.startsWith(":"))
+    }
     if (wantsRelease && !hasReleaseSigning) {
         error(
             "Release signing is not configured. Set KEYSTORE_FILE, KEYSTORE_PASSWORD, " +

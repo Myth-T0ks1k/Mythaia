@@ -1,0 +1,75 @@
+name: Windows release
+
+# Builds the Windows packages on a clean runner and attaches them to the
+# GitHub release of the pushed tag (draft or published), then rewrites
+# SHA256SUMS.txt so it covers every asset of the release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v1.0.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Package and attach
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Native library and Wintun
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSDIR=%%i"
+          echo Visual Studio: %VSDIR%
+          call desktop\native\fetch-wintun.cmd || exit /b 1
+          call desktop\native\build.cmd || exit /b 1
+
+      - name: Package
+        run: ./gradlew :desktop:packageMsi :desktop:packageExe :desktop:createReleaseDistributable --stacktrace
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          $v = $env:TAG.TrimStart('v')
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item (Get-Item desktop/build/compose/binaries/main/msi/*.msi) "dist/Mythaia-Pro-$v-windows-x64.msi"
+          Copy-Item (Get-Item desktop/build/compose/binaries/main/exe/*.exe) "dist/Mythaia-Pro-$v-windows-x64-setup.exe"
+          Compress-Archive -Path "desktop/build/compose/binaries/main-release/app/Mythaia Pro" -DestinationPath "dist/Mythaia-Pro-$v-windows-x64-portable.zip"
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Attach to the release
+        shell: pwsh
+        run: gh release upload $env:TAG (Get-ChildItem dist).FullName --clobber --repo $env:GITHUB_REPOSITORY
+
+      - name: Checksums for every asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force all | Out-Null
+          gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --dir all --pattern 'Mythaia-*' --clobber
+          $lines = Get-ChildItem all | Sort-Object Name | ForEach-Object {
+            "{0} *{1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          }
+          [IO.File]::WriteAllText("$PWD/SHA256SUMS.txt", ($lines -join "`n") + "`n")
+          Get-Content SHA256SUMS.txt
+          gh release upload $env:TAG SHA256SUMS.txt --clobber --repo $env:GITHUB_REPOSITORY
