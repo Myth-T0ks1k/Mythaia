@@ -267,11 +267,14 @@ object SubscriptionFetcher {
         }
 
         val parsablePrefixes = ProxyConfiguration.parsableUrlPrefixes
+        // A line at a time: lines() split the whole body into a list up
+        // front, and each step after it built another list.
         val configurations = bodyString
-            .lines()
+            .lineSequence()
             .map { it.trim() }
             .filter { line -> parsablePrefixes.any { line.startsWith(it) } }
             .mapNotNull { runCatching { ProxyConfiguration.fromUrl(it) }.getOrNull() }
+            .toList()
 
         if (configurations.isEmpty()) throw FetchError.NoConfigurations()
 
@@ -287,15 +290,34 @@ object SubscriptionFetcher {
     }
 
     private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(16 * 1024)
+        // Filled chunk by chunk and joined once, at the exact size. A
+        // ByteArrayOutputStream copied everything each time it grew and then
+        // once more to hand it out, which near the cap is tens of megabytes
+        // shuffled on a phone for one list of servers.
+        val chunks = ArrayList<ByteArray>()
+        var chunk = ByteArray(64 * 1024)
+        var used = 0
+        var total = 0
         while (true) {
-            val n = input.read(buffer)
+            if (used == chunk.size) {
+                chunks += chunk
+                chunk = ByteArray(chunk.size)
+                used = 0
+            }
+            val n = input.read(chunk, used, chunk.size - used)
             if (n < 0) break
-            if (out.size() + n > limit) throw FetchError.NetworkError("Response larger than $limit bytes")
-            out.write(buffer, 0, n)
+            if (total + n > limit) throw FetchError.NetworkError("Response larger than $limit bytes")
+            used += n
+            total += n
         }
-        return out.toByteArray()
+        val out = ByteArray(total)
+        var at = 0
+        for (full in chunks) {
+            full.copyInto(out, at)
+            at += full.size
+        }
+        chunk.copyInto(out, at, 0, used)
+        return out
     }
 
     /**

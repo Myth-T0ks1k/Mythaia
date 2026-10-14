@@ -25,9 +25,20 @@ fun String.base64UrlToByteArray(): ByteArray =
  * `-_` alphabet; the standard `+/` alphabet otherwise.
  */
 fun decodeBase64Lenient(text: String, urlSafe: Boolean = false): ByteArray {
-    val cleaned = text.filterNot { it.isWhitespace() }
+    // Whitespace is skipped straight into the bytes the decoder reads.
+    // filterNot built a copy of the text and decode(String) turned that into
+    // a third, megabytes each for a subscription body near its size cap.
+    val bytes = ByteArray(text.length)
+    var n = 0
+    for (c in text) {
+        if (c.isWhitespace()) continue
+        // decode(String) made anything past Latin-1 a '?', which it then
+        // refused; nothing there is base64.
+        if (c.code > 0xFF) throw IllegalArgumentException("Illegal base64 character ${c.code.toString(16)}")
+        bytes[n++] = c.code.toByte()
+    }
     val decoder = if (urlSafe) java.util.Base64.getUrlDecoder() else java.util.Base64.getDecoder()
-    return decoder.decode(cleaned)
+    return decoder.decode(if (n == bytes.size) bytes else bytes.copyOf(n))
 }
 
 fun String.base64UrlToByteArrayOrNull(): ByteArray? =
