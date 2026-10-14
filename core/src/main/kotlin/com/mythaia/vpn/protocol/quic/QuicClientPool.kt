@@ -21,7 +21,8 @@ import java.util.concurrent.ConcurrentHashMap
  * and the connections were never closed, each holding a socket and, for
  * TUIC, a heartbeat until the server's idle timeout. Clients bring their
  * session back up on their own when it dies; [closeAll] ends them when the
- * tunnel stops or switches server.
+ * tunnel stops or switches server, and [evict] ends one server's after a
+ * latency test (see [com.mythaia.vpn.protocol.ProxyClientFactory.release]).
  */
 object QuicClientPool {
 
@@ -44,8 +45,22 @@ object QuicClientPool {
         t.forEach { runCatching { it.close() } }
     }
 
+    /**
+     * Ends the session [configuration] reaches, if one is pooled.
+     *
+     * Nothing else would: the keep-alive (15 s) beats the idle timeout (30 s)
+     * and TUIC adds its own heartbeat, so a pooled client never idles out, and
+     * each holds a socket and two threads. A latency test across thousands of
+     * servers kept one per server and ran out of threads.
+     */
+    fun evict(configuration: ProxyConfiguration) {
+        val k = key(configuration)
+        hysteria.remove(k)?.let { runCatching { it.close() } }
+        tuic.remove(k)?.let { runCatching { it.close() } }
+    }
+
     /** Everything that makes two configurations reach the same session. */
-    private fun key(c: ProxyConfiguration): String = listOf(
+    internal fun key(c: ProxyConfiguration): String = listOf(
         c.outboundProtocol, c.serverAddress, c.serverPort, c.uuid, c.password, c.trojanPassword,
         c.obfuscation, c.obfuscationPassword, c.hysteriaUpMbps, c.hysteriaDownMbps,
         c.tls?.serverName, c.tls?.allowInsecure, c.tls?.fingerprint, c.tls?.alpn,

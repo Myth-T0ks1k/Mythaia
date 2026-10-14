@@ -66,6 +66,9 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
     /** The current TUN reader thread, tracked so a swap can retire its predecessor. */
     @Volatile
     private var tunReaderThread: Thread? = null
+    // Read off the lwIP thread too: the latency tester asks LiveTunnel which
+    // server is live before it releases a pooled session.
+    @Volatile
     final override var configuration: ProxyConfiguration? = null
         private set
 
@@ -507,6 +510,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         this.tunInput = FileInputStream(fd.fileDescriptor)
         this.tunOutput = FileOutputStream(fd.fileDescriptor)
         this.configuration = config
+        com.mythaia.vpn.protocol.LiveTunnel.register(this) { configuration }
         this.ipv6DNSEnabled = ipv6Dns
 
         // Register as lwIP callback handler
@@ -577,6 +581,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 tunOutput = null
                 tunFd = null
                 configuration = null
+                com.mythaia.vpn.protocol.LiveTunnel.unregister(this)
                 dnsResolver.shutdownNow()
                 if (instance === this) instance = null
                 onComplete?.invoke()

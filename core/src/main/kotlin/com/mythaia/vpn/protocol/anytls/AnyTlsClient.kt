@@ -225,6 +225,12 @@ class AnyTlsClient(
             private val pools = ConcurrentHashMap<UUID, Pool>()
             fun of(id: UUID): Pool = pools.getOrPut(id) { Pool() }
 
+            fun evict(id: UUID) {
+                pools.remove(id)?.shutdown()
+            }
+
+            fun contains(id: UUID): Boolean = pools.containsKey(id)
+
             fun shutdownAll() {
                 pools.values.forEach { it.shutdown() }
                 pools.clear()
@@ -254,5 +260,17 @@ class AnyTlsClient(
 
         /** Releases every pooled session and its TLS connection. */
         suspend fun shutdown() = Pool.shutdownAll()
+
+        /**
+         * Releases the sessions of profile [id] alone, after a latency test.
+         *
+         * The pool's own sweep runs only when that profile dials again, which
+         * after a test across a whole subscription it never does: every
+         * server tested kept its TLS connection open.
+         */
+        internal fun release(id: UUID) = Pool.evict(id)
+
+        /** Whether profile [id] has a pool; for tests. */
+        internal fun isPooled(id: UUID): Boolean = Pool.contains(id)
     }
 }

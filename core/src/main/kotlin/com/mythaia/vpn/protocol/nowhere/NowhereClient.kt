@@ -198,19 +198,25 @@ class NowhereClient(
             private val identities = ConcurrentHashMap<Key, Identity>()
             private val random = SecureRandom()
 
-            fun of(configuration: ProxyConfiguration): Identity {
-                val key = Key(
-                    id = configuration.id,
-                    host = configuration.serverAddress,
-                    port = configuration.serverPort,
-                    key = configuration.password.orEmpty(),
-                    uplink = configuration.nowhereUplink,
-                    downlink = configuration.nowhereDownlink,
-                    multiplex = configuration.nowhereMultiplex,
-                    tls = configuration.tls
-                )
-                return identities.getOrPut(key) { fresh() }
-            }
+            fun of(configuration: ProxyConfiguration): Identity =
+                identities.getOrPut(key(configuration)) { fresh() }
+
+            /** The identity [configuration] already has, without making one. */
+            fun existing(configuration: ProxyConfiguration): Identity? = identities[key(configuration)]
+
+            /** What makes two profiles one client, and so share one session. */
+            fun keyOf(configuration: ProxyConfiguration): Any = key(configuration)
+
+            private fun key(configuration: ProxyConfiguration) = Key(
+                id = configuration.id,
+                host = configuration.serverAddress,
+                port = configuration.serverPort,
+                key = configuration.password.orEmpty(),
+                uplink = configuration.nowhereUplink,
+                downlink = configuration.nowhereDownlink,
+                multiplex = configuration.nowhereMultiplex,
+                tls = configuration.tls
+            )
 
             /** An identity nobody else holds, for tests and for a new profile. */
             fun fresh(): Identity =
@@ -297,6 +303,22 @@ class NowhereClient(
         fun shutdown() {
             NowhereSession.closeAll()
             Identity.reset()
+        }
+
+        /** Where a profile's session is pooled: under its identity, which a session belongs to. */
+        internal fun poolKey(configuration: ProxyConfiguration): Any = Identity.keyOf(configuration)
+
+        /**
+         * Closes the session a latency test dialled for [configuration].
+         *
+         * Its own idle sweep takes a minute, and a test across a subscription
+         * opens a QUIC connection — a socket and two threads — per server far
+         * faster than that. The identity is kept, as an idle close keeps it.
+         */
+        internal fun release(configuration: ProxyConfiguration) {
+            val identity = Identity.existing(configuration) ?: return
+            val settings = runCatching { settings(configuration, identity.sessionId) }.getOrNull() ?: return
+            NowhereSession.evict(settings)
         }
     }
 }

@@ -465,6 +465,11 @@ class NowhereSession(val configuration: NowhereConfiguration) {
             session.close()
         }
 
+        /** Closes the session for [configuration], if there is one. */
+        fun evict(configuration: NowhereConfiguration) {
+            sessions.remove(configuration)?.close()
+        }
+
         /** Closes every session, for a tunnel that is going down. */
         fun closeAll() {
             val all = sessions.values.toList()

@@ -24,6 +24,32 @@ class NaiveClient(
     companion object {
         private const val MAX_RETRY_ATTEMPTS = 5
         private const val RETRY_BASE_DELAY_MS = 200L
+
+        internal fun naiveConfiguration(
+            configuration: ProxyConfiguration,
+            naiveProtocol: NaiveProtocol
+        ) = NaiveConfiguration(
+            proxyHost = configuration.serverAddress,
+            proxyPort = configuration.serverPort.toInt(),
+            username = configuration.naiveUsername,
+            password = configuration.naivePassword,
+            sni = configuration.tls?.serverName,
+            scheme = when (naiveProtocol) {
+                NaiveProtocol.HTTP11 -> NaiveConfiguration.NaiveScheme.HTTP11
+                NaiveProtocol.HTTP2 -> NaiveConfiguration.NaiveScheme.HTTP2
+            },
+            tls = configuration.tls
+        )
+
+        /** Where [Http2SessionPool] files this server's session; null for HTTP/1.1, which pools nothing. */
+        internal fun poolKey(configuration: ProxyConfiguration): String? =
+            if (configuration.naiveProtocol != NaiveProtocol.HTTP2) null
+            else naiveConfiguration(configuration, NaiveProtocol.HTTP2).poolKey
+
+        /** Closes this server's pooled HTTP/2 sessions, after a latency test. */
+        internal fun release(configuration: ProxyConfiguration) {
+            poolKey(configuration)?.let(Http2SessionPool::evict)
+        }
     }
 
     suspend fun connect(
@@ -65,18 +91,7 @@ class NaiveClient(
     ): NaiveProxyConnection {
         val destination = "$destinationHost:$destinationPort"
 
-        val naiveConfig = NaiveConfiguration(
-            proxyHost = configuration.serverAddress,
-            proxyPort = configuration.serverPort.toInt(),
-            username = configuration.naiveUsername,
-            password = configuration.naivePassword,
-            sni = configuration.tls?.serverName,
-            scheme = when (naiveProtocol) {
-                NaiveProtocol.HTTP11 -> NaiveConfiguration.NaiveScheme.HTTP11
-                NaiveProtocol.HTTP2 -> NaiveConfiguration.NaiveScheme.HTTP2
-            },
-            tls = configuration.tls
-        )
+        val naiveConfig = naiveConfiguration(configuration, naiveProtocol)
 
         val naiveTunnel: NaiveTunnel = when (naiveProtocol) {
             NaiveProtocol.HTTP11 -> {

@@ -86,7 +86,25 @@ object Http2SessionPool {
             allSessions = sessions.values.flatten()
             sessions.clear()
         }
-        for (session in allSessions) {
+        close(allSessions)
+    }
+
+    /**
+     * Closes the sessions filed under [key] ([NaiveConfiguration.poolKey]),
+     * after a latency test. Nothing reaps an idle pooled session, so every
+     * server a test across a subscription reached kept its TLS connection
+     * until the server gave up on it.
+     */
+    fun evict(key: String) {
+        val evicted = synchronized(this) { sessions.remove(key)?.toList() } ?: return
+        close(evicted)
+    }
+
+    /** Whether a session filed under [key] is pooled; for tests. */
+    internal fun holds(key: String): Boolean = synchronized(this) { sessions[key]?.isNotEmpty() == true }
+
+    private fun close(evicted: List<Http2Session>) {
+        for (session in evicted) {
             try {
                 session.onClose = null // Prevent re-entrant eviction.
                 session.close()

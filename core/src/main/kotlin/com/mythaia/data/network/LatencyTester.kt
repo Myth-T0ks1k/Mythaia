@@ -86,23 +86,32 @@ object LatencyTester {
             } ?: LatencyResult.Failed
         }
 
-        withTimeoutOrNull(TIMEOUT_MS) {
-            try {
-                when (kind) {
-                    LatencyKind.TCP -> performTcpTest(resolveConfig(config))
-                    LatencyKind.HANDSHAKE -> performHandshakeTest(resolveConfig(config))
-                    LatencyKind.HTTP -> performTest(resolveConfig(config))
+        // The dial goes through the same per-server pools the tunnel uses, and
+        // what it leaves there is closed once the test is over, however it
+        // ended: a test across thousands of servers otherwise kept a QUIC
+        // client or TLS session per server alive and crashed the app.
+        ProxyClientFactory.retain(config)
+        try {
+            withTimeoutOrNull(TIMEOUT_MS) {
+                try {
+                    when (kind) {
+                        LatencyKind.TCP -> performTcpTest(resolveConfig(config))
+                        LatencyKind.HANDSHAKE -> performHandshakeTest(resolveConfig(config))
+                        LatencyKind.HTTP -> performTest(resolveConfig(config))
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: com.mythaia.vpn.protocol.tls.TlsError.CertificateValidationFailed) {
+                    logger.error("Latency test insecure for ${config.name}: ${e.message}")
+                    LatencyResult.Insecure
+                } catch (e: Exception) {
+                    logger.error("Latency test failed for ${config.name}: ${e.message}")
+                    LatencyResult.Failed
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: com.mythaia.vpn.protocol.tls.TlsError.CertificateValidationFailed) {
-                logger.error("Latency test insecure for ${config.name}: ${e.message}")
-                LatencyResult.Insecure
-            } catch (e: Exception) {
-                logger.error("Latency test failed for ${config.name}: ${e.message}")
-                LatencyResult.Failed
-            }
-        } ?: LatencyResult.Failed
+            } ?: LatencyResult.Failed
+        } finally {
+            ProxyClientFactory.release(config)
+        }
     }
 
     /**

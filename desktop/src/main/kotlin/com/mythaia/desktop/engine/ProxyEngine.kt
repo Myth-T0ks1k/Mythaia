@@ -52,6 +52,9 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
             DnsCache.setActiveProxyDomain(configuration.serverAddress)
             stats.reset()
             server.start(settings.socksPort, settings.httpPort, settings.allowLan, settings.socksUdp)
+            // Latency tests leave the pooled sessions of the server in use alone.
+            // The property, not the parameter: it follows switchTo.
+            com.mythaia.vpn.protocol.LiveTunnel.register(this) { this.configuration }
         }
         if (settings.setSystemProxy && !systemProxySet) setSystemProxy(true, settings)
         logger.info("Outbound: ${configuration.name} (${configuration.outboundProtocol.displayName})")
@@ -74,6 +77,7 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
 
     fun stop() {
         server.stop()
+        com.mythaia.vpn.protocol.LiveTunnel.unregister(this)
         closePooledSessions()
         configuration = null
         DnsCache.setActiveProxyDomain(null)

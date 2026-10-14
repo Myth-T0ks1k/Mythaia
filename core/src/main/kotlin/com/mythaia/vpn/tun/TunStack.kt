@@ -108,6 +108,8 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
     fun start(config: ProxyConfiguration, settings: TunSettings) {
         this.settings = settings
         NativeBridge.callback = this
+        // Latency tests leave the pooled sessions of the server in use alone.
+        com.mythaia.vpn.protocol.LiveTunnel.register(this) { configuration }
         lwipExecutor.execute {
             running = true
             totalBytesIn.set(0)
@@ -135,6 +137,7 @@ class TunStack(private val host: TunHost) : NativeBridge.LwipCallback, LwipHost 
                 outputPackets.clear()
                 outputFlushScheduled = false
                 configuration = null
+                com.mythaia.vpn.protocol.LiveTunnel.unregister(this)
                 onComplete?.invoke()
             }
         }
