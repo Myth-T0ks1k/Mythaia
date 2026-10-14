@@ -1,6 +1,7 @@
 package com.mythaia.data.network
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LinkExtractorTest {
@@ -49,5 +50,32 @@ class LinkExtractorTest {
         val vmess = "vmess://eyJhZGQiOiIxLjIuMy40In0="
         assertEquals(listOf(vmess), LinkExtractor.extract("$vmess\n$vmess"))
         assertEquals(listOf("ss://YWVzOnBhc3M@1.2.3.4:8388#a"), LinkExtractor.extract("(ss://YWVzOnBhc3M@1.2.3.4:8388#a)"))
+    }
+
+    @Test
+    fun `an unknown scheme is passed over and the case of a known one does not matter`() {
+        assertEquals(
+            listOf("VLESS://id@h.example:443#a", "https://sub.example.com/x"),
+            LinkExtractor.extract("see foo://bar and tg://x, then VLESS://id@h.example:443#a, or https://sub.example.com/x")
+        )
+    }
+
+    @Test
+    fun `ten thousand links come out in order, and quickly`() {
+        // Searched for scheme by scheme, a paste this size never finished.
+        val links = List(10_000) { i ->
+            when (i % 4) {
+                0 -> "vless://5c8a1b9e-3f7d-4e2a-9b61-0d4c7e8f2a13@h$i.example.com:443?security=tls&type=ws#n$i"
+                1 -> "trojan://pw$i@t$i.example.com:443#t$i"
+                2 -> "hy2://pass$i@1.2.${i / 256 % 256}.${i % 256}:443?sni=x.com#h$i"
+                else -> "ss://YWVzOnBhc3M@s$i.example.com:8388#s$i"
+            }
+        }
+        val text = links.mapIndexed { i, link -> if (i % 3 == 0) "Server $i: $link." else link }.joinToString("\n")
+        val started = System.nanoTime()
+        val found = LinkExtractor.extract(text)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertEquals(links, found)
+        assertTrue("took $ms ms", ms < 2_000)
     }
 }

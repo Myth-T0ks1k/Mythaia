@@ -38,14 +38,8 @@ object LinkExtractor {
         val found = LinkedHashSet<String>()
         var i = 0
         while (i < text.length) {
-            // Searched case-insensitively in place rather than in a lowercased
-            // copy: lowercasing can change the length (Turkish "İ" becomes
-            // two chars), and an offset found in the copy would then land
-            // mid-link in the original.
-            val start = SCHEMES.mapNotNull { scheme ->
-                val at = text.indexOf(scheme, i, ignoreCase = true)
-                if (at < 0) null else at
-            }.minOrNull() ?: break
+            val start = nextLinkStart(text, i)
+            if (start < 0) break
             var end = start
             while (end < text.length && text[end] !in TERMINATORS) end++
             var link = text.substring(start, end)
@@ -54,6 +48,36 @@ object LinkExtractor {
             i = maxOf(end, start + 1)
         }
         return found.toList()
+    }
+
+    /**
+     * Where the first link at or after [from] starts, or -1.
+     *
+     * Every scheme ends in "://", so only that is searched for, and the
+     * schemes are tried against the few characters just before each hit.
+     * Searching the text for each scheme in turn rescanned all of the rest
+     * of it for every scheme it did not contain, once per link: a paste of
+     * a few thousand servers never finished, and the add screen froze.
+     */
+    private fun nextLinkStart(text: String, from: Int): Int {
+        var colon = text.indexOf("://", from)
+        while (colon >= 0) {
+            // Several schemes can end at the same "://" (`ss://` inside
+            // `vmess://`); the earliest start is the one the link has.
+            var start = -1
+            for (scheme in SCHEMES) {
+                val at = colon + 3 - scheme.length
+                if (at < from || (start >= 0 && start <= at)) continue
+                // Compared case-insensitively in place rather than in a
+                // lowercased copy: lowercasing can change the length (Turkish
+                // "İ" becomes two chars), and an offset found in the copy
+                // would then land mid-link in the original.
+                if (scheme.regionMatches(0, text, at, scheme.length, ignoreCase = true)) start = at
+            }
+            if (start >= 0) return start
+            colon = text.indexOf("://", colon + 1)
+        }
+        return -1
     }
 
     /** The real link inside another client's import link, or [link] itself. */
