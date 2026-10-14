@@ -236,6 +236,9 @@ class NioSocket : Transport {
         }
 
         state = State.FAILED
+        // The per-address error is already a ConnectionFailed; wrapping it
+        // again read "Connection failed: Connection failed: …" in the log.
+        if (lastError is NioSocketError.ConnectionFailed) throw lastError
         throw NioSocketError.ConnectionFailed(lastError?.message ?: "All addresses failed")
     }
 

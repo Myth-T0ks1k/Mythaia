@@ -46,6 +46,9 @@ class WebSocketConnection private constructor(
          */
         private const val MAX_FRAME_PAYLOAD = 16 * 1024 * 1024
 
+        /** Normal closure, going away, and a close with no status code (RFC 6455 §7.4.1). */
+        private val NORMAL_CLOSE_CODES = setOf(1000, 1001, 1005)
+
         /**
          * A whole maximum frame plus the read that completed it. The buffer
          * holds at most one incomplete frame, since a complete one is taken
@@ -183,6 +186,9 @@ class WebSocketConnection private constructor(
     }
 
     /**
+     * The next message, or null at the end of the stream: the transport's EOF
+     * or a normal close frame. A close reporting a fault throws.
+     *
      * Loops instead of recursing so consecutive control frames (Ping/Pong) cannot
      * blow the stack.
      */
@@ -199,13 +205,25 @@ class WebSocketConnection private constructor(
                     }
                     is FrameResult.Pong -> continue
                     is FrameResult.Close -> {
-                        val closePayload = byteArrayOf(
+                        // Echo the code; 1005 only stands for "none" and must
+                        // never be sent (RFC 6455 §7.4.1), so an empty close
+                        // gets an empty one back.
+                        val closePayload = if (result.code == 1005) ByteArray(0) else byteArrayOf(
                             (result.code shr 8).toByte(),
                             (result.code and 0xFF).toByte()
                         )
                         val closeFrame = buildFrame(0x08, closePayload)
                         try { transportSend(closeFrame) } catch (_: Exception) {}
                         lock.withLock { _isConnected = false }
+                        // A close frame is how a WebSocket server ends the
+                        // stream: Xray sends 1000 when the target hangs up,
+                        // and a CDN in front of it often relays that as an
+                        // empty close (1005). That is the end of the data,
+                        // like EOF on a socket. Treated as a failure, it made
+                        // the stack reset the app's connection and drop the
+                        // bytes still queued for it, cutting the tail off
+                        // responses. Codes that report a fault still fail.
+                        if (result.code in NORMAL_CLOSE_CODES) return null
                         throw WebSocketError.ConnectionClosed(result.code, result.reason)
                     }
                 }

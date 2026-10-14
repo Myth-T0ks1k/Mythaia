@@ -119,7 +119,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
             // The first piece still rides the connect, keeping the round-trip saving.
             socket.connect(host, port, initialData = pieces.first())
         } catch (e: Exception) {
-            logger.error("TCP connection failed: ${e.message}")
+            logger.error("TCP connection failed: ${com.mythaia.vpn.util.TransportErrorLogger.conciseErrorDescription(e)}")
             throw TlsError.ConnectionFailed(e.message ?: "Unknown error")
         }
 

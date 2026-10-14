@@ -94,7 +94,7 @@ class RealityClient(
         try {
             socket.connect(host, port, initialData = clientHello)
         } catch (e: Exception) {
-            logger.error("[Reality] TCP connection failed: ${e.message}")
+            logger.error("[Reality] TCP connection failed: ${com.mythaia.vpn.util.TransportErrorLogger.conciseErrorDescription(e)}")
             throw RealityError.HandshakeFailed("TCP connection failed: ${e.message}")
         }
 
