@@ -33,11 +33,18 @@ object SingBoxJsonImporter {
     private val ROUTING_TYPES = setOf("selector", "urltest", "direct", "block", "dns")
 
     /** Whether [text] is sing-box JSON rather than Xray's. */
-    fun looksLikeSingBox(text: String): Boolean {
-        val t = text.trimStart()
-        if (!t.startsWith("{") && !t.startsWith("[")) return false
-        if (!t.contains("\"type\"")) return false
-        val root = runCatching { XrayJsonImporter.parseJson(text) }.getOrNull() ?: return false
+    fun looksLikeSingBox(text: String): Boolean =
+        looksLikeSingBox(text) { runCatching { XrayJsonImporter.parseJson(text) }.getOrNull() }
+
+    /**
+     * [looksLikeSingBox] with the parsing left to [tree], so a caller that
+     * goes on to import the JSON builds the tree once rather than again for
+     * each step: for a body of thousands of outbounds that was three parses.
+     */
+    internal fun looksLikeSingBox(text: String, tree: () -> Any?): Boolean {
+        if (!XrayJsonImporter.startsLikeJson(text)) return false
+        if (!text.contains("\"type\"")) return false
+        val root = tree() ?: return false
         return isSingBox(root)
     }
 

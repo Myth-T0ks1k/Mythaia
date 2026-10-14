@@ -35,15 +35,26 @@ object XrayJsonImporter {
      * `protocol` nor `outbounds`, only `type` and `server`.
      */
     fun looksLikeJson(text: String): Boolean {
-        val t = text.trimStart()
-        if (!t.startsWith("{") && !t.startsWith("[")) return false
-        return t.contains("\"protocol\"") || t.contains("\"outbounds\"") || t.contains("\"endpoints\"") ||
-            (t.contains("\"type\"") && t.contains("\"server\""))
+        if (!startsLikeJson(text)) return false
+        return text.contains("\"protocol\"") || text.contains("\"outbounds\"") || text.contains("\"endpoints\"") ||
+            (text.contains("\"type\"") && text.contains("\"server\""))
+    }
+
+    /**
+     * Whether the first thing past any whitespace opens an object or array.
+     * Looked up in place: trimStart() copied the whole body, megabytes for a
+     * subscription of thousands of servers, on every check.
+     */
+    internal fun startsLikeJson(text: String): Boolean {
+        val first = text.indexOfFirst { !it.isWhitespace() }
+        return first >= 0 && (text[first] == '{' || text[first] == '[')
     }
 
     /** One config per usable outbound. Throws [ProxyError.InvalidUrl] when nothing usable is there. */
-    fun parse(text: String): List<ProxyConfiguration> {
-        val root = parseJson(text)
+    fun parse(text: String): List<ProxyConfiguration> = parse(parseJson(text))
+
+    /** [parse] of a tree [parseJson] already built, for a caller that looked into it first. */
+    internal fun parse(root: Any): List<ProxyConfiguration> {
         if (SingBoxJsonImporter.isSingBox(root)) return SingBoxJsonImporter.parse(root)
 
         val documents = collectDocuments(root)
@@ -56,11 +67,19 @@ object XrayJsonImporter {
             // Tags are only unique within one config: every entry of a JSON
             // subscription calls its server "proxy".
             val byTag = outbounds.filter { it.optString("tag").isNotEmpty() }.associateBy { it.getString("tag") }
+            // How many outbounds dial through each tag, counted once. Asking
+            // every outbound about every other was quadratic, and a config of
+            // thousands of servers froze the import.
+            val dialers = outbounds.mapNotNull { dialerProxyOf(it) }.groupingBy { it }.eachCount()
             val servers = outbounds.filter { outbound ->
+                val tag = outbound.optString("tag")
+                // One that names itself is not carrying another, and is left
+                // for convert() to refuse as circular.
+                val others = (dialers[tag] ?: 0) - (if (dialerProxyOf(outbound) == tag) 1 else 0)
                 outbound.optString("protocol").lowercase() in PROXY_PROTOCOLS &&
                     // A hop that only exists to carry another outbound is imported
                     // as part of that outbound's chain, not as a server of its own.
-                    outbounds.none { it !== outbound && dialerProxyOf(it) == outbound.optString("tag") }
+                    others == 0
             }
             servers.forEachIndexed { index, outbound ->
                 val name = nameOf(outbound, document.remarks, index, servers.size)
@@ -103,10 +122,14 @@ object XrayJsonImporter {
     /** JSON as Xray reads it: comments and trailing commas allowed. */
     internal fun parseJson(text: String): Any {
         val trimmed = text.trim()
-        runCatching { return parseAny(trimmed) }
+        val first = runCatching { parseAny(trimmed) }
+        first.getOrNull()?.let { return it }
         // Xray accepts comments and trailing commas; org.json does not.
         val cleaned = stripComments(trimmed)
-        return runCatching { parseAny(cleaned) }.getOrElse {
+        // With nothing stripped a second parse could only fail the same way,
+        // after another pass over a body that can run to megabytes.
+        val retry = if (cleaned == trimmed) first else runCatching { parseAny(cleaned) }
+        return retry.getOrElse {
             throw ProxyError.InvalidUrl("Not valid JSON: ${it.message}")
         }
     }

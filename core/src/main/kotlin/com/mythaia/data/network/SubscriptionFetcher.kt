@@ -217,10 +217,15 @@ object SubscriptionFetcher {
     private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo, panel: PanelInfo = PanelInfo()): Result {
         val bodyString = decodeBody(data)
 
+        // Built at most once and shared by the checks and importers below,
+        // which each parsed the body again: three trees for a JSON
+        // subscription of thousands of outbounds.
+        val json by lazy { runCatching { XrayJsonImporter.parseJson(bodyString) }.getOrNull() }
+
         // sing-box first: its configs have `outbounds` too, and only the
         // shape of each outbound tells the two apart.
-        if (SingBoxJsonImporter.looksLikeSingBox(bodyString)) {
-            val configurations = runCatching { SingBoxJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
+        if (SingBoxJsonImporter.looksLikeSingBox(bodyString) { json }) {
+            val configurations = runCatching { json?.let { SingBoxJsonImporter.parse(it) } }.getOrNull().orEmpty()
             if (configurations.isEmpty()) throw FetchError.NoConfigurations()
             return Result(
                 configurations = configurations,
@@ -234,7 +239,7 @@ object SubscriptionFetcher {
         }
 
         if (XrayJsonImporter.looksLikeJson(bodyString)) {
-            val configurations = runCatching { XrayJsonImporter.parse(bodyString) }.getOrNull().orEmpty()
+            val configurations = runCatching { json?.let { XrayJsonImporter.parse(it) } }.getOrNull().orEmpty()
             if (configurations.isEmpty()) throw FetchError.NoConfigurations()
             return Result(
                 configurations = configurations,

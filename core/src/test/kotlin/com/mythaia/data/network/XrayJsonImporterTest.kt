@@ -267,6 +267,47 @@ class XrayJsonImporterTest {
             assertTrue(e.message!!.contains("No proxy outbound"))
         }
         assertTrue(XrayJsonImporter.looksLikeJson(fullConfig))
+        assertTrue(XrayJsonImporter.looksLikeJson(" \n\t" + fullConfig))
         assertTrue(!XrayJsonImporter.looksLikeJson("vless://x@y:1"))
+        assertTrue(!XrayJsonImporter.looksLikeJson("  \n"))
+    }
+
+    @Test
+    fun `an outbound dialing through its own tag is still reported, as circular`() {
+        try {
+            XrayJsonImporter.parse(
+                """{"outbounds":[{"tag":"loop","protocol":"socks","settings":{"servers":[{"address":"1.2.3.4","port":1080}]},
+                   "streamSettings":{"sockopt":{"dialerProxy":"loop"}}}]}"""
+            )
+            fail("expected a refusal")
+        } catch (e: ProxyError.InvalidUrl) {
+            assertTrue(e.message, e.message!!.contains("circular"))
+        }
+    }
+
+    @Test
+    fun `thousands of outbounds with chains import in linear time`() {
+        // Every outbound used to be checked against every other for being a
+        // dialerProxy hop; a config this size froze the import.
+        val count = 6_000
+        val outbounds = (0 until count).joinToString(",") { i ->
+            if (i % 2 == 0) {
+                """{"tag":"exit-$i","protocol":"trojan","settings":{"servers":[{"address":"exit$i.example.com","port":443,"password":"pw$i"}]},
+                   "streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"serverName":"exit$i.example.com"},
+                   "sockopt":{"dialerProxy":"entry-${i + 1}"}}}"""
+            } else {
+                """{"tag":"entry-$i","protocol":"shadowsocks","settings":{"servers":[{"address":"entry$i.example.com","port":8388,"method":"aes-256-gcm","password":"s$i"}]}}"""
+            }
+        }
+        val json = """{"outbounds":[$outbounds,{"tag":"direct","protocol":"freedom"}]}"""
+        val started = System.nanoTime()
+        val configs = XrayJsonImporter.parse(json)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        // Each entry hop is carried by its exit, not listed on its own.
+        assertEquals(count / 2, configs.size)
+        assertEquals("exit-0", configs.first().name)
+        assertEquals("entry1.example.com", configs.first().chain!!.single().serverAddress)
+        assertEquals("exit${count - 2}.example.com", configs.last().serverAddress)
+        assertTrue("took $ms ms", ms < 5_000)
     }
 }
