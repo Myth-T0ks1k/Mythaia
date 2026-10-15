@@ -13,6 +13,8 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#скачать)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
+[![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
+[![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
 
 [English](../../README.md) · **Русский** · [Türkmençe](README.tk.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
@@ -63,6 +65,7 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 ## Скачать
 
 Последняя версия — на странице **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)**.
+Новые версии публикуются и в Telegram-канале [@mythaia](https://t.me/mythaia).
 
 | Платформа | Файл | Примечание |
 |---|---|---|
@@ -167,6 +170,8 @@ gradlew :desktop:packageExe :desktop:packageMsi
 Сообщения об ошибках, идеи и pull request'ы приветствуются. Сначала прочитайте
 [CONTRIBUTING.md](../../CONTRIBUTING.md), а об уязвимостях сообщайте приватно, как описано
 в [SECURITY.md](../../SECURITY.md).
+
+Вопросы и обсуждение — в Telegram-чате [@mythaia_chat](https://t.me/mythaia_chat).
 
 ## Лицензия
 

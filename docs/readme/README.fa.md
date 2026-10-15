@@ -13,6 +13,8 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#دانلود)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
+[![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
+[![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
 
 [English](../../README.md) · [Русский](README.ru.md) · [Türkmençe](README.tk.md) · [简体中文](README.zh-CN.md) · **فارسی**
 
@@ -62,6 +64,7 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 ## دانلود
 
 آخرین نسخه را از صفحهٔ **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)** دریافت کنید.
+نسخه‌های جدید در کانال تلگرام [@mythaia](https://t.me/mythaia) هم منتشر می‌شوند.
 
 | پلتفرم | فایل | توضیح |
 |---|---|---|
@@ -164,6 +167,8 @@ gradlew :desktop:packageExe :desktop:packageMsi
 
 گزارش اشکال، ایده و pull request پذیرفته می‌شود. لطفاً ابتدا [CONTRIBUTING.md](../../CONTRIBUTING.md) را
 بخوانید و مشکلات امنیتی را طبق [SECURITY.md](../../SECURITY.md) به‌صورت خصوصی گزارش دهید.
+
+پرسش و گفت‌وگو: گروه تلگرام [@mythaia_chat](https://t.me/mythaia_chat).
 
 ## مجوز
 

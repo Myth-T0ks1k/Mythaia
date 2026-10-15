@@ -13,6 +13,8 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#download)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](LICENSE.txt)
+[![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
+[![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
 
 **English** · [Русский](docs/readme/README.ru.md) · [Türkmençe](docs/readme/README.tk.md) · [简体中文](docs/readme/README.zh-CN.md) · [فارسی](docs/readme/README.fa.md)
 
@@ -63,6 +65,7 @@ bypass are part of the app, not add-ons.
 ## Download
 
 Get the latest build from **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)**.
+New versions are also posted in the Telegram channel [@mythaia](https://t.me/mythaia).
 
 | Platform | File | Notes |
 |---|---|---|
@@ -167,6 +170,8 @@ The `core` module is also published to
 
 Bug reports, ideas and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md)
 first, and report security problems privately as described in [SECURITY.md](SECURITY.md).
+
+Questions and discussion: [@mythaia_chat](https://t.me/mythaia_chat) on Telegram.
 
 ## License
 

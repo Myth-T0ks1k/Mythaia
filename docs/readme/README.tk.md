@@ -13,6 +13,8 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#ýükläp-almak)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
+[![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
+[![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
 
 [English](../../README.md) · [Русский](README.ru.md) · **Türkmençe** · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
@@ -63,6 +65,7 @@ goşmaça däl-de, programmanyň öz bölegidir.
 ## Ýükläp almak
 
 Iň täze wersiýa **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)** sahypasynda.
+Täze wersiýalar Telegram kanalynda [@mythaia](https://t.me/mythaia) hem çap edilýär.
 
 | Platforma | Faýl | Bellik |
 |---|---|---|
@@ -166,6 +169,8 @@ Gurnaýjylar üçin `PATH`-da WiX 3.14 gerek. Ulanyjynyň maglumatlary `%APPDATA
 Ýalňyşlyklar barada habarlar, pikirler we pull request-ler hoş görülýär. Ilki
 [CONTRIBUTING.md](../../CONTRIBUTING.md) okaň, howpsuzlyk meseleleri barada bolsa
 [SECURITY.md](../../SECURITY.md)-de beýan edilişi ýaly gizlin habar beriň.
+
+Soraglar we pikir alyşmak — Telegram söhbetdeşliginde [@mythaia_chat](https://t.me/mythaia_chat).
 
 ## Ygtyýarnama
 

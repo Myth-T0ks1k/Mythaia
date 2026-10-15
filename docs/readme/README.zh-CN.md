@@ -13,6 +13,8 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#下载)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
+[![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
+[![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
 
 [English](../../README.md) · [Русский](README.ru.md) · [Türkmençe](README.tk.md) · **简体中文** · [فارسی](README.fa.md)
 
@@ -59,6 +61,7 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 ## 下载
 
 最新版本见 **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/latest)**。
+新版本也会发布在 Telegram 频道 [@mythaia](https://t.me/mythaia)。
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
@@ -156,6 +159,8 @@ gradlew :desktop:packageExe :desktop:packageMsi
 
 欢迎提交问题报告、想法和 pull request。请先阅读 [CONTRIBUTING.md](../../CONTRIBUTING.md)；
 安全问题请按 [SECURITY.md](../../SECURITY.md) 中的说明私下报告。
+
+提问与讨论：Telegram 群组 [@mythaia_chat](https://t.me/mythaia_chat)。
 
 ## 许可证
 
