@@ -34,7 +34,12 @@ sealed class LatencyResult {
  * HTTP goes all the way through the proxy to the internet.
  */
 enum class LatencyKind {
-    /** Time to complete the TCP connect to the server. */
+    /**
+     * The quick reachability ping: the TCP connect for a server that listens
+     * on TCP, and a QUIC probe ([QuicPing]) for one that listens on UDP only
+     * (Hysteria2, TUIC, Nowhere over QUIC). A WireGuard peer gets its real
+     * handshake, as for every kind. The name stays for stored settings.
+     */
     TCP,
 
     /** Time to a finished proxy handshake (TCP + TLS/Reality + protocol). */
@@ -95,7 +100,7 @@ object LatencyTester {
             withTimeoutOrNull(TIMEOUT_MS) {
                 try {
                     when (kind) {
-                        LatencyKind.TCP -> performTcpTest(resolveConfig(config))
+                        LatencyKind.TCP -> performPingTest(resolveConfig(config))
                         LatencyKind.HANDSHAKE -> performHandshakeTest(resolveConfig(config))
                         LatencyKind.HTTP -> performTest(resolveConfig(config))
                     }
@@ -193,8 +198,9 @@ object LatencyTester {
     }.flowOn(Dispatchers.IO)
 
     /** Times the TCP connect alone, to the first hop of a chain or the server itself. */
-    private suspend fun performTcpTest(config: ProxyConfiguration): LatencyResult {
+    private suspend fun performPingTest(config: ProxyConfiguration): LatencyResult {
         val first = config.chain?.firstOrNull() ?: config
+        if (listensOnUdp(first)) return pingUdp(first)
         val socket = com.mythaia.vpn.util.NioSocket()
         val started = System.nanoTime()
         try {
@@ -204,6 +210,31 @@ object LatencyTester {
         }
         val elapsed = ((System.nanoTime() - started) / 1_000_000L).toInt()
         return LatencyResult.Success(elapsed.coerceAtLeast(1))
+    }
+
+    /** Whether [config]'s server takes its first packets over UDP (QUIC), where a TCP connect proves nothing. */
+    internal fun listensOnUdp(config: ProxyConfiguration): Boolean = when (config.outboundProtocol) {
+        com.mythaia.data.model.OutboundProtocol.HYSTERIA2,
+        com.mythaia.data.model.OutboundProtocol.TUIC -> true
+        com.mythaia.data.model.OutboundProtocol.NOWHERE ->
+            (config.nowhereUplink ?: com.mythaia.vpn.protocol.nowhere.NowhereNetwork.UDP.wireName) ==
+                com.mythaia.vpn.protocol.nowhere.NowhereNetwork.UDP.wireName
+        else -> false
+    }
+
+    /** The UDP side of the ping: a QUIC probe, disguised the way a Hysteria2 server expects. */
+    private fun pingUdp(config: ProxyConfiguration): LatencyResult {
+        val host = DnsCache.resolveHost(config.connectAddress) ?: return LatencyResult.Failed
+        val target = java.net.InetSocketAddress(java.net.InetAddress.getByName(host), config.serverPort.toInt())
+        val obfuscator = if (config.outboundProtocol == com.mythaia.data.model.OutboundProtocol.HYSTERIA2) {
+            com.mythaia.vpn.protocol.hysteria.HysteriaObfuscation
+                .make(config.obfuscation, config.obfuscationPassword)
+                ?.let { com.mythaia.vpn.protocol.hysteria.HysteriaObfuscator.of(it) }
+        } else {
+            null
+        }
+        val ms = QuicPing.ping(target, obfuscator) ?: return LatencyResult.Failed
+        return LatencyResult.Success(ms)
     }
 
     /**
