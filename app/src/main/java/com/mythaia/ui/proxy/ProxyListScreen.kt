@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.MoreVert
@@ -75,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,7 +96,9 @@ import com.mythaia.ui.components.WingMark
 import com.mythaia.ui.components.wingTextFieldColors
 import com.mythaia.viewmodel.ProxyGroup
 import com.mythaia.viewmodel.VpnViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The Proxies screen. No title: the two tabs (servers, chains) sit at the
@@ -140,6 +144,9 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var sortByLatency by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmRemoveFailed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
 
     // Auto-open the Add sheet when a deep link arrives.
     val pendingDeepLink by viewModel.pendingDeepLinkUrl.collectAsState()
@@ -179,6 +186,22 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
         viewModel.testLatencies(forConfigs = group.configs, kind = kind)
     }
 
+    // Servers of this group that failed their last check, for "Remove non-working".
+    val failedCount = remember(group, latencyResults) {
+        group.configs.count {
+            val result = latencyResults[it.id]
+            result is LatencyResult.Failed || result is LatencyResult.Insecure
+        }
+    }
+
+    fun exportGroup() {
+        val title = subscription?.name ?: defaultGroupName
+        scope.launch {
+            val (links, _) = withContext(Dispatchers.Default) { viewModel.exportLinks(group.configs) }
+            if (links.isNotEmpty()) LinkExport.share(context, links, title)
+        }
+    }
+
     /** Browsing a group is choosing it, the way Hiddify treats its profiles. */
     fun openGroup(id: String) {
         browsingGroupId = id
@@ -208,6 +231,18 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     if (tab == 0) {
+                        // The quick reachability check: TCP for servers on TCP,
+                        // a QUIC probe for those on UDP (Hysteria2, TUIC).
+                        IconButton(
+                            onClick = { runCheck(LatencyKind.TCP) },
+                            enabled = group.configs.isNotEmpty()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NetworkPing,
+                                contentDescription = stringResource(R.string.check_tcp_ping),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         // The plain speed test everyone knows: the real ping
                         // through the proxy, for the group on screen.
                         IconButton(
@@ -257,6 +292,19 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                                         menuOpen = false
                                         scope.launch { viewModel.autoSelectFastest(group.id) }
                                     }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.export_links)) },
+                                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                    enabled = group.configs.isNotEmpty(),
+                                    onClick = { menuOpen = false; exportGroup() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.remove_failed)) },
+                                    leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
+                                    enabled = failedCount > 0,
+                                    onClick = { menuOpen = false; confirmRemoveFailed = true }
                                 )
                                 if (subscription != null) {
                                     HorizontalDivider()
@@ -583,6 +631,26 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                 browsingGroupId = ProxyGroup.DEFAULT_ID
             },
             onDismiss = { subscriptionToDeleteId = null }
+        )
+    }
+
+    if (confirmRemoveFailed) {
+        val count = failedCount
+        ConfirmDialog(
+            title = stringResource(R.string.remove_failed_title),
+            text = pluralStringResource(R.plurals.remove_failed_message, count, count) +
+                if (subscription != null) "\n\n" + stringResource(R.string.remove_failed_subscription_note) else "",
+            confirmLabel = stringResource(R.string.delete),
+            onConfirm = {
+                confirmRemoveFailed = false
+                val removed = viewModel.removeFailed(group.id)
+                android.widget.Toast.makeText(
+                    context,
+                    resources.getQuantityString(R.plurals.removed_servers, removed, removed),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            },
+            onDismiss = { confirmRemoveFailed = false }
         )
     }
 

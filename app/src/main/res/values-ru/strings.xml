@@ -367,7 +367,23 @@
     <string name="pinned">Закреплён</string>
     <string name="auto_picked">Выбран автоматически</string>
     <string name="measuring">Замер…</string>
-    <string name="check_tcp_ping">TCP-пинг</string>
+    <string name="check_tcp_ping">Пинг (TCP/UDP)</string>
+    <string name="export_links">Экспорт ссылками</string>
+    <string name="remove_failed">Удалить нерабочие</string>
+    <string name="remove_failed_title">Удалить нерабочие серверы?</string>
+    <plurals name="remove_failed_message">
+        <item quantity="one">%d сервер не прошёл последнюю проверку. Удалить его из группы?</item>
+        <item quantity="few">%d сервера не прошли последнюю проверку. Удалить их из группы?</item>
+        <item quantity="many">%d серверов не прошли последнюю проверку. Удалить их из группы?</item>
+        <item quantity="other">%d сервера не прошли последнюю проверку. Удалить их из группы?</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">При следующем обновлении подписки они вернутся.</string>
+    <plurals name="removed_servers">
+        <item quantity="one">Удалён %d сервер</item>
+        <item quantity="few">Удалено %d сервера</item>
+        <item quantity="many">Удалено %d серверов</item>
+        <item quantity="other">Удалено %d сервера</item>
+    </plurals>
     <string name="check_real_ping">Настоящий пинг через прокси</string>
     <string name="check_handshake">Время хендшейка</string>
     <string name="latency_kind_handshake">хендшейк</string>

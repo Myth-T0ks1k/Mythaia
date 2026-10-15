@@ -359,7 +359,19 @@
     <string name="pinned">Berkidildi</string>
     <string name="auto_picked">Awto saýlady</string>
     <string name="measuring">Ölçenýär…</string>
-    <string name="check_tcp_ping">TCP ping</string>
+    <string name="check_tcp_ping">Ping (TCP/UDP)</string>
+    <string name="export_links">Baglanyşyk görnüşinde eksport</string>
+    <string name="remove_failed">Işlemeýänleri poz</string>
+    <string name="remove_failed_title">Işlemeýän serwerler pozulsynmy?</string>
+    <plurals name="remove_failed_message">
+        <item quantity="one">%d serwer soňky barlagdan geçmedi. Toparyň içinden pozulsynmy?</item>
+        <item quantity="other">%d serwer soňky barlagdan geçmedi. Toparyň içinden pozulsynmy?</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">Abuna indiki täzelenende olar yzyna geler.</string>
+    <plurals name="removed_servers">
+        <item quantity="one">%d serwer pozuldy</item>
+        <item quantity="other">%d serwer pozuldy</item>
+    </plurals>
     <string name="check_real_ping">Proksi üsti bilen hakyky ping</string>
     <string name="check_handshake">Handshake wagty</string>
     <string name="latency_kind_handshake">handshake</string>

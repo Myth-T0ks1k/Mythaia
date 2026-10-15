@@ -359,7 +359,19 @@
     <string name="pinned">سنجاق‌شده</string>
     <string name="auto_picked">انتخاب خودکار</string>
     <string name="measuring">در حال سنجش…</string>
-    <string name="check_tcp_ping">پینگ TCP</string>
+    <string name="check_tcp_ping">پینگ (TCP/UDP)</string>
+    <string name="export_links">خروجی به‌صورت لینک</string>
+    <string name="remove_failed">حذف سرورهای ناکارآمد</string>
+    <string name="remove_failed_title">سرورهای ناکارآمد حذف شوند؟</string>
+    <plurals name="remove_failed_message">
+        <item quantity="one">%d سرور در آخرین بررسی کار نکرد. از این گروه حذف شود؟</item>
+        <item quantity="other">%d سرور در آخرین بررسی کار نکردند. از این گروه حذف شوند؟</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">با به‌روزرسانی بعدی اشتراک دوباره برمی‌گردند.</string>
+    <plurals name="removed_servers">
+        <item quantity="one">%d سرور حذف شد</item>
+        <item quantity="other">%d سرور حذف شدند</item>
+    </plurals>
     <string name="check_real_ping">پینگ واقعی از طریق پراکسی</string>
     <string name="check_handshake">زمان هندشیک</string>
     <string name="latency_kind_handshake">هندشیک</string>

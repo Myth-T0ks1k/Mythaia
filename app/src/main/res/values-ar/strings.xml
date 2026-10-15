@@ -375,7 +375,27 @@
     <string name="pinned">مثبّت</string>
     <string name="auto_picked">اختير تلقائياً</string>
     <string name="measuring">جارٍ القياس…</string>
-    <string name="check_tcp_ping">TCP ping</string>
+    <string name="check_tcp_ping">بينغ (TCP/UDP)</string>
+    <string name="export_links">تصدير كروابط</string>
+    <string name="remove_failed">حذف غير العاملة</string>
+    <string name="remove_failed_title">حذف الخوادم غير العاملة؟</string>
+    <plurals name="remove_failed_message">
+        <item quantity="zero">‏%d خادم لم يعمل في آخر فحص. هل تريد حذفها من هذه المجموعة؟</item>
+        <item quantity="one">‏%d خادم لم يعمل في آخر فحص. هل تريد حذفه من هذه المجموعة؟</item>
+        <item quantity="two">‏%d خادمان لم يعملا في آخر فحص. هل تريد حذفهما من هذه المجموعة؟</item>
+        <item quantity="few">‏%d خوادم لم تعمل في آخر فحص. هل تريد حذفها من هذه المجموعة؟</item>
+        <item quantity="many">‏%d خادمًا لم يعمل في آخر فحص. هل تريد حذفها من هذه المجموعة؟</item>
+        <item quantity="other">‏%d خادم لم يعمل في آخر فحص. هل تريد حذفها من هذه المجموعة؟</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">سيعيدها التحديث التالي للاشتراك.</string>
+    <plurals name="removed_servers">
+        <item quantity="zero">تم حذف %d خادم</item>
+        <item quantity="one">تم حذف %d خادم</item>
+        <item quantity="two">تم حذف %d خادمين</item>
+        <item quantity="few">تم حذف %d خوادم</item>
+        <item quantity="many">تم حذف %d خادمًا</item>
+        <item quantity="other">تم حذف %d خادم</item>
+    </plurals>
     <string name="check_real_ping">ping حقيقي عبر الوكيل</string>
     <string name="check_handshake">وقت المصافحة</string>
     <string name="latency_kind_handshake">مصافحة</string>

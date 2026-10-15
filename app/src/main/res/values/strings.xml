@@ -382,10 +382,22 @@
     <string name="pinned">Pinned</string>
     <string name="auto_picked">Chosen by Auto</string>
     <string name="measuring">Measuring…</string>
-    <string name="check_tcp_ping">TCP ping</string>
+    <string name="check_tcp_ping">Ping (TCP/UDP)</string>
+    <string name="export_links">Export as links</string>
+    <string name="remove_failed">Remove non-working</string>
+    <string name="remove_failed_title">Remove non-working servers?</string>
+    <plurals name="remove_failed_message">
+        <item quantity="one">%d server did not work on its last check. Remove it from this group?</item>
+        <item quantity="other">%d servers did not work on their last check. Remove them from this group?</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">The next update of the subscription brings them back.</string>
+    <plurals name="removed_servers">
+        <item quantity="one">Removed %d server</item>
+        <item quantity="other">Removed %d servers</item>
+    </plurals>
     <string name="check_real_ping">Real ping through proxy</string>
     <string name="check_handshake">Handshake time</string>
-    <string name="latency_kind_tcp" translatable="false">TCP</string>
+    <string name="latency_kind_tcp" translatable="false">Ping</string>
     <string name="latency_kind_http" translatable="false">HTTP</string>
     <string name="latency_kind_handshake">handshake</string>
     <string name="group_settings">Subscription settings</string>

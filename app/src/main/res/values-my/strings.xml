@@ -355,7 +355,17 @@
     <string name="pinned">ပင်ထိုးထား</string>
     <string name="auto_picked">အလိုအလျောက် ရွေးချယ်ထား</string>
     <string name="measuring">တိုင်းတာနေသည်…</string>
-    <string name="check_tcp_ping">TCP ping</string>
+    <string name="check_tcp_ping">Ping (TCP/UDP)</string>
+    <string name="export_links">လင့်ခ်များအဖြစ် ထုတ်ယူရန်</string>
+    <string name="remove_failed">အလုပ်မလုပ်သည်များကို ဖယ်ရှားရန်</string>
+    <string name="remove_failed_title">အလုပ်မလုပ်သော ဆာဗာများကို ဖယ်ရှားမလား။</string>
+    <plurals name="remove_failed_message">
+        <item quantity="other">ဆာဗာ %d ခုသည် နောက်ဆုံးစစ်ဆေးမှုတွင် အလုပ်မလုပ်ပါ။ ဤအုပ်စုမှ ဖယ်ရှားမလား။</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">စာရင်းသွင်းမှုကို နောက်တစ်ကြိမ် အပ်ဒိတ်လုပ်သောအခါ ၎င်းတို့ ပြန်ပေါ်လာပါမည်။</string>
+    <plurals name="removed_servers">
+        <item quantity="other">ဆာဗာ %d ခု ဖယ်ရှားပြီးပါပြီ</item>
+    </plurals>
     <string name="check_real_ping">ပရောက်စီမှတဆင့် တကယ့် ping</string>
     <string name="check_handshake">Handshake ကြာချိန်</string>
     <string name="latency_kind_handshake">handshake</string>

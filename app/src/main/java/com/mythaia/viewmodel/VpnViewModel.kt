@@ -1510,6 +1510,73 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * The servers of [groupId] that did not work on their last check: no
+     * answer, or a certificate that does not verify. A server never checked
+     * is not among them.
+     */
+    fun failedIn(groupId: String): List<ProxyConfiguration> {
+        val results = _latencyResults.value
+        return groupConfigs(groupId).filter {
+            val result = results[it.id]
+            result is LatencyResult.Failed || result is LatencyResult.Insecure
+        }
+    }
+
+    /** Removes the servers of [groupId] that failed their last check; returns how many went. */
+    fun removeFailed(groupId: String): Int {
+        val failed = failedIn(groupId)
+        deleteConfigurations(failed)
+        return failed.size
+    }
+
+    /**
+     * Deletes several servers in one change of the store, with what
+     * [deleteConfiguration] does for one: a chain left without a hop is
+     * dropped, a subscription left empty goes with it, and a tunnel on a
+     * deleted server moves to what is selected now.
+     */
+    fun deleteConfigurations(configs: List<ProxyConfiguration>) {
+        if (configs.isEmpty()) return
+        val ids = configs.mapTo(HashSet()) { it.id }
+        val wasLive = _vpnStatus.value == VpnStatus.CONNECTED &&
+            (_selectedConfigId.value in ids || selectedConfiguration?.chain?.any { it.id in ids } == true)
+
+        configRepository.deleteAll(ids)
+        _latencyResults.value = _latencyResults.value - ids
+        val chainId = _selectedChainId.value
+        if (chainId != null) {
+            val chain = chainRepository.get(chainId)
+            if (chain == null || resolveChain(chain) == null) {
+                _selectedChainId.value = null
+                prefs.edit { remove("selectedChainId") }
+            }
+        }
+        val remaining = configRepository.getAll().mapNotNullTo(HashSet()) { it.subscriptionId }
+        configs.mapNotNullTo(HashSet()) { it.subscriptionId }
+            .filter { it !in remaining }
+            .forEach { subId -> subscriptionRepository.get(subId)?.let { subscriptionRepository.delete(subId, configRepository) } }
+
+        recomputeSelection()
+        checkOrphanedRuleSets()
+        if (wasLive) {
+            val next = selectedConfiguration
+            if (next != null) switchConfig(next) else disconnect()
+        }
+    }
+
+    /**
+     * [configs] as share links, one per line, in the form every client
+     * imports. Returns the text and how many servers have no link form.
+     */
+    fun exportLinks(configs: List<ProxyConfiguration>): Pair<String, Int> {
+        var skipped = 0
+        val links = configs.mapNotNull { config ->
+            runCatching { config.toUrl() }.getOrNull().also { if (it == null) skipped++ }
+        }
+        return links.joinToString("\n") to skipped
+    }
+
     fun configurations(forSubscription: Subscription): List<ProxyConfiguration> {
         return configRepository.getAll().filter { it.subscriptionId == forSubscription.id }
     }

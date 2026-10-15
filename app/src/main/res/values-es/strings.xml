@@ -363,7 +363,21 @@
     <string name="pinned">Fijado</string>
     <string name="auto_picked">Elegido por Auto</string>
     <string name="measuring">Midiendo…</string>
-    <string name="check_tcp_ping">Ping TCP</string>
+    <string name="check_tcp_ping">Ping (TCP/UDP)</string>
+    <string name="export_links">Exportar como enlaces</string>
+    <string name="remove_failed">Eliminar los que no funcionan</string>
+    <string name="remove_failed_title">¿Eliminar los servidores que no funcionan?</string>
+    <plurals name="remove_failed_message">
+        <item quantity="one">%d servidor falló en su última comprobación. ¿Eliminarlo de este grupo?</item>
+        <item quantity="many">%d servidores fallaron en su última comprobación. ¿Eliminarlos de este grupo?</item>
+        <item quantity="other">%d servidores fallaron en su última comprobación. ¿Eliminarlos de este grupo?</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">La próxima actualización de la suscripción los traerá de vuelta.</string>
+    <plurals name="removed_servers">
+        <item quantity="one">Se eliminó %d servidor</item>
+        <item quantity="many">Se eliminaron %d servidores</item>
+        <item quantity="other">Se eliminaron %d servidores</item>
+    </plurals>
     <string name="check_real_ping">Ping real a través del proxy</string>
     <string name="check_handshake">Tiempo de handshake</string>
     <string name="latency_kind_handshake">handshake</string>

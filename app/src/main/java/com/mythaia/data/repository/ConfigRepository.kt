@@ -88,6 +88,13 @@ class ConfigRepository(context: Context) {
         saveToDisk()
     }
 
+    /** Removes many at once: one emission and one disk write instead of N. */
+    fun deleteAll(ids: Set<UUID>) {
+        if (ids.isEmpty()) return
+        _configurations.update { list -> list.filter { it.id !in ids } }
+        saveToDisk()
+    }
+
     fun delete(id: UUID) {
         _configurations.update { list -> list.filter { it.id != id } }
         saveToDisk()

@@ -355,7 +355,17 @@
     <string name="pinned">已固定</string>
     <string name="auto_picked">由自动模式选择</string>
     <string name="measuring">正在测量…</string>
-    <string name="check_tcp_ping">TCP 延迟</string>
+    <string name="check_tcp_ping">Ping（TCP/UDP）</string>
+    <string name="export_links">导出为链接</string>
+    <string name="remove_failed">删除不可用的</string>
+    <string name="remove_failed_title">删除不可用的服务器？</string>
+    <plurals name="remove_failed_message">
+        <item quantity="other">%d 个服务器在上次检测中不可用。要从此分组中删除它们吗？</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">下次更新订阅时它们会重新出现。</string>
+    <plurals name="removed_servers">
+        <item quantity="other">已删除 %d 个服务器</item>
+    </plurals>
     <string name="check_real_ping">通过代理的真实延迟</string>
     <string name="check_handshake">握手耗时</string>
     <string name="latency_kind_handshake">握手</string>

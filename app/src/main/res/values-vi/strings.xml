@@ -355,7 +355,17 @@
     <string name="pinned">Đã ghim</string>
     <string name="auto_picked">Do Tự động chọn</string>
     <string name="measuring">Đang đo…</string>
-    <string name="check_tcp_ping">Ping TCP</string>
+    <string name="check_tcp_ping">Ping (TCP/UDP)</string>
+    <string name="export_links">Xuất dưới dạng liên kết</string>
+    <string name="remove_failed">Xóa máy chủ không hoạt động</string>
+    <string name="remove_failed_title">Xóa các máy chủ không hoạt động?</string>
+    <plurals name="remove_failed_message">
+        <item quantity="other">%d máy chủ không hoạt động ở lần kiểm tra gần nhất. Xóa chúng khỏi nhóm này?</item>
+    </plurals>
+    <string name="remove_failed_subscription_note">Lần cập nhật gói đăng ký tiếp theo sẽ đưa chúng trở lại.</string>
+    <plurals name="removed_servers">
+        <item quantity="other">Đã xóa %d máy chủ</item>
+    </plurals>
     <string name="check_real_ping">Ping thật qua proxy</string>
     <string name="check_handshake">Thời gian handshake</string>
     <string name="latency_kind_handshake">handshake</string>
