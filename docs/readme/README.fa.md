@@ -53,7 +53,7 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 | **انتقال** | TCP، WebSocket با early data، HTTPUpgrade، gRPC، XHTTP (stream-one، stream-up، packet-up)، QUIC |
 | **TLS** | اثر انگشت مرورگرها (Chrome، Firefox، Safari، iOS، Edge)، Reality، ECH، تکه‌تکه کردن ClientHello، پین کردن گواهی، *allow insecure* برای هر سرور با هشدار آشکار |
 | **مسیریابی** | حالت‌های قاعده‌ای و سراسری، مجموعه‌قواعد بر اساس دامنه، IP و GeoIP، عبور بر اساس کشور، تونل جداگانه برای هر برنامه، مسدودسازی تبلیغات، Fake-IP DNS، DNS روی HTTPS و TLS، IPv6 |
-| **سرورها** | لینک‌های اشتراک‌گذاری، کد QR، Clash YAML، JSON برای Xray و sing-box، زنجیرهٔ پروکسی، Mux با XUDP، سنجش تأخیر با TCP، دست‌دهی یا درخواست واقعی HTTP |
+| **سرورها** | لینک‌های اشتراک‌گذاری، کد QR، Clash YAML، JSON برای Xray و sing-box، زنجیرهٔ پروکسی، Mux با XUDP، پینگ با TCP یا برای سرورهای QUIC با UDP، دست‌دهی یا درخواست واقعی HTTP؛ خروجی به‌صورت لینک؛ حذف سرورهای ناکارآمد |
 | **اشتراک‌ها** | حجم مصرفی و تاریخ انقضا از پنل، به‌روزرسانی خودکار، اطلاعیه‌های ارائه‌دهنده، Remnawave HWID، **دامین فرانتینگ برای دانلود** |
 | **خودکار** | سریع‌ترین سرور گروه را انتخاب می‌کند، سنجش را ادامه می‌دهد و فقط با بهبود محسوس جابه‌جا می‌شود؛ وقتی سروری مسدود شود، خودش دوباره وصل می‌شود |
 | **Android** | کاشی تنظیمات سریع، ویجت صفحهٔ اصلی، VPN همیشه روشن، Android TV، برنامهٔ همراه Wear OS، رهگیری HTTPS با CA شخصی، ۹ زبان |
@@ -65,12 +65,12 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 
 | پلتفرم | فایل | توضیح |
 |---|---|---|
-| Android | `Mythaia-1.0.2-android-universal.apk` | برای همهٔ دستگاه‌ها: arm64، armeabi-v7a، x86، x86_64 |
-| Android | `Mythaia-1.0.2-android-arm64-v8a.apk` | کم‌حجم‌تر، برای گوشی‌های جدید |
-| Wear OS | `Mythaia-1.0.2-wear-os.apk` | همراه برنامهٔ گوشی، Wear OS 3 یا جدیدتر |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
+| Android | `Mythaia-1.1.0-android-universal.apk` | برای همهٔ دستگاه‌ها: arm64، armeabi-v7a، x86، x86_64 |
+| Android | `Mythaia-1.1.0-android-arm64-v8a.apk` | کم‌حجم‌تر، برای گوشی‌های جدید |
+| Wear OS | `Mythaia-1.1.0-wear-os.apk` | همراه برنامهٔ گوشی، Wear OS 3 یا جدیدتر |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
 
 هر نسخه فایل `SHA256SUMS.txt` را با چکسام SHA-256 همهٔ فایل‌ها دارد. Android 8.0 یا جدیدتر و
 Windows 10 یا 11 (x64) لازم است؛ حالت TUN در Windows دسترسی مدیر می‌خواهد.

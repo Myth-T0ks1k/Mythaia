@@ -54,7 +54,7 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 | **Транспорты** | TCP, WebSocket с early data, HTTPUpgrade, gRPC, XHTTP (stream-one, stream-up, packet-up), QUIC |
 | **TLS** | Отпечатки браузеров (Chrome, Firefox, Safari, iOS, Edge), Reality, ECH, фрагментация ClientHello, пиннинг сертификатов, *allow insecure* для отдельного сервера с заметным предупреждением |
 | **Маршрутизация** | Режимы «По правилам» и «Глобальный», наборы правил по доменам, IP и GeoIP, обход по стране, раздельное туннелирование по приложениям, блокировка рекламы, Fake-IP DNS, DNS поверх HTTPS и TLS, IPv6 |
-| **Серверы** | Ссылки, QR-коды, Clash YAML, JSON Xray и sing-box, цепочки прокси, Mux с XUDP, замер задержки по TCP, по рукопожатию или реальным HTTP-запросом |
+| **Серверы** | Ссылки, QR-коды, Clash YAML, JSON Xray и sing-box, цепочки прокси, Mux с XUDP, пинг по TCP или, для QUIC-серверов, по UDP; по рукопожатию или реальным HTTP-запросом; экспорт ссылками; удаление нерабочих |
 | **Подписки** | Трафик и срок действия из панели, автообновление, объявления провайдера, Remnawave HWID, **доменный фронтинг для скачивания** |
 | **Авто** | Выбирает самый быстрый сервер группы, продолжает замеры и переключается только при заметном выигрыше; сам переподключается, когда сервер блокируют |
 | **Android** | Плитка в шторке, виджет, постоянный VPN, Android TV, приложение для Wear OS, перехват HTTPS со своим сертификатом, 9 языков |
@@ -66,12 +66,12 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 
 | Платформа | Файл | Примечание |
 |---|---|---|
-| Android | `Mythaia-1.0.2-android-universal.apk` | Для любого устройства: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.0.2-android-arm64-v8a.apk` | Компактнее, для современных телефонов |
-| Wear OS | `Mythaia-1.0.2-wear-os.apk` | Дополнение к приложению на телефоне, Wear OS 3 и новее |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-setup.exe` | Установщик для текущего пользователя, права администратора не нужны |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64.msi` | То же в виде MSI-пакета |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-portable.zip` | Распакуйте куда угодно и запустите `Mythaia Pro.exe` |
+| Android | `Mythaia-1.1.0-android-universal.apk` | Для любого устройства: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.1.0-android-arm64-v8a.apk` | Компактнее, для современных телефонов |
+| Wear OS | `Mythaia-1.1.0-wear-os.apk` | Дополнение к приложению на телефоне, Wear OS 3 и новее |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-setup.exe` | Установщик для текущего пользователя, права администратора не нужны |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64.msi` | То же в виде MSI-пакета |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-portable.zip` | Распакуйте куда угодно и запустите `Mythaia Pro.exe` |
 
 В каждом релизе есть `SHA256SUMS.txt` с контрольными суммами всех файлов. Нужны Android 8.0 или
 новее и Windows 10 или 11 (x64); для TUN-режима Windows попросит права администратора.

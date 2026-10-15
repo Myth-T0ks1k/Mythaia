@@ -54,7 +54,7 @@ goşmaça däl-de, programmanyň öz bölegidir.
 | **Transportlar** | TCP, early data bilen WebSocket, HTTPUpgrade, gRPC, XHTTP (stream-one, stream-up, packet-up), QUIC |
 | **TLS** | Brauzer barmak yzlary (Chrome, Firefox, Safari, iOS, Edge), Reality, ECH, ClientHello bölmek, sertifikat berkitmek, aýry serwer üçin duýduryşly *allow insecure* |
 | **Marşrutlaşdyrma** | «Düzgün» we «Global» režimler, domen, IP we GeoIP boýunça düzgün toplumlary, ýurt aýlawy, programmalar boýunça bölünen tunnel, mahabat blokirlemek, Fake-IP DNS, HTTPS we TLS üsti bilen DNS, IPv6 |
-| **Serwerler** | Baglanyşyklar, QR kodlar, Clash YAML, Xray we sing-box JSON, proksi zynjyrlary, XUDP bilen Mux, TCP, handshake ýa-da hakyky HTTP haýyşy bilen gijikmäni ölçemek |
+| **Serwerler** | Baglanyşyklar, QR kodlar, Clash YAML, Xray we sing-box JSON, proksi zynjyrlary, XUDP bilen Mux, TCP ýa-da QUIC serwerleri üçin UDP boýunça ping, handshake ýa-da hakyky HTTP haýyşy bilen ölçemek; baglanyşyk görnüşinde eksport; işlemeýänleri pozmak |
 | **Abunalar** | Paneldäki trafik we möhlet, awtomatik täzelenme, üpjün edijiniň bildirişleri, Remnawave HWID, **ýüklemek üçin domen frontingi** |
 | **Awto** | Toparyň iň çalt serwerini saýlaýar, ölçemegi dowam edýär we diňe ep-esli utuş bolanda geçýär; serwer petiklenende özbaşdak täzeden birikýär |
 | **Android** | Çalt sazlamalar plitkasy, widžet, hemişelik VPN, Android TV, Wear OS goşmaçasy, öz sertifikatyňyz bilen HTTPS aralyk tutmak, 9 dil |
@@ -66,12 +66,12 @@ Iň täze wersiýa **[Releases](https://github.com/Myth-T0ks1k/Mythaia/releases/
 
 | Platforma | Faýl | Bellik |
 |---|---|---|
-| Android | `Mythaia-1.0.2-android-universal.apk` | Islendik enjam üçin: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.0.2-android-arm64-v8a.apk` | Has ýeňil, häzirki zaman telefonlary üçin |
-| Wear OS | `Mythaia-1.0.2-wear-os.apk` | Telefon programmasyna goşmaça, Wear OS 3 we täzesi |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
+| Android | `Mythaia-1.1.0-android-universal.apk` | Islendik enjam üçin: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.1.0-android-arm64-v8a.apk` | Has ýeňil, häzirki zaman telefonlary üçin |
+| Wear OS | `Mythaia-1.1.0-wear-os.apk` | Telefon programmasyna goşmaça, Wear OS 3 we täzesi |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
 
 Her neşirde ähli faýllaryň SHA-256 jemleri bilen `SHA256SUMS.txt` bar. Android 8.0 ýa-da täzesi we
 Windows 10 ýa-da 11 (x64) gerek; TUN režimi üçin Windows administrator hukuklaryny sorar.

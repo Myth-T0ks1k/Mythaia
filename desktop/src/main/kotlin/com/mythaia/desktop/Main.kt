@@ -29,7 +29,7 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
-const val APP_VERSION = "1.0.2"
+const val APP_VERSION = "1.1.0"
 
 /** Held for the life of the process; a local would be collected and the lock released. */
 private object InstanceLock {

@@ -50,7 +50,7 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 | **传输** | TCP、支持 early data 的 WebSocket、HTTPUpgrade、gRPC、XHTTP（stream-one、stream-up、packet-up）、QUIC |
 | **TLS** | 浏览器指纹（Chrome、Firefox、Safari、iOS、Edge）、Reality、ECH、ClientHello 分片、证书固定、按服务器设置并带醒目警告的 *allow insecure* |
 | **路由** | 规则与全局模式、按域名/IP/GeoIP 的规则集、按国家绕行、按应用分流、广告拦截、Fake-IP DNS、DNS over HTTPS 与 TLS、IPv6 |
-| **服务器** | 分享链接、二维码、Clash YAML、Xray 与 sing-box JSON、代理链、带 XUDP 的 Mux，可按 TCP、握手或真实 HTTP 请求测量延迟 |
+| **服务器** | 分享链接、二维码、Clash YAML、Xray 与 sing-box JSON、代理链、带 XUDP 的 Mux，可按 TCP（QUIC 服务器为 UDP）Ping、握手或真实 HTTP 请求测量延迟；导出为链接；删除不可用的服务器 |
 | **订阅** | 面板提供的流量与到期时间、自动更新、服务商公告、Remnawave HWID、**下载时的域前置** |
 | **自动** | 选出分组中最快的服务器，持续测速，仅在明显更快时才切换；服务器被封锁时自动重新连接 |
 | **Android** | 快捷设置磁贴、桌面小部件、始终开启的 VPN、Android TV、Wear OS 配套应用、使用自有 CA 的 HTTPS 拦截、9 种语言 |
@@ -62,12 +62,12 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| Android | `Mythaia-1.0.2-android-universal.apk` | 适用于所有设备：arm64、armeabi-v7a、x86、x86_64 |
-| Android | `Mythaia-1.0.2-android-arm64-v8a.apk` | 体积更小，适用于现代手机 |
-| Wear OS | `Mythaia-1.0.2-wear-os.apk` | 手机应用的配套应用，需要 Wear OS 3 或更高版本 |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64.msi` | 同上，MSI 安装包 |
-| Windows | `Mythaia-Pro-1.0.2-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
+| Android | `Mythaia-1.1.0-android-universal.apk` | 适用于所有设备：arm64、armeabi-v7a、x86、x86_64 |
+| Android | `Mythaia-1.1.0-android-arm64-v8a.apk` | 体积更小，适用于现代手机 |
+| Wear OS | `Mythaia-1.1.0-wear-os.apk` | 手机应用的配套应用，需要 Wear OS 3 或更高版本 |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64.msi` | 同上，MSI 安装包 |
+| Windows | `Mythaia-Pro-1.1.0-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
 
 每个版本都附有 `SHA256SUMS.txt`，列出所有文件的 SHA-256 校验值。需要 Android 8.0 或更高版本，
 以及 Windows 10 或 11（x64）；在 Windows 上使用 TUN 模式时会请求管理员权限。

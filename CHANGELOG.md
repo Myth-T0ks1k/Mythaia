@@ -4,6 +4,26 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-10-15
+
+### Added
+
+- **Ping (TCP/UDP)** — a button next to the speed test on Android and Windows. Servers on TCP are
+  timed by the TCP connect; Hysteria2, TUIC and Nowhere over QUIC by a QUIC probe over UDP, with
+  Hysteria2's obfuscation applied; WireGuard by its real handshake.
+- **Remove non-working** in the group menu: deletes the servers whose last check failed, after a
+  confirmation that says how many.
+- **Export as links** on Android: the group's servers as share links, one per line, through the
+  share sheet — as text, or as a `.txt` file when the list is long. On Windows, **Save links to a
+  file** joins *Copy all links*.
+
+### Changed
+
+- The old TCP ping is now Ping (TCP/UDP). It used to report every Hysteria2 and TUIC server as
+  failed, since those listen on UDP only.
+- On Windows, removing non-working servers also removes those whose certificate does not verify,
+  as on Android.
+
 ## [1.0.2] — 2026-10-15
 
 Bulk server lists: tested with a subscription of 10,000 servers.
@@ -88,6 +108,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[1.1.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Myth-T0ks1k/Mythaia/releases/tag/v1.0.0
