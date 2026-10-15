@@ -393,6 +393,31 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     fun linksOf(configs: List<ProxyConfiguration>): String =
         configs.mapNotNull { runCatching { it.toUrl() }.getOrNull() }.joinToString("\n")
 
+    /**
+     * Asks where to save the links of [configs] as a text file, one per line,
+     * the form every client imports. A bulk list is too long to pass around
+     * through the clipboard comfortably.
+     */
+    fun saveLinksToFile(configs: List<ProxyConfiguration>, groupName: String) {
+        val text = linksOf(configs)
+        if (text.isEmpty()) {
+            notify(tr("nothing_parsed"))
+            return
+        }
+        val dialog = java.awt.FileDialog(null as java.awt.Frame?, tr("save_links_file"), java.awt.FileDialog.SAVE)
+        val safe = groupName.filter { it.isLetterOrDigit() || it in " ._-" }.trim().ifEmpty { "servers" }
+        dialog.file = "$safe.txt"
+        dialog.isVisible = true
+        val dir = dialog.directory ?: return
+        val name = dialog.file ?: return
+        val file = java.io.File(dir, if (name.endsWith(".txt", ignoreCase = true)) name else "$name.txt")
+        scope.launch(Dispatchers.IO) {
+            runCatching { file.writeText(text) }
+                .onSuccess { notify(tr("saved_n_links", text.count { it == '\n' } + 1)) }
+                .onFailure { notify(it.message ?: tr("nothing_parsed")) }
+        }
+    }
+
     private fun reconnectIfNeeded() {
         if (!isTunnelRunning) return
         scope.launch { startConnection() }
@@ -850,7 +875,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /** Drops servers in [groupId] whose last measurement failed. Returns how many went. */
     fun removeFailed(groupId: String): Int {
-        val failed = groupConfigs(groupId).filter { _latencies.value[it.id] is LatencyResult.Failed }.map { it.id }.toSet()
+        // Unreachable, or a certificate that does not verify: either way it does not work.
+        val failed = groupConfigs(groupId).filter {
+            val result = _latencies.value[it.id]
+            result is LatencyResult.Failed || result is LatencyResult.Insecure
+        }.map { it.id }.toSet()
         if (failed.isEmpty()) return 0
         deleteConfigurations(failed)
         return failed.size

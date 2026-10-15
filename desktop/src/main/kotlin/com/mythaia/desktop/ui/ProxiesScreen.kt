@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NetworkPing
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
@@ -186,6 +187,10 @@ private fun ServersTab(state: AppState) {
             }
         }
         Spacer(Modifier.width(8.dp))
+        // TCP for servers on TCP, a QUIC probe for those on UDP (Hysteria2, TUIC).
+        IconButton(onClick = { state.pingGroup(shownGroup, LatencyKind.TCP) }) {
+            Icon(Icons.Default.NetworkPing, tr("ping_tcp"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         IconButton(onClick = { state.pingGroup(shownGroup, LatencyKind.HTTP) }) {
             Icon(Icons.Default.Speed, tr("ping_real"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -216,6 +221,7 @@ private fun ServersTab(state: AppState) {
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text(tr("select_fastest")) }, onClick = { menu = false; state.useAuto(shownGroup) })
                 DropdownMenuItem(text = { Text(tr("copy_all_links")) }, onClick = { menu = false; state.copyToClipboard(state.linksOf(configs)) })
+                DropdownMenuItem(text = { Text(tr("save_links_file")) }, onClick = { menu = false; state.saveLinksToFile(configs, group.name) })
                 DropdownMenuItem(text = { Text(tr("remove_duplicates")) }, onClick = { menu = false; state.notify(tr("removed_n", state.removeDuplicates(shownGroup))) })
                 DropdownMenuItem(text = { Text(tr("remove_failed")) }, onClick = { menu = false; state.notify(tr("removed_n", state.removeFailed(shownGroup))) })
                 if (group.subscription != null) {
