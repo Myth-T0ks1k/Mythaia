@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.22.1)
 project("mythaia_native" C)
 
+# Source paths in assertion messages (__FILE__) and debug info relative to this
+# directory, so the library does not carry the build machine's folder layout.
+add_compile_options("-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=")
+
 # --------------------------------------------------------------------------
 # lwIP source files
 # --------------------------------------------------------------------------
