@@ -56,7 +56,7 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 | **TLS** | اثر انگشت مرورگرها (Chrome، Firefox، Safari، iOS، Edge)، Reality، ECH، تکه‌تکه کردن ClientHello، پین کردن گواهی، *allow insecure* برای هر سرور با هشدار آشکار |
 | **مسیریابی** | حالت‌های قاعده‌ای و سراسری، مجموعه‌قواعد بر اساس دامنه، IP و GeoIP، عبور بر اساس کشور، تونل جداگانه برای هر برنامه، مسدودسازی تبلیغات، Fake-IP DNS، DNS روی HTTPS و TLS، IPv6 |
 | **سرورها** | لینک‌های اشتراک‌گذاری، کد QR، Clash YAML، JSON برای Xray و sing-box، زنجیرهٔ پروکسی، Mux با XUDP، پینگ با TCP یا برای سرورهای QUIC با UDP، دست‌دهی یا درخواست واقعی HTTP؛ خروجی به‌صورت لینک؛ حذف سرورهای ناکارآمد |
-| **اشتراک‌ها** | حجم مصرفی و تاریخ انقضا از پنل، به‌روزرسانی خودکار، اطلاعیه‌های ارائه‌دهنده، Remnawave HWID، **دامین فرانتینگ برای دانلود** |
+| **اشتراک‌ها** | حجم مصرفی و تاریخ انقضا از پنل، به‌روزرسانی خودکار، اطلاعیه‌های ارائه‌دهنده و متادیتای سازگار با Happ (آدرس جدید، آدرس پشتیبان، بلوک‌های اطلاعات)، Remnawave HWID، **دامین فرانتینگ برای دانلود**، دانلود از طریق یک سرور فعال |
 | **خودکار** | سریع‌ترین سرور گروه را انتخاب می‌کند، سنجش را ادامه می‌دهد و فقط با بهبود محسوس جابه‌جا می‌شود؛ وقتی سروری مسدود شود، خودش دوباره وصل می‌شود |
 | **Android** | کاشی تنظیمات سریع، ویجت صفحهٔ اصلی، VPN همیشه روشن، Android TV، برنامهٔ همراه Wear OS، رهگیری HTTPS با CA شخصی، ۹ زبان |
 | **Windows** | حالت پروکسی سیستم (SOCKS5 و HTTP روی یک پورت) یا حالت کامل TUN با Wintun، آیکون در سینی سیستم، همان سرورها، اشتراک‌ها و حالت خودکار |
@@ -68,12 +68,12 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 
 | پلتفرم | فایل | توضیح |
 |---|---|---|
-| Android | `Mythaia-1.2.0-android-universal.apk` | برای همهٔ دستگاه‌ها: arm64، armeabi-v7a، x86، x86_64 |
-| Android | `Mythaia-1.2.0-android-arm64-v8a.apk` | کم‌حجم‌تر، برای گوشی‌های جدید |
-| Wear OS | `Mythaia-1.2.0-wear-os.apk` | همراه برنامهٔ گوشی، Wear OS 3 یا جدیدتر |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
+| Android | `Mythaia-1.3.0-android-universal.apk` | برای همهٔ دستگاه‌ها: arm64، armeabi-v7a، x86، x86_64 |
+| Android | `Mythaia-1.3.0-android-arm64-v8a.apk` | کم‌حجم‌تر، برای گوشی‌های جدید |
+| Wear OS | `Mythaia-1.3.0-wear-os.apk` | همراه برنامهٔ گوشی، Wear OS 3 یا جدیدتر |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
 
 هر نسخه فایل `SHA256SUMS.txt` را با چکسام SHA-256 همهٔ فایل‌ها دارد. Android 8.0 یا جدیدتر و Windows
 10 یا 11 (x64) لازم است؛ حالت TUN در Windows دسترسی مدیر می‌خواهد — هر بار، یا فقط یک بار هنگام نصب
@@ -116,6 +116,46 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
   می‌توانید پیش از دانلود آن‌ها را بررسی کنید.
 - **تنظیمات اشتراک ← کپی لینک همراه با فرانتینگ** اشتراکی را که دارید به چنین لینکی تبدیل می‌کند،
   هم در Android و هم در Windows.
+
+شکل Happ هم کار می‌کند، که در آن آدرس به فرانت و `host` به پنل اشاره دارد:
+
+```text
+https://cdn.example.net/sub/TOKEN#My%20VPN?resolve-address=104.16.1.1&host=panel.example.com
+```
+
+## متادیتای اشتراک
+
+ارائه‌دهنده اشتراک را همان‌طور که در Happ مدیریت می‌کند. هر کلید از هدرهای پاسخ خوانده می‌شود و اگر هدر نباشد، از خط `#key: value` در بدنه — بالای فهرست base64 یا داخل آن. متن می‌تواند ساده یا `base64:` باشد؛ پرچم با `true` یا `1` روشن است.
+
+```text
+#profile-title: base64:TXkgVlBO
+#profile-update-interval: 6
+#fallback-url: https://backup.example.com/sub/TOKEN
+#sub-info-text: Maintenance tonight 02:00–03:00 UTC
+#sub-info-color: blue
+vless://…
+```
+
+| کلید | اثر |
+|---|---|
+| `profile-title`, `subscription-userinfo` | نام گروه؛ حجم مصرفی و تاریخ انقضا |
+| `announce`, `support-url`, `profile-web-page-url` | پیام ارائه‌دهنده؛ دکمه‌های پشتیبانی و صفحهٔ حساب |
+| `sub-info-text`, `sub-info-color` (`red`, `blue`, `green`), `sub-info-button-text`, `sub-info-button-link` | یک بلوک رنگی با دکمه |
+| `sub-expire` (or `notification-subs-expire`), `sub-expire-button-link` | هشدار سه روز پیش از انقضا، با دکمهٔ تمدید |
+| `profile-update-interval` | فاصلهٔ به‌روزرسانی در پس‌زمینه، به ساعت |
+| `subscription-auto-update-open-enable` | به‌روزرسانی در هر بار باز شدن برنامه |
+| `subscription-auto-update-enable: 0` | بدون به‌روزرسانی پس‌زمینه برای این اشتراک |
+| `subscription-request-timeout` | چند ثانیه منتظر پنل بماند |
+| `new-url` | اشتراک برای همیشه به این آدرس منتقل می‌شود (فرانتینگ داخل فرگمنت هم خوانده می‌شود) |
+| `new-domain` | همان، با حفظ مسیر و پارامترها |
+| `fallback-url` | اگر آدرس اصلی خطا بدهد یا در ۱۰ ثانیه پاسخ ندهد، از این آدرس دریافت می‌شود |
+| `fronting-target` (or `resolve-address`) | آدرس‌هایی که به‌جای پنل به آن‌ها وصل می‌شود، جدا با ویرگول؛ `off` فرانتینگ را خاموش می‌کند |
+| `fronting-sni` | SNI ارسالی |
+| `host` | همراه `resolve-address`: هاست واقعی پنل، مانند Happ |
+
+`new-url`، `new-domain`، `fallback-url` و کلیدهای فرانتینگ فقط از پاسخی پذیرفته می‌شوند که از HTTPS تأییدشده آمده باشد: در پنل HTTP ساده، هر کسی در مسیر می‌توانست اشتراک را به جای دیگری ببرد.
+
+اگر به‌روزرسانی ناموفق باشد، نواری در پایین با دکمهٔ **از طریق یک سرور فعال** ظاهر می‌شود: اشتراک از طریق سرور متصل یا سریع‌ترین سروری که به یک بررسی کوتاه پاسخ داده دانلود می‌شود — حتی وقتی پنل کاملاً مسدود است. نوار خودش ناپدید می‌شود.
 
 ## ساخت از سورس
 

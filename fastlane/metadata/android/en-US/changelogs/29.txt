@@ -1,0 +1,2 @@
+• Subscription metadata as in Happ: new URL and domain, fallback URL, fronting, info blocks, expiry warning, refresh on open.
+• When a subscription does not update, a bar at the bottom offers to fetch it through a working server.

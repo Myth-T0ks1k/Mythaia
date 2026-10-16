@@ -57,7 +57,7 @@ goşmaça däl-de, programmanyň öz bölegidir.
 | **TLS** | Brauzer barmak yzlary (Chrome, Firefox, Safari, iOS, Edge), Reality, ECH, ClientHello bölmek, sertifikat berkitmek, aýry serwer üçin duýduryşly *allow insecure* |
 | **Marşrutlaşdyrma** | «Düzgün» we «Global» režimler, domen, IP we GeoIP boýunça düzgün toplumlary, ýurt aýlawy, programmalar boýunça bölünen tunnel, mahabat blokirlemek, Fake-IP DNS, HTTPS we TLS üsti bilen DNS, IPv6 |
 | **Serwerler** | Baglanyşyklar, QR kodlar, Clash YAML, Xray we sing-box JSON, proksi zynjyrlary, XUDP bilen Mux, TCP ýa-da QUIC serwerleri üçin UDP boýunça ping, handshake ýa-da hakyky HTTP haýyşy bilen ölçemek; baglanyşyk görnüşinde eksport; işlemeýänleri pozmak |
-| **Abunalar** | Paneldäki trafik we möhlet, awtomatik täzelenme, üpjün edijiniň bildirişleri, Remnawave HWID, **ýüklemek üçin domen frontingi** |
+| **Abunalar** | Paneldäki trafik we möhlet, awtomatik täzelenme, üpjün edijiniň bildirişleri we Happ-daky ýaly meta-maglumatlar (täze salgy, ätiýaçlyk salgy, maglumat bloklary), Remnawave HWID, **ýüklemek üçin domen frontingi**, işleýän serwer arkaly ýüklemek |
 | **Awto** | Toparyň iň çalt serwerini saýlaýar, ölçemegi dowam edýär we diňe ep-esli utuş bolanda geçýär; serwer petiklenende özbaşdak täzeden birikýär |
 | **Android** | Çalt sazlamalar plitkasy, widžet, hemişelik VPN, Android TV, Wear OS goşmaçasy, öz sertifikatyňyz bilen HTTPS aralyk tutmak, 9 dil |
 | **Windows** | Ulgam proksi režimi (bir portda SOCKS5 we HTTP) ýa-da Wintun arkaly doly TUN režimi, treý nyşany, şol bir serwerler, abunalar we Awto |
@@ -69,12 +69,12 @@ Täze wersiýalar Telegram kanalynda [@mythaia](https://t.me/mythaia) hem çap e
 
 | Platforma | Faýl | Bellik |
 |---|---|---|
-| Android | `Mythaia-1.2.0-android-universal.apk` | Islendik enjam üçin: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.2.0-android-arm64-v8a.apk` | Has ýeňil, häzirki zaman telefonlary üçin |
-| Wear OS | `Mythaia-1.2.0-wear-os.apk` | Telefon programmasyna goşmaça, Wear OS 3 we täzesi |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
+| Android | `Mythaia-1.3.0-android-universal.apk` | Islendik enjam üçin: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.3.0-android-arm64-v8a.apk` | Has ýeňil, häzirki zaman telefonlary üçin |
+| Wear OS | `Mythaia-1.3.0-wear-os.apk` | Telefon programmasyna goşmaça, Wear OS 3 we täzesi |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
 
 Her neşirde ähli faýllaryň SHA-256 jemleri bilen `SHA256SUMS.txt` bar. Android 8.0 ýa-da täzesi we
 Windows 10 ýa-da 11 (x64) gerek; TUN režimi üçin Windows administrator hukuklaryny sorar — her gezek
@@ -117,6 +117,46 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
   meýdançalary özbaşdak doldurylýar we ýüklemezden öň olary barlap bolýar.
 - **Abuna sazlamalary → Fronting bilen baglanyşygy göçür** bar bolan abunany şeýle baglanyşyga
   öwürýär — Android-de-de, Windows-da-da.
+
+Salgyda front, `host`-da panel görkezilýän Happ görnüşi hem işleýär:
+
+```text
+https://cdn.example.net/sub/TOKEN#My%20VPN?resolve-address=104.16.1.1&host=panel.example.com
+```
+
+## Abunanyň meta-maglumatlary
+
+Üpjün ediji abunany Happ-daky ýaly dolandyrýar. Her açar jogabyň sözbaşylaryndan, sözbaşy ýok bolsa, tekstdäki `#açar: baha` setirinden okalýar — base64 sanawyň üstünde ýa-da içinde. Tekst ýönekeý ýa-da `base64:` bolup biler; baýdak `true` ýa-da `1` bolanda açyk.
+
+```text
+#profile-title: base64:TXkgVlBO
+#profile-update-interval: 6
+#fallback-url: https://backup.example.com/sub/TOKEN
+#sub-info-text: Maintenance tonight 02:00–03:00 UTC
+#sub-info-color: blue
+vless://…
+```
+
+| Açar | Täsiri |
+|---|---|
+| `profile-title`, `subscription-userinfo` | Toparyň ady; trafik we möhlet |
+| `announce`, `support-url`, `profile-web-page-url` | Üpjün edijiniň habary; «Goldaw» we «Hasap sahypasy» düwmeleri |
+| `sub-info-text`, `sub-info-color` (`red`, `blue`, `green`), `sub-info-button-text`, `sub-info-button-link` | Düwmeli reňkli blok |
+| `sub-expire` (or `notification-subs-expire`), `sub-expire-button-link` | Möhlet gutarmazdan üç gün öň duýduryş, «Uzalt» düwmesi bilen |
+| `profile-update-interval` | Fon täzelenmesiniň aralygy, sagatda |
+| `subscription-auto-update-open-enable` | Programma her açylanda täzelemek |
+| `subscription-auto-update-enable: 0` | Bu abunany fonda täzelemezlik |
+| `subscription-request-timeout` | Paneli näçe sekunt garaşmaly |
+| `new-url` | Abuna bu salga hemişelik geçýär (fragmentdäki fronting hem okalýar) |
+| `new-domain` | Şol bir zat, ýoly we parametrleri saklap |
+| `fallback-url` | Esasy salgy ýalňyşlyk gaýtarsa ýa-da 10 sekuntda jogap bermese ýüklenýär |
+| `fronting-target` (or `resolve-address`) | Paneliň deregine birikilýän salgylar, otur bilen; `off` frontingi öçürýär |
+| `fronting-sni` | Iberilýän SNI |
+| `host` | `resolve-address` bilen: paneliň hakyky hosty, Happ-daky ýaly |
+
+`new-url`, `new-domain`, `fallback-url` we fronting açarlary diňe barlanan HTTPS arkaly gelen jogapdan alynýar: ýönekeý HTTP paneliň abunasyny ýoldaky islendik biri başga ýere ugrukdyryp bilerdi.
+
+Täzelenme başartmasa, aşakda **Işleýän serwer arkaly** düwmeli zolak çykýar: abuna birikdirilen serwer ýa-da gysga barlaga jogap beren iň çalt serwer arkaly ýüklenýär — panel doly petiklenende-de täzelenýär. Zolak özi ýitýär.
 
 ## Çeşme kodundan ýygnamak
 

@@ -4,6 +4,34 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-10-16
+
+### Added
+
+- **Subscription metadata, as Happ reads it.** Every key comes from the response headers or, when
+  a header is missing, from a `#key: value` line in the body, above a base64 list or inside it, so
+  a panel set up for Happ works unchanged. New keys: `new-url` and `new-domain` (the subscription
+  moves for good), `fallback-url` (tried when the main URL errs or is silent for 10 seconds),
+  `fronting-target`, `fronting-sni` and Happ's `resolve-address` and `host` (fronting set or
+  switched off by the panel), `sub-info-*` (a coloured block with a button), `sub-expire` (a
+  warning three days before expiry, with a Renew button), `subscription-auto-update-open-enable`
+  (refresh whenever the app opens), `subscription-auto-update-enable` and
+  `subscription-request-timeout`. The keys that move a subscription are taken only from a response
+  that came over verified HTTPS. The README lists them all.
+- **Update through a working server.** When a subscription does not update, a bar at the bottom
+  says so and offers to try again through a server that works: the connected one, or the first of
+  the subscription's own servers (then the others) to answer a fresh check. This gets a
+  subscription past a panel that is blocked outright. The bar goes away on its own. A failure in
+  the background refresh is remembered and shown the next time the app opens. On Windows too.
+- Happ's fronted link form, `https://front/sub#Name?resolve-address=IP&host=panel`, is read
+  wherever a subscription is added.
+
+### Changed
+
+- The update-failed dialog on Android is now that bar.
+- A refresh that waits on a CDN front which does not answer moves on to the next front instead of
+  giving up on all of them.
+
 ## [1.2.0] — 2026-10-16
 
 ### Changed
@@ -160,6 +188,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[1.3.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.0...v1.1.1

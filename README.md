@@ -57,7 +57,7 @@ bypass are part of the app, not add-ons.
 | **TLS** | Browser fingerprints (Chrome, Firefox, Safari, iOS, Edge), Reality, ECH, ClientHello fragmentation, certificate pinning, per-server *allow insecure* with a visible warning |
 | **Routing** | Rule and global modes, rule sets by domain, IP and GeoIP, country bypass, per-app split tunnelling, ad blocking, Fake-IP DNS, DNS over HTTPS and TLS, IPv6 |
 | **Servers** | Share links, QR codes, Clash YAML, Xray and sing-box JSON, proxy chains, Mux with XUDP, ping over TCP or, for QUIC servers, UDP; handshake or a real HTTP request; export as links; removal of non-working servers |
-| **Subscriptions** | Usage and expiry from the panel, auto refresh, provider announcements, Remnawave HWID, **domain fronting for the download** |
+| **Subscriptions** | Usage and expiry from the panel, auto refresh, provider announcements and Happ-compatible metadata (new URL, fallback URL, info blocks), Remnawave HWID, **domain fronting for the download**, download through a working server |
 | **Auto** | Picks the fastest server of a group, keeps re-measuring and moves only for a clear gain; reconnects on its own when a server is blocked |
 | **Android** | Quick Settings tile, home-screen widget, Always-on VPN, Android TV, Wear OS companion, HTTPS interception with your own CA, 9 languages |
 | **Windows** | System-proxy mode (SOCKS5 and HTTP on one port) or full TUN mode over Wintun, tray icon, the same servers, subscriptions and Auto |
@@ -69,12 +69,12 @@ New versions are also posted in the Telegram channel [@mythaia](https://t.me/myt
 
 | Platform | File | Notes |
 |---|---|---|
-| Android | `Mythaia-1.2.0-android-universal.apk` | Every device: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.2.0-android-arm64-v8a.apk` | Smaller, for modern phones |
-| Wear OS | `Mythaia-1.2.0-wear-os.apk` | Companion for the phone app, Wear OS 3 or newer |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-setup.exe` | Installer, per user, no administrator rights needed |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64.msi` | The same as an MSI package |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-portable.zip` | Unzip anywhere and run `Mythaia Pro.exe` |
+| Android | `Mythaia-1.3.0-android-universal.apk` | Every device: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.3.0-android-arm64-v8a.apk` | Smaller, for modern phones |
+| Wear OS | `Mythaia-1.3.0-wear-os.apk` | Companion for the phone app, Wear OS 3 or newer |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | Installer, per user, no administrator rights needed |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | The same as an MSI package |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | Unzip anywhere and run `Mythaia Pro.exe` |
 
 Every release lists the SHA-256 of each file in `SHA256SUMS.txt`. Android 8.0 or newer and Windows
 10 or 11 (x64) are required; TUN mode on Windows asks for administrator rights — each time, or once
@@ -118,6 +118,46 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
   you can check them before anything is downloaded.
 - **Subscription settings → Copy link with fronting** turns a subscription you already have into such a
   link, on Android and on Windows.
+
+Happ’s form, where the URL names the front and `host` the panel, works too:
+
+```text
+https://cdn.example.net/sub/TOKEN#My%20VPN?resolve-address=104.16.1.1&host=panel.example.com
+```
+
+## Subscription metadata
+
+Providers steer a subscription the way they do for Happ. Each key is read from the response headers or, when the header is missing, from a `#key: value` line in the body — above a base64 list or inside it. Text may be plain or `base64:`; a flag is on for `true` or `1`.
+
+```text
+#profile-title: base64:TXkgVlBO
+#profile-update-interval: 6
+#fallback-url: https://backup.example.com/sub/TOKEN
+#sub-info-text: Maintenance tonight 02:00–03:00 UTC
+#sub-info-color: blue
+vless://…
+```
+
+| Key | Effect |
+|---|---|
+| `profile-title`, `subscription-userinfo` | Group name; traffic and expiry |
+| `announce`, `support-url`, `profile-web-page-url` | The provider’s message; Support and Account page buttons |
+| `sub-info-text`, `sub-info-color` (`red`, `blue`, `green`), `sub-info-button-text`, `sub-info-button-link` | A coloured block with a button |
+| `sub-expire` (or `notification-subs-expire`), `sub-expire-button-link` | A warning three days before expiry, with a Renew button |
+| `profile-update-interval` | Background refresh interval, in hours |
+| `subscription-auto-update-open-enable` | Refresh every time the app opens |
+| `subscription-auto-update-enable: 0` | No background refresh for this subscription |
+| `subscription-request-timeout` | Seconds to wait for the panel |
+| `new-url` | The subscription moves to this URL for good (fronting in its fragment is read too) |
+| `new-domain` | The same, keeping the path and query |
+| `fallback-url` | Fetched when the main URL returns an error or does not answer within 10 seconds |
+| `fronting-target` (or `resolve-address`) | Hosts to dial instead of the panel, comma-separated; `off` turns fronting off |
+| `fronting-sni` | The SNI to send |
+| `host` | With `resolve-address`: the panel’s real host, as Happ writes it |
+
+`new-url`, `new-domain`, `fallback-url` and the fronting keys are taken only from a response that came over verified HTTPS: from a plain-HTTP panel, anyone on the path could redirect the subscription.
+
+When a refresh fails, a bar at the bottom says so and offers **Try through a working server**: the subscription is downloaded through the connected server or the fastest one that answers a quick check, which gets it past a panel blocked outright. The bar goes away on its own.
 
 ## Building from source
 

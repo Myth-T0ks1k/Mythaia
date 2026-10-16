@@ -53,7 +53,7 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 | **TLS** | 浏览器指纹（Chrome、Firefox、Safari、iOS、Edge）、Reality、ECH、ClientHello 分片、证书固定、按服务器设置并带醒目警告的 *allow insecure* |
 | **路由** | 规则与全局模式、按域名/IP/GeoIP 的规则集、按国家绕行、按应用分流、广告拦截、Fake-IP DNS、DNS over HTTPS 与 TLS、IPv6 |
 | **服务器** | 分享链接、二维码、Clash YAML、Xray 与 sing-box JSON、代理链、带 XUDP 的 Mux，可按 TCP（QUIC 服务器为 UDP）Ping、握手或真实 HTTP 请求测量延迟；导出为链接；删除不可用的服务器 |
-| **订阅** | 面板提供的流量与到期时间、自动更新、服务商公告、Remnawave HWID、**下载时的域前置** |
+| **订阅** | 面板提供的流量与到期时间、自动更新、服务商公告与兼容 Happ 的元数据（新地址、备用地址、信息块）、Remnawave HWID、**下载时的域前置**、通过可用服务器下载 |
 | **自动** | 选出分组中最快的服务器，持续测速，仅在明显更快时才切换；服务器被封锁时自动重新连接 |
 | **Android** | 快捷设置磁贴、桌面小部件、始终开启的 VPN、Android TV、Wear OS 配套应用、使用自有 CA 的 HTTPS 拦截、9 种语言 |
 | **Windows** | 系统代理模式（同一端口支持 SOCKS5 与 HTTP）或基于 Wintun 的完整 TUN 模式、托盘图标，以及同样的服务器、订阅和自动选择 |
@@ -65,12 +65,12 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| Android | `Mythaia-1.2.0-android-universal.apk` | 适用于所有设备：arm64、armeabi-v7a、x86、x86_64 |
-| Android | `Mythaia-1.2.0-android-arm64-v8a.apk` | 体积更小，适用于现代手机 |
-| Wear OS | `Mythaia-1.2.0-wear-os.apk` | 手机应用的配套应用，需要 Wear OS 3 或更高版本 |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64.msi` | 同上，MSI 安装包 |
-| Windows | `Mythaia-Pro-1.2.0-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
+| Android | `Mythaia-1.3.0-android-universal.apk` | 适用于所有设备：arm64、armeabi-v7a、x86、x86_64 |
+| Android | `Mythaia-1.3.0-android-arm64-v8a.apk` | 体积更小，适用于现代手机 |
+| Wear OS | `Mythaia-1.3.0-wear-os.apk` | 手机应用的配套应用，需要 Wear OS 3 或更高版本 |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | 同上，MSI 安装包 |
+| Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
 
 每个版本都附有 `SHA256SUMS.txt`，列出所有文件的 SHA-256 校验值。需要 Android 8.0 或更高版本，
 以及 Windows 10 或 11（x64）；在 Windows 上使用 TUN 模式时会请求管理员权限——每次都请求，或只在安装 Mythaia 服务时请求一次；
@@ -108,6 +108,46 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
 - 第二种可以直接从浏览器或聊天软件中打开 Mythaia。
 - 粘贴、扫描或打开任意一种链接，添加窗口中的**域前置**字段都会自动填好，下载前即可核对。
 - **订阅设置 → 复制带域前置的链接** 可以把已有的订阅转换成这样的链接，Android 和 Windows 均支持。
+
+Happ 的写法也可以用：地址写前置域名，`host` 写面板：
+
+```text
+https://cdn.example.net/sub/TOKEN#My%20VPN?resolve-address=104.16.1.1&host=panel.example.com
+```
+
+## 订阅元数据
+
+服务商可以像在 Happ 中那样控制订阅。每个键先从响应头读取，没有该响应头时，再从正文中的 `#key: value` 行读取——可在 base64 列表之上或其中。文本可以是明文或 `base64:`；开关在 `true` 或 `1` 时开启。
+
+```text
+#profile-title: base64:TXkgVlBO
+#profile-update-interval: 6
+#fallback-url: https://backup.example.com/sub/TOKEN
+#sub-info-text: Maintenance tonight 02:00–03:00 UTC
+#sub-info-color: blue
+vless://…
+```
+
+| 键 | 作用 |
+|---|---|
+| `profile-title`, `subscription-userinfo` | 分组名称；流量与到期时间 |
+| `announce`, `support-url`, `profile-web-page-url` | 服务商消息；“客服”和“账户页面”按钮 |
+| `sub-info-text`, `sub-info-color` (`red`, `blue`, `green`), `sub-info-button-text`, `sub-info-button-link` | 带按钮的彩色提示块 |
+| `sub-expire` (or `notification-subs-expire`), `sub-expire-button-link` | 到期前三天提醒，附“续费”按钮 |
+| `profile-update-interval` | 后台更新间隔（小时） |
+| `subscription-auto-update-open-enable` | 每次打开应用时更新 |
+| `subscription-auto-update-enable: 0` | 此订阅不在后台更新 |
+| `subscription-request-timeout` | 等待面板响应的秒数 |
+| `new-url` | 订阅永久迁移到此地址（片段中的域前置也会读取） |
+| `new-domain` | 同上，但保留路径和参数 |
+| `fallback-url` | 主地址返回错误或 10 秒内无响应时，从此地址获取 |
+| `fronting-target` (or `resolve-address`) | 代替面板去连接的地址，逗号分隔；`off` 关闭域前置 |
+| `fronting-sni` | 要发送的 SNI |
+| `host` | 与 `resolve-address` 一起使用：面板的真实主机，与 Happ 写法相同 |
+
+`new-url`、`new-domain`、`fallback-url` 和域前置相关的键只在响应经由已验证的 HTTPS 到达时才生效：对于明文 HTTP 面板，路径上的任何人都可能把订阅重定向到别处。
+
+更新失败时，底部会出现提示条，并提供 **通过可用服务器重试**：通过已连接的服务器或快速检测中响应最快的服务器下载订阅，即使面板被完全封锁也能更新。提示条会自动消失。
 
 ## 从源码构建
 
