@@ -4,6 +4,24 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] — 2026-10-16
+
+### Security
+
+- **Windows: the TUN service runs from Program Files.** The service runs as LocalSystem, and it
+  used to run the copy of the app the user had started — a portable folder on the Desktop, a
+  per-user install in AppData. Any program under the user's account could replace a file there and
+  run as SYSTEM at the next service start. *Install* now copies the app to
+  `C:\Program Files\Mythaia Pro Service`, which only administrators can change, and registers the
+  service there; *Remove* deletes that copy too. Links and junctions in the app folder are not
+  followed when copying.
+
+### Changed
+
+- Windows: an app update does not touch the service's copy, so the settings now say when the
+  service is older than the app and offer *Update*, which replaces the copy in one administrator
+  prompt.
+
 ## [1.1.1] — 2026-10-16
 
 ### Fixed
@@ -122,6 +140,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[1.1.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.1...v1.0.2
