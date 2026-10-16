@@ -56,6 +56,31 @@ jobs:
             app/build/reports/
             wear/build/reports/
 
+  fdroid:
+    name: Android app, F-Droid build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      # As F-Droid's recipe does: only the phone app, built without Google
+      # Play services, unsigned, for every CPU.
+      - name: Drop the modules F-Droid does not build
+        run: sed -i -e '/include(":wear")/d' -e '/include(":desktop")/d' settings.gradle.kts
+      - name: Nothing proprietary on the classpath
+        run: |
+          ./gradlew -q :app:dependencies --configuration releaseRuntimeClasspath -Pmythaia.foss=true > deps.txt
+          if grep -E 'com\.google\.(android\.gms|mlkit|firebase)' deps.txt; then
+            echo "::error::A Google Play services library is in the F-Droid build"
+            exit 1
+          fi
+      - name: Build
+        run: ./gradlew :app:assembleRelease -Pmythaia.foss=true -Pmythaia.universal=true --stacktrace
+
   windows:
     name: Windows app
     runs-on: windows-latest

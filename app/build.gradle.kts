@@ -5,6 +5,12 @@ val localProperties = Properties().apply {
     if (file.exists()) load(file.inputStream())
 }
 
+// `-Pmythaia.foss=true` builds the app without Google Play services: the one
+// thing that needs them is the Wear OS bridge (the Data Layer API is
+// proprietary), so that build has no watch companion. F-Droid builds it this
+// way and signs the APK with its own key.
+val foss = providers.gradleProperty("mythaia.foss").orNull == "true"
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -60,7 +66,7 @@ android {
     val wantsRelease = gradle.startParameter.taskNames.any { name ->
         name.contains("Release", ignoreCase = true) && (name.startsWith(":app:") || !name.startsWith(":"))
     }
-    if (wantsRelease && !hasReleaseSigning) {
+    if (wantsRelease && !hasReleaseSigning && !foss) {
         error(
             "Release signing is not configured. Set KEYSTORE_FILE, KEYSTORE_PASSWORD, " +
                 "KEY_ALIAS and KEY_PASSWORD in local.properties or the environment."
@@ -147,9 +153,23 @@ android {
         compose = true
         buildConfig = true
     }
+    // Pinned so the native library builds the same everywhere: here, on CI
+    // and on F-Droid's build server (r28c).
+    ndkVersion = "28.2.13676358"
     externalNativeBuild {
         cmake {
             path = file("src/main/jni/CMakeLists.txt")
+        }
+    }
+}
+
+// The Wear OS bridge — a service and its manifest entry — lives in src/gms and
+// joins every variant unless this is the free build.
+androidComponents {
+    onVariants { variant ->
+        if (!foss) {
+            variant.sources.java?.addStaticSourceDirectory("src/gms/java")
+            variant.sources.manifests.addStaticManifestFile("src/gms/AndroidManifest.xml")
         }
     }
 }
@@ -170,8 +190,10 @@ dependencies {
     implementation(libs.camerax.camera2)
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.view)
-    implementation(libs.mlkit.barcode)
-    implementation(libs.play.services.wearable)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.fragment)
+    implementation(libs.zxing.core)
+    if (!foss) implementation(libs.play.services.wearable)
     implementation(libs.coroutines.android)
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.bcpkix)
