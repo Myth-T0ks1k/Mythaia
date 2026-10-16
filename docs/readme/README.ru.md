@@ -18,7 +18,7 @@
 
 [English](../../README.md) · **Русский** · [Türkmençe](README.tk.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
-[Скачать](#скачать) · [Возможности](#возможности) · [Фронтинг в одной ссылке](#фронтинг-в-одной-ссылке) · [Сборка](#сборка-из-исходников) · [Изменения](../../CHANGELOG.md)
+[Сайт](https://myth-t0ks1k.github.io/Mythaia/ru/) · [Скачать](#скачать) · [Возможности](#возможности) · [Фронтинг в одной ссылке](#фронтинг-в-одной-ссылке) · [Сборка](#сборка-из-исходников) · [Изменения](../../CHANGELOG.md)
 
 </div>
 
@@ -79,6 +79,13 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 В каждом релизе есть `SHA256SUMS.txt` с контрольными суммами всех файлов. Нужны Android 8.0 или
 новее и Windows 10 или 11 (x64); для TUN-режима Windows попросит права администратора — каждый раз
 или один раз при установке службы Mythaia, которая работает из своей копии в Program Files.
+
+На Windows установить и обновлять его можно и через Scoop:
+
+```pwsh
+scoop bucket add mythaia https://github.com/Myth-T0ks1k/scoop-bucket
+scoop install mythaia/mythaia-pro
+```
 
 ## Фронтинг в одной ссылке
 
@@ -172,7 +179,7 @@ gradlew :desktop:packageExe :desktop:packageMsi
 [CONTRIBUTING.md](../../CONTRIBUTING.md), а об уязвимостях сообщайте приватно, как описано
 в [SECURITY.md](../../SECURITY.md).
 
-Вопросы и обсуждение — в Telegram-чате [@mythaia_chat](https://t.me/mythaia_chat).
+Вопросы и обсуждение — в Telegram-чате [@mythaia_chat](https://t.me/mythaia_chat) или в [GitHub Discussions](https://github.com/Myth-T0ks1k/Mythaia/discussions).
 
 ## Лицензия
 

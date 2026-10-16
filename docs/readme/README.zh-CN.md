@@ -18,7 +18,7 @@
 
 [English](../../README.md) · [Русский](README.ru.md) · [Türkmençe](README.tk.md) · **简体中文** · [فارسی](README.fa.md)
 
-[下载](#下载) · [功能](#功能) · [一条链接里的域前置](#一条链接里的域前置) · [构建](#从源码构建) · [更新日志](../../CHANGELOG.md)
+[网站](https://myth-t0ks1k.github.io/Mythaia/zh/) · [下载](#下载) · [功能](#功能) · [一条链接里的域前置](#一条链接里的域前置) · [构建](#从源码构建) · [更新日志](../../CHANGELOG.md)
 
 </div>
 
@@ -75,6 +75,13 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 每个版本都附有 `SHA256SUMS.txt`，列出所有文件的 SHA-256 校验值。需要 Android 8.0 或更高版本，
 以及 Windows 10 或 11（x64）；在 Windows 上使用 TUN 模式时会请求管理员权限——每次都请求，或只在安装 Mythaia 服务时请求一次；
 该服务从 Program Files 中自己的副本运行。
+
+在 Windows 上也可以通过 Scoop 安装和更新：
+
+```pwsh
+scoop bucket add mythaia https://github.com/Myth-T0ks1k/scoop-bucket
+scoop install mythaia/mythaia-pro
+```
 
 ## 一条链接里的域前置
 
@@ -161,7 +168,7 @@ gradlew :desktop:packageExe :desktop:packageMsi
 欢迎提交问题报告、想法和 pull request。请先阅读 [CONTRIBUTING.md](../../CONTRIBUTING.md)；
 安全问题请按 [SECURITY.md](../../SECURITY.md) 中的说明私下报告。
 
-提问与讨论：Telegram 群组 [@mythaia_chat](https://t.me/mythaia_chat)。
+提问与讨论：Telegram 群组 [@mythaia_chat](https://t.me/mythaia_chat) 或 [GitHub Discussions](https://github.com/Myth-T0ks1k/Mythaia/discussions)。
 
 ## 许可证
 

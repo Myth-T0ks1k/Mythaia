@@ -18,7 +18,7 @@
 
 **English** · [Русский](docs/readme/README.ru.md) · [Türkmençe](docs/readme/README.tk.md) · [简体中文](docs/readme/README.zh-CN.md) · [فارسی](docs/readme/README.fa.md)
 
-[Download](#download) · [Features](#features) · [Fronting in one link](#fronting-in-one-link) · [Build](#building-from-source) · [Changelog](CHANGELOG.md)
+[Website](https://myth-t0ks1k.github.io/Mythaia/) · [Download](#download) · [Features](#features) · [Fronting in one link](#fronting-in-one-link) · [Build](#building-from-source) · [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -79,6 +79,13 @@ New versions are also posted in the Telegram channel [@mythaia](https://t.me/myt
 Every release lists the SHA-256 of each file in `SHA256SUMS.txt`. Android 8.0 or newer and Windows
 10 or 11 (x64) are required; TUN mode on Windows asks for administrator rights — each time, or once
 to install the Mythaia service, which runs from its own copy in Program Files.
+
+On Windows, Scoop installs and updates it too:
+
+```pwsh
+scoop bucket add mythaia https://github.com/Myth-T0ks1k/scoop-bucket
+scoop install mythaia/mythaia-pro
+```
 
 ## Fronting in one link
 
@@ -172,7 +179,7 @@ The `core` module is also published to
 Bug reports, ideas and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md)
 first, and report security problems privately as described in [SECURITY.md](SECURITY.md).
 
-Questions and discussion: [@mythaia_chat](https://t.me/mythaia_chat) on Telegram.
+Questions and discussion: [@mythaia_chat](https://t.me/mythaia_chat) on Telegram or [GitHub Discussions](https://github.com/Myth-T0ks1k/Mythaia/discussions).
 
 ## License
 

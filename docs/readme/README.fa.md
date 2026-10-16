@@ -18,7 +18,7 @@
 
 [English](../../README.md) · [Русский](README.ru.md) · [Türkmençe](README.tk.md) · [简体中文](README.zh-CN.md) · **فارسی**
 
-[دانلود](#دانلود) · [امکانات](#امکانات) · [فرانتینگ در یک لینک](#فرانتینگ-در-یک-لینک) · [ساخت](#ساخت-از-سورس) · [تغییرات](../../CHANGELOG.md)
+[وب‌سایت](https://myth-t0ks1k.github.io/Mythaia/fa/) · [دانلود](#دانلود) · [امکانات](#امکانات) · [فرانتینگ در یک لینک](#فرانتینگ-در-یک-لینک) · [ساخت](#ساخت-از-سورس) · [تغییرات](../../CHANGELOG.md)
 
 </div>
 
@@ -78,6 +78,13 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 هر نسخه فایل `SHA256SUMS.txt` را با چکسام SHA-256 همهٔ فایل‌ها دارد. Android 8.0 یا جدیدتر و Windows
 10 یا 11 (x64) لازم است؛ حالت TUN در Windows دسترسی مدیر می‌خواهد — هر بار، یا فقط یک بار هنگام نصب
 سرویس Mythaia که از نسخهٔ خودش در Program Files اجرا می‌شود.
+
+در Windows می‌توانید آن را با Scoop هم نصب و به‌روزرسانی کنید:
+
+```pwsh
+scoop bucket add mythaia https://github.com/Myth-T0ks1k/scoop-bucket
+scoop install mythaia/mythaia-pro
+```
 
 ## فرانتینگ در یک لینک
 
@@ -169,7 +176,7 @@ gradlew :desktop:packageExe :desktop:packageMsi
 گزارش اشکال، ایده و pull request پذیرفته می‌شود. لطفاً ابتدا [CONTRIBUTING.md](../../CONTRIBUTING.md) را
 بخوانید و مشکلات امنیتی را طبق [SECURITY.md](../../SECURITY.md) به‌صورت خصوصی گزارش دهید.
 
-پرسش و گفت‌وگو: گروه تلگرام [@mythaia_chat](https://t.me/mythaia_chat).
+پرسش و گفت‌وگو: گروه تلگرام [@mythaia_chat](https://t.me/mythaia_chat) یا [GitHub Discussions](https://github.com/Myth-T0ks1k/Mythaia/discussions).
 
 ## مجوز
 

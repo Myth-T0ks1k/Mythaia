@@ -18,7 +18,7 @@
 
 [English](../../README.md) · [Русский](README.ru.md) · **Türkmençe** · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
-[Ýükläp almak](#ýükläp-almak) · [Mümkinçilikler](#mümkinçilikler) · [Bir baglanyşykda fronting](#bir-baglanyşykda-fronting) · [Ýygnamak](#çeşme-kodundan-ýygnamak) · [Üýtgeşmeler](../../CHANGELOG.md)
+[Saýt](https://myth-t0ks1k.github.io/Mythaia/tk/) · [Ýükläp almak](#ýükläp-almak) · [Mümkinçilikler](#mümkinçilikler) · [Bir baglanyşykda fronting](#bir-baglanyşykda-fronting) · [Ýygnamak](#çeşme-kodundan-ýygnamak) · [Üýtgeşmeler](../../CHANGELOG.md)
 
 </div>
 
@@ -79,6 +79,13 @@ Täze wersiýalar Telegram kanalynda [@mythaia](https://t.me/mythaia) hem çap e
 Her neşirde ähli faýllaryň SHA-256 jemleri bilen `SHA256SUMS.txt` bar. Android 8.0 ýa-da täzesi we
 Windows 10 ýa-da 11 (x64) gerek; TUN režimi üçin Windows administrator hukuklaryny sorar — her gezek
 ýa-da Program Files-daky öz nusgasyndan işleýän Mythaia hyzmatyny gurnanyňyzda bir gezek.
+
+Windows-da ony Scoop arkaly hem gurup we täzeläp bolýar:
+
+```pwsh
+scoop bucket add mythaia https://github.com/Myth-T0ks1k/scoop-bucket
+scoop install mythaia/mythaia-pro
+```
 
 ## Bir baglanyşykda fronting
 
@@ -171,7 +178,7 @@ Gurnaýjylar üçin `PATH`-da WiX 3.14 gerek. Ulanyjynyň maglumatlary `%APPDATA
 [CONTRIBUTING.md](../../CONTRIBUTING.md) okaň, howpsuzlyk meseleleri barada bolsa
 [SECURITY.md](../../SECURITY.md)-de beýan edilişi ýaly gizlin habar beriň.
 
-Soraglar we pikir alyşmak — Telegram söhbetdeşliginde [@mythaia_chat](https://t.me/mythaia_chat).
+Soraglar we pikir alyşmak — Telegram söhbetdeşliginde [@mythaia_chat](https://t.me/mythaia_chat) ýa-da [GitHub Discussions](https://github.com/Myth-T0ks1k/Mythaia/discussions)-da.
 
 ## Ygtyýarnama
 
