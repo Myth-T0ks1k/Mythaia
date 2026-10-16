@@ -68,12 +68,12 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 
 | پلتفرم | فایل | توضیح |
 |---|---|---|
-| Android | `Mythaia-1.1.2-android-universal.apk` | برای همهٔ دستگاه‌ها: arm64، armeabi-v7a، x86، x86_64 |
-| Android | `Mythaia-1.1.2-android-arm64-v8a.apk` | کم‌حجم‌تر، برای گوشی‌های جدید |
-| Wear OS | `Mythaia-1.1.2-wear-os.apk` | همراه برنامهٔ گوشی، Wear OS 3 یا جدیدتر |
-| Windows | `Mythaia-Pro-1.1.2-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
-| Windows | `Mythaia-Pro-1.1.2-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
-| Windows | `Mythaia-Pro-1.1.2-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
+| Android | `Mythaia-1.2.0-android-universal.apk` | برای همهٔ دستگاه‌ها: arm64، armeabi-v7a، x86، x86_64 |
+| Android | `Mythaia-1.2.0-android-arm64-v8a.apk` | کم‌حجم‌تر، برای گوشی‌های جدید |
+| Wear OS | `Mythaia-1.2.0-wear-os.apk` | همراه برنامهٔ گوشی، Wear OS 3 یا جدیدتر |
+| Windows | `Mythaia-Pro-1.2.0-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
+| Windows | `Mythaia-Pro-1.2.0-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
+| Windows | `Mythaia-Pro-1.2.0-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
 
 هر نسخه فایل `SHA256SUMS.txt` را با چکسام SHA-256 همهٔ فایل‌ها دارد. Android 8.0 یا جدیدتر و Windows
 10 یا 11 (x64) لازم است؛ حالت TUN در Windows دسترسی مدیر می‌خواهد — هر بار، یا فقط یک بار هنگام نصب
