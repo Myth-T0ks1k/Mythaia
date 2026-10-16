@@ -1,0 +1,54 @@
+name: Website
+
+# Builds site/ into the GitHub Pages site. A published release rebuilds it,
+# so the download links always name the latest version.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/assets/**"
+      - ".github/workflows/pages.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: python3 site/build.py --version "${{ steps.release.outputs.version }}" --out _site
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

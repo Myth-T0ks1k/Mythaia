@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="{{lang}}" dir="{{dir}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{t.meta_title}}</title>
+<meta name="description" content="{{t.meta_description}}">
+<meta name="referrer" content="no-referrer">
+<link rel="canonical" href="{{url}}">
+{{hreflang}}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Mythaia">
+<meta property="og:title" content="{{t.meta_title}}">
+<meta property="og:description" content="{{t.meta_description}}">
+<meta property="og:url" content="{{url}}">
+<meta property="og:image" content="{{site}}assets/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#FDFBF6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1626" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="{{base}}assets/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{base}}assets/site.css">
+<script type="application/ld+json">{{jsonld}}</script>
+<script>document.documentElement.classList.add("js")</script>
+</head>
+<body>
+<a class="skip" href="#main">{{t.skip}}</a>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="brand" href="./" aria-label="Mythaia">
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><path d="M20 82 Q21 32 82 20" stroke-width="8.5"/><path d="M20 82 Q29 47 69 38" stroke-width="8"/><path d="M20 82 Q36 61 57 55" stroke-width="7.5"/></svg>
+      <span>Mythaia</span>
+    </a>
+    <nav class="nav" aria-label="{{t.nav_label}}">
+      <a href="#features">{{t.nav_features}}</a>
+      <a href="#download">{{t.nav_download}}</a>
+      <a href="#verify">{{t.nav_verify}}</a>
+      <a href="#faq">{{t.nav_faq}}</a>
+    </nav>
+    <details class="langs">
+      <summary aria-label="{{t.lang_label}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
+        <span>{{t.lang_name}}</span>
+      </summary>
+      <ul>
+{{lang_links}}
+      </ul>
+    </details>
+    <a class="gh" href="{{repo}}" aria-label="GitHub">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero">
+  <div class="wrap hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow rise" style="--i:0">{{t.hero_eyebrow}}</p>
+      <h1 class="rise" style="--i:1">{{t.hero_title}}</h1>
+      <p class="lead rise" style="--i:2">{{t.hero_lead}}</p>
+      <div class="cta rise" style="--i:3">
+        <a class="btn primary" href="{{dl_universal}}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
+          <span>{{t.btn_android}}</span>
+        </a>
+        <a class="btn" href="{{dl_setup}}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 20.5h8M12 17v3.5"/></svg>
+          <span>{{t.btn_windows}}</span>
+        </a>
+      </div>
+      <p class="meta rise" style="--i:4">{{t.hero_meta}} · <a href="#download">{{t.btn_all}}</a></p>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <svg class="feather" viewBox="0 0 100 100"><path pathLength="1" d="M20 82 Q21 32 82 20" stroke-width="8.5"/><path pathLength="1" d="M20 82 Q29 47 69 38" stroke-width="8"/><path pathLength="1" d="M20 82 Q36 61 57 55" stroke-width="7.5"/></svg>
+      <figure class="phone phone-back"><img src="{{base}}assets/screens/proxies.png" alt="" width="540" height="1200"></figure>
+      <figure class="phone phone-front"><img src="{{base}}assets/screens/home.png" alt="" width="540" height="1200"></figure>
+    </div>
+  </div>
+  <div class="wrap">
+    <p class="protocols" aria-label="{{t.protocols_label}}">
+      <span>VLESS</span><span>Reality</span><span>XHTTP</span><span>VMess</span><span>Trojan</span><span>Shadowsocks</span><span>Hysteria2</span><span>TUIC</span><span>AnyTLS</span><span>NaiveProxy</span><span>WireGuard</span><span>SOCKS5</span>
+    </p>
+  </div>
+</section>
+
+<section id="features" class="section">
+  <div class="wrap">
+    <header class="section-head reveal">
+      <p class="num">01</p>
+      <h2>{{t.features_title}}</h2>
+      <p class="section-lead">{{t.features_lead}}</p>
+    </header>
+    <ol class="features">
+      <li class="reveal"><span class="n">i</span><h3>{{t.f1_title}}</h3><p>{{t.f1_text}}</p></li>
+      <li class="reveal"><span class="n">ii</span><h3>{{t.f2_title}}</h3><p>{{t.f2_text}}</p></li>
+      <li class="reveal"><span class="n">iii</span><h3>{{t.f3_title}}</h3><p>{{t.f3_text}}</p></li>
+      <li class="reveal"><span class="n">iv</span><h3>{{t.f4_title}}</h3><p>{{t.f4_text}}</p></li>
+      <li class="reveal"><span class="n">v</span><h3>{{t.f5_title}}</h3><p>{{t.f5_text}}</p></li>
+      <li class="reveal"><span class="n">vi</span><h3>{{t.f6_title}}</h3><p>{{t.f6_text}}</p></li>
+      <li class="reveal"><span class="n">vii</span><h3>{{t.f7_title}}</h3><p>{{t.f7_text}}</p></li>
+      <li class="reveal"><span class="n">viii</span><h3>{{t.f8_title}}</h3><p>{{t.f8_text}}</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="section band" id="fronting">
+  <div class="wrap band-inner">
+    <div class="band-copy reveal">
+      <p class="num">02</p>
+      <h2>{{t.fronting_title}}</h2>
+      <p>{{t.fronting_text}}</p>
+      <pre class="link" dir="ltr"><code>https://panel.example.com/sub/TOKEN<mark>#front=104.16.1.1&amp;sni=www.example.org</mark></code></pre>
+      <p class="note">{{t.fronting_note}}</p>
+    </div>
+    <figure class="phone band-phone reveal"><img src="{{base}}assets/screens/add-fronting.png" alt="{{t.alt_fronting}}" width="540" height="1200" loading="lazy"></figure>
+  </div>
+</section>
+
+<section class="section screens-section" aria-label="{{t.screens_label}}">
+  <div class="wrap">
+    <div class="screens">
+      <figure class="reveal"><div class="phone"><img src="{{base}}assets/screens/home.png" alt="{{t.alt_home}}" width="540" height="1200" loading="lazy"></div><figcaption>{{t.alt_home}}</figcaption></figure>
+      <figure class="reveal"><div class="phone"><img src="{{base}}assets/screens/proxies.png" alt="{{t.alt_proxies}}" width="540" height="1200" loading="lazy"></div><figcaption>{{t.alt_proxies}}</figcaption></figure>
+      <figure class="reveal"><div class="phone"><img src="{{base}}assets/screens/add-fronting.png" alt="{{t.alt_fronting}}" width="540" height="1200" loading="lazy"></div><figcaption>{{t.alt_fronting}}</figcaption></figure>
+      <figure class="reveal"><div class="phone"><img src="{{base}}assets/screens/settings.png" alt="{{t.alt_settings}}" width="540" height="1200" loading="lazy"></div><figcaption>{{t.alt_settings}}</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="download" class="section">
+  <div class="wrap">
+    <header class="section-head reveal">
+      <p class="num">03</p>
+      <h2>{{t.download_title}}</h2>
+      <p class="section-lead">{{t.download_lead}}</p>
+    </header>
+    <div class="files reveal">
+      <a class="file" href="{{dl_universal}}"><span class="platform">Android</span><span class="name" dir="ltr">Mythaia-{{version}}-android-universal.apk</span><span class="what">{{t.dl_universal}}</span><span class="get" aria-hidden="true">↓</span></a>
+      <a class="file" href="{{dl_arm64}}"><span class="platform">Android</span><span class="name" dir="ltr">Mythaia-{{version}}-android-arm64-v8a.apk</span><span class="what">{{t.dl_arm64}}</span><span class="get" aria-hidden="true">↓</span></a>
+      <a class="file" href="{{dl_wear}}"><span class="platform">Wear OS</span><span class="name" dir="ltr">Mythaia-{{version}}-wear-os.apk</span><span class="what">{{t.dl_wear}}</span><span class="get" aria-hidden="true">↓</span></a>
+      <a class="file" href="{{dl_setup}}"><span class="platform">Windows</span><span class="name" dir="ltr">Mythaia-Pro-{{version}}-windows-x64-setup.exe</span><span class="what">{{t.dl_setup}}</span><span class="get" aria-hidden="true">↓</span></a>
+      <a class="file" href="{{dl_msi}}"><span class="platform">Windows</span><span class="name" dir="ltr">Mythaia-Pro-{{version}}-windows-x64.msi</span><span class="what">{{t.dl_msi}}</span><span class="get" aria-hidden="true">↓</span></a>
+      <a class="file" href="{{dl_portable}}"><span class="platform">Windows</span><span class="name" dir="ltr">Mythaia-Pro-{{version}}-windows-x64-portable.zip</span><span class="what">{{t.dl_portable}}</span><span class="get" aria-hidden="true">↓</span></a>
+    </div>
+    <div class="other reveal">
+      <h3>{{t.other_title}}</h3>
+      <div class="other-grid">
+        <div>
+          <p><strong>Scoop</strong> · Windows</p>
+          <pre dir="ltr"><code>scoop bucket add mythaia https://github.com/Myth-T0ks1k/scoop-bucket
+scoop install mythaia/mythaia-pro</code></pre>
+        </div>
+        <div>
+          <p><strong>Obtainium</strong> · Android</p>
+          <p>{{t.obtainium}}</p>
+          <pre dir="ltr"><code>{{repo}}</code></pre>
+        </div>
+      </div>
+      <p class="small"><a href="{{repo}}/releases">{{t.all_releases}}</a> · <a href="{{dl_sums}}">SHA256SUMS.txt</a> · <a href="{{repo}}/blob/main/CHANGELOG.md">{{t.changelog}}</a></p>
+    </div>
+  </div>
+</section>
+
+<section id="verify" class="section verify">
+  <div class="wrap verify-inner">
+    <header class="section-head reveal">
+      <p class="num">04</p>
+      <h2>{{t.verify_title}}</h2>
+      <p class="section-lead">{{t.verify_text}}</p>
+    </header>
+    <div class="cert reveal">
+      <p class="label">{{t.verify_cert}}</p>
+      <p class="fingerprint" dir="ltr" id="fingerprint">D5:<wbr>D4:<wbr>0E:<wbr>E5:<wbr>1C:<wbr>5B:<wbr>2D:<wbr>73:<wbr>EF:<wbr>ED:<wbr>78:<wbr>70:<wbr>AA:<wbr>3E:<wbr>3F:<wbr>B4:<wbr>73:<wbr>AB:<wbr>A3:<wbr>F2:<wbr>D4:<wbr>23:<wbr>71:<wbr>DA:<wbr>C2:<wbr>B3:<wbr>FD:<wbr>29:<wbr>CF:<wbr>A6:<wbr>79:<wbr>63</p>
+      <button class="copy" type="button" data-copy="fingerprint" data-done="{{t.copied}}">{{t.copy}}</button>
+      <p class="small">{{t.verify_sums}}</p>
+    </div>
+  </div>
+</section>
+
+<section class="section community" aria-labelledby="community-title">
+  <div class="wrap">
+    <header class="section-head reveal">
+      <p class="num">05</p>
+      <h2 id="community-title">{{t.community_title}}</h2>
+    </header>
+    <div class="cards">
+      <a class="card reveal" href="https://t.me/mythaia">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.5 4.5 2.8 11.6c-.9.4-.9 1.1.1 1.4l4.7 1.5 1.8 5.5c.2.6.6.7 1 .3l2.6-2.4 4.9 3.6c.8.5 1.4.2 1.6-.8l3.2-15c.3-1.2-.4-1.7-1.2-1.2z"/><path d="m7.6 14.5 10-6.4-7.4 7.1"/></svg>
+        <h3>{{t.c_channel}}</h3><p>{{t.c_channel_text}}</p><span class="handle" dir="ltr">@mythaia</span>
+      </a>
+      <a class="card reveal" href="https://t.me/mythaia_chat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v10H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/></svg>
+        <h3>{{t.c_chat}}</h3><p>{{t.c_chat_text}}</p><span class="handle" dir="ltr">@mythaia_chat</span>
+      </a>
+      <a class="card reveal" href="{{repo}}/discussions">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h12v8h-7l-5 3.5z"/><path d="M15.5 8.5h5v8l-3-2.5h-6v-1.5"/></svg>
+        <h3>{{t.c_disc}}</h3><p>{{t.c_disc_text}}</p><span class="handle">GitHub Discussions</span>
+      </a>
+      <a class="card reveal" href="{{repo}}/issues/new/choose">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16v.5"/></svg>
+        <h3>{{t.c_issues}}</h3><p>{{t.c_issues_text}}</p><span class="handle">GitHub Issues</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section id="faq" class="section faq-section">
+  <div class="wrap">
+    <header class="section-head reveal">
+      <p class="num">06</p>
+      <h2>{{t.faq_title}}</h2>
+    </header>
+    <div class="faq reveal">
+      <details><summary>{{t.q1}}</summary><p>{{t.a1}}</p></details>
+      <details><summary>{{t.q2}}</summary><p>{{t.a2}}</p></details>
+      <details><summary>{{t.q3}}</summary><p>{{t.a3}}</p></details>
+      <details><summary>{{t.q4}}</summary><p>{{t.a4}}</p></details>
+      <details><summary>{{t.q5}}</summary><p>{{t.a5}}</p></details>
+      <details><summary>{{t.q6}}</summary><p>{{t.a6}}</p></details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><path d="M20 82 Q21 32 82 20" stroke-width="8.5"/><path d="M20 82 Q29 47 69 38" stroke-width="8"/><path d="M20 82 Q36 61 57 55" stroke-width="7.5"/></svg>
+      <div>
+        <p class="foot-name">Mythaia</p>
+        <p>{{t.footer_license}}</p>
+      </div>
+    </div>
+    <nav class="foot-links" aria-label="{{t.footer_label}}">
+      <a href="{{repo}}">{{t.source}}</a>
+      <a href="{{repo}}/releases">{{t.all_releases}}</a>
+      <a href="{{repo}}/blob/main/CHANGELOG.md">{{t.changelog}}</a>
+      <a href="{{repo}}/security/policy">{{t.security}}</a>
+      <a href="https://t.me/mythaia">Telegram</a>
+    </nav>
+    <ul class="foot-langs">
+{{lang_links}}
+    </ul>
+  </div>
+</footer>
+
+<script src="{{base}}assets/site.js" defer></script>
+</body>
+</html>
