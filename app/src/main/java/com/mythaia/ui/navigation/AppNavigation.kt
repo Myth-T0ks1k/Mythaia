@@ -46,6 +46,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.mythaia.R
+import com.mythaia.ui.components.SubscriptionNoticeBar
 import com.mythaia.ui.components.WingMark
 import com.mythaia.ui.home.HomeScreen
 import com.mythaia.ui.proxy.ProxyListScreen
@@ -132,6 +133,8 @@ fun AppNavigation(viewModel: VpnViewModel) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        // A subscription that did not update, on whichever screen is open.
+        snackbarHost = { SubscriptionNoticeBar(viewModel) },
         bottomBar = {
             if (wideLayout) return@Scaffold
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {

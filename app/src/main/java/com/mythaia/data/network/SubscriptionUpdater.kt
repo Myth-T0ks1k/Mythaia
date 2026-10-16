@@ -5,6 +5,7 @@ import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.Subscription
 import com.mythaia.data.repository.ConfigRepository
 import com.mythaia.data.repository.SubscriptionRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -21,15 +22,32 @@ object SubscriptionUpdater {
 
     /**
      * @param remnawaveHWID the `x-hwid` header value, or null not to send one.
+     * @param via a server to fetch through when the panel cannot be reached directly.
+     * @param timeoutMs overrides how long the panel gets.
      * @return the subscription as it should now be stored.
      */
     suspend fun update(
         subscription: Subscription,
         subscriptionRepository: SubscriptionRepository,
         configRepository: ConfigRepository,
-        remnawaveHWID: String?
+        remnawaveHWID: String?,
+        via: ProxyConfiguration? = null,
+        timeoutMs: Int? = null
     ): Subscription {
-        val result = SubscriptionFetcher.fetch(subscription, remnawaveHWID = remnawaveHWID)
+        val result = try {
+            SubscriptionFetcher.fetch(subscription, remnawaveHWID = remnawaveHWID, via = via, timeoutMs = timeoutMs)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Kept with the subscription: a background refresh that fails has
+            // nobody to tell, so the app says so the next time it opens.
+            subscriptionRepository.get(subscription.id)?.let {
+                subscriptionRepository.update(
+                    it.copy(lastFailure = System.currentTimeMillis(), lastFailureMessage = e.message?.take(300))
+                )
+            }
+            throw e
+        }
 
         // The fetch can take a while; re-read the record so a rename, a
         // collapse or a deletion made meanwhile is not overwritten with the
@@ -54,22 +72,9 @@ object SubscriptionUpdater {
             configRepository.replaceBySubscription(current.id, newConfigs)
         }
 
-        // Preserve old metadata when new values are null and respect
-        // user-customized names.
-        val updated = current.copy(
-            lastUpdate = System.currentTimeMillis(),
-            name = if (current.isNameCustomized) current.name
-                   else (result.name ?: current.name),
-            upload = result.upload ?: current.upload,
-            download = result.download ?: current.download,
-            total = result.total ?: current.total,
-            expire = result.expire ?: current.expire,
-            // A panel that stops announcing has nothing to say any more.
-            announce = result.panel.announce,
-            supportUrl = result.panel.supportUrl ?: current.supportUrl,
-            webPageUrl = result.panel.webPageUrl ?: current.webPageUrl,
-            updateIntervalHours = result.panel.updateIntervalHours ?: current.updateIntervalHours
-        )
+        // What the panel said, folded in: a moved URL, fronting, messages.
+        // A key it left out keeps its value; a customised name is kept.
+        val updated = SubscriptionMetadata.applyTo(current, result)
         subscriptionRepository.update(updated)
         return updated
     }

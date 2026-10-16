@@ -19,6 +19,11 @@ import com.mythaia.data.model.percentDecode
  * comma-separated or repeated), `sni` the name sent in the TLS handshake
  * (`front-sni` is read too), `name` an optional name for the group. With
  * `sni` and no `front`, the panel's own host is dialled with that SNI.
+ *
+ * Happ's form is read too, where the URL names the front rather than the
+ * panel: `https://cdn-front.example/sub/TOKEN#Name?resolve-address=104.16.1.1&host=panel.example.com`
+ * dials `resolve-address` (the front's own address when absent), sends the
+ * URL's host as the SNI and asks for `host`.
  */
 data class SubscriptionLink(
     val url: String,
@@ -48,7 +53,8 @@ data class SubscriptionLink(
     companion object {
         private const val APP_PREFIX = "mythaia://import?"
         private val SNI_KEYS = setOf("sni", "front-sni", "frontsni", "front_sni")
-        private val OWN_KEYS = SNI_KEYS + setOf("front", "name")
+        private val FRONT_KEYS = setOf("front", "resolve-address")
+        private val OWN_KEYS = SNI_KEYS + FRONT_KEYS + setOf("name", "host")
 
         /** Whether [link] is an http(s) URL or app import link that asks for fronting. */
         fun isFrontedLink(link: String): Boolean = parse(link)?.isFronted == true
@@ -64,7 +70,7 @@ data class SubscriptionLink(
             if (!isHttp(s)) return null
             val hash = s.indexOf('#')
             if (hash < 0) return SubscriptionLink(s)
-            val params = parseParams(s.substring(hash + 1))
+            val params = fragmentParams(s.substring(hash + 1))
             // A name alone is read too: an import link with a name and no
             // fronting used to leave "#name=…" on the stored URL.
             if (params.none { it.first in OWN_KEYS }) return SubscriptionLink(s)
@@ -92,7 +98,7 @@ data class SubscriptionLink(
             }
             // `#name` as Hiddify writes it, or settings put in the fragment.
             if (fragment.isNotEmpty()) {
-                if ('=' in fragment) own += parseParams(fragment)
+                if ('=' in fragment) own += fragmentParams(fragment)
                 else own += "name" to percentDecode(fragment)
             }
             // A hand-written link may also carry the fragment form inside the URL.
@@ -107,22 +113,50 @@ data class SubscriptionLink(
         }
 
         private fun fromParams(url: String, params: List<Pair<String, String>>): SubscriptionLink {
-            val sni = params.lastOrNull { it.first in SNI_KEYS && it.second.isNotBlank() }?.second?.trim()
-            var targets = params.filter { it.first == "front" }
+            var panelUrl = url
+            var sni = params.lastOrNull { it.first in SNI_KEYS && it.second.isNotBlank() }?.second?.trim()
+            var targets = params.filter { it.first in FRONT_KEYS }
                 .flatMap { it.second.split(',') }
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()
+            // Happ's `host`: the URL names the front, `host` the panel.
+            val host = params.lastOrNull { it.first == "host" && it.second.isNotBlank() }?.second?.trim()
+            val front = hostAndPort(url)
+            if (host != null && front != null && !sameHost(host, front)) {
+                SubscriptionMetadata.replaceHost(url, host)?.let { moved ->
+                    panelUrl = moved
+                    if (sni == null) sni = hostOnly(front)
+                    if (targets.isEmpty()) targets = listOf(front)
+                }
+            }
             // An SNI on its own fronts the panel's own address: the name in the
             // handshake is what a filter reads, wherever the packets go.
-            if (targets.isEmpty() && sni != null) targets = listOfNotNull(hostAndPort(url))
+            if (targets.isEmpty() && sni != null) targets = listOfNotNull(hostAndPort(panelUrl))
             return SubscriptionLink(
-                url = url,
+                url = panelUrl,
                 frontSni = sni,
                 frontTargets = targets,
                 name = params.lastOrNull { it.first == "name" && it.second.isNotBlank() }?.second?.trim()
             )
         }
+
+        /**
+         * A fragment's settings: `key=value&…`, or Happ's `Name?key=value&…`,
+         * whose part before the `?` names the group.
+         */
+        private fun fragmentParams(fragment: String): List<Pair<String, String>> {
+            val q = fragment.indexOf('?')
+            if (q < 0 || '=' in fragment.substring(0, q)) return parseParams(fragment)
+            val name = percentDecode(fragment.substring(0, q)).trim()
+            val params = parseParams(fragment.substring(q + 1))
+            return if (name.isEmpty() || params.any { it.first == "name" }) params else params + ("name" to name)
+        }
+
+        private fun hostOnly(hostPort: String): String =
+            if (hostPort.startsWith('[')) hostPort.substring(1).substringBefore(']') else hostPort.substringBefore(':')
+
+        private fun sameHost(a: String, b: String): Boolean = hostOnly(a).equals(hostOnly(b), ignoreCase = true)
 
         private fun parseParams(s: String): List<Pair<String, String>> =
             s.split('&').filter { it.isNotEmpty() }.map { part ->

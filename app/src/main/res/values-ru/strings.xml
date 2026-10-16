@@ -61,7 +61,6 @@
     <string name="trademarks">Товарные знаки</string>
     <string name="transport">Транспорт</string>
     <string name="update">Обновить</string>
-    <string name="update_failed">Ошибка обновления</string>
     <string name="vpn_error">Ошибка VPN</string>
     <string name="latency_ms">%d мс</string>
     <string name="trademarks_notice">Все товарные знаки, знаки обслуживания и названия компаний являются собственностью их владельцев.</string>
@@ -474,4 +473,19 @@
     <string name="private_dns_open">Открыть настройки сети</string>
     <string name="subscription_support">Поддержка</string>
     <string name="subscription_web_page">Личный кабинет</string>
+    <string name="subscription_open_link">Открыть</string>
+    <string name="subscription_renew">Продлить</string>
+    <string name="subscription_expired_notice">Подписка истекла</string>
+    <plurals name="subscription_expires_in_days">
+        <item quantity="one">Подписка истекает через %1$d день</item>
+        <item quantity="few">Подписка истекает через %1$d дня</item>
+        <item quantity="many">Подписка истекает через %1$d дней</item>
+        <item quantity="other">Подписка истекает через %1$d дня</item>
+    </plurals>
+    <string name="subscription_update_failed_named">Не удалось обновить «%1$s»: %2$s</string>
+    <string name="subscription_through_working_server">Через рабочий сервер</string>
+    <string name="subscription_retrying_through_server">Обновляю «%1$s» через рабочий сервер…</string>
+    <string name="subscription_updated_through">«%1$s» обновлена через %2$s</string>
+    <string name="subscription_failed_through_servers">Через рабочий сервер тоже не вышло: %1$s</string>
+    <string name="subscription_no_working_server">Ни один сервер не ответил, пробовать не через что. Проверьте серверы и повторите.</string>
 </resources>

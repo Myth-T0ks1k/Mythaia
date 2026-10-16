@@ -9,6 +9,8 @@ import com.mythaia.data.network.LatencyKind
 import com.mythaia.data.network.LatencyResult
 import com.mythaia.data.network.LatencyTester
 import com.mythaia.data.network.SubscriptionFetcher
+import com.mythaia.data.network.SubscriptionMetadata
+import com.mythaia.data.network.WorkingServers
 import com.mythaia.desktop.engine.LaunchAtLogin
 import com.mythaia.desktop.engine.ProxyEngine
 import com.mythaia.desktop.engine.TrafficStats
@@ -68,6 +70,9 @@ data class Speed(val up: Long, val down: Long)
 
 /** What a link handed to the app would add, parsed but not stored: the window asks first. */
 data class PendingImport(val text: String, val names: List<String>)
+
+/** What the bar at the bottom of the window says, and the one thing it offers to do. */
+class Notice(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
 
 /**
  * The application state: the lists, the settings, the connection and Auto.
@@ -142,8 +147,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private val _updating = MutableStateFlow<Set<UUID>>(emptySet())
     val updating: StateFlow<Set<UUID>> = _updating.asStateFlow()
 
-    private val _message = MutableStateFlow<String?>(null)
-    val message: StateFlow<String?> = _message.asStateFlow()
+    private val _message = MutableStateFlow<Notice?>(null)
+    val message: StateFlow<Notice?> = _message.asStateFlow()
 
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList())
     val logs: StateFlow<List<LogLine>> = _logs.asStateFlow()
@@ -189,6 +194,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         // Sanity: a pin or an Auto choice may point at a server that is gone.
         pruneSelection()
         scope.launch { speedLoop() }
+        scope.launch { refreshSubscriptionsOnOpen() }
         scope.launch { subscriptionRefreshLoop() }
         scope.launch { serviceWatchLoop() }
     }
@@ -942,46 +948,141 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         _updating.update { it + id }
         scope.launch {
             try {
-                val result = SubscriptionFetcher.fetch(subscription)
-                // The same link twice in a feed is one server; ids of servers
-                // that stayed are kept so pins and Auto choices survive.
-                val fresh = result.configurations.distinctBy { runCatching { it.toUrl() }.getOrDefault(it.id.toString()) }
-                mutateConfigurations { list ->
-                    val previous = list.filter { it.subscriptionId == id }
-                    val byLink = previous.associateBy { runCatching { it.toUrl() }.getOrNull() }.toMutableMap()
-                    val merged = fresh.map { c ->
-                        val link = runCatching { c.toUrl() }.getOrNull()
-                        val old = link?.let { byLink.remove(it) }
-                        c.copy(id = old?.id ?: c.id, subscriptionId = id)
-                    }
-                    list.filterNot { it.subscriptionId == id } + merged
-                }
-                mutateSubscriptions { list ->
-                    list.map {
-                        if (it.id == id) it.copy(
-                            name = result.name.takeIf { n -> !it.isNameCustomized && !n.isNullOrBlank() } ?: it.name,
-                            lastUpdate = System.currentTimeMillis(),
-                            upload = result.upload, download = result.download,
-                            total = result.total, expire = result.expire,
-                            announce = result.panel.announce,
-                            supportUrl = result.panel.supportUrl ?: it.supportUrl,
-                            webPageUrl = result.panel.webPageUrl ?: it.webPageUrl,
-                            updateIntervalHours = result.panel.updateIntervalHours ?: it.updateIntervalHours
-                        ) else it
-                    }
-                }
-                pruneSelection()
+                val count = fetchSubscription(subscription)
                 val name = _subscriptions.value.firstOrNull { it.id == id }?.name ?: subscription.name
-                notify(if (announceAdded) tr("subscription_added", name) else tr("subscription_updated", name, fresh.size))
-                val live = liveConfiguration
-                if (live?.subscriptionId == id && _configurations.value.none { it.id == live.id }) reconnectIfNeeded()
+                notify(if (announceAdded) tr("subscription_added", name) else tr("subscription_updated", name, count))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 logger.error("Subscription ${subscription.name}: ${e.message}")
-                notify(tr("subscription_failed", e.message ?: e.javaClass.simpleName))
+                notifySubscriptionFailure(subscription, e.message ?: e.javaClass.simpleName, canRetry = e.isWorthADetour())
             } finally {
                 _updating.update { it - id }
             }
         }
+    }
+
+    /**
+     * Downloads [subscription], folds its servers and what the panel said
+     * into the store, and returns how many servers it has now. A failure is
+     * recorded on the subscription before it is rethrown.
+     */
+    private suspend fun fetchSubscription(
+        subscription: Subscription,
+        via: ProxyConfiguration? = null,
+        timeoutMs: Int? = null
+    ): Int {
+        val id = subscription.id
+        val result = try {
+            SubscriptionFetcher.fetch(subscription, via = via, timeoutMs = timeoutMs)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            mutateSubscriptions { list ->
+                list.map {
+                    if (it.id == id) it.copy(lastFailure = System.currentTimeMillis(), lastFailureMessage = e.message?.take(300))
+                    else it
+                }
+            }
+            throw e
+        }
+        // The same link twice in a feed is one server; ids of servers
+        // that stayed are kept so pins and Auto choices survive.
+        val fresh = result.configurations.distinctBy { runCatching { it.toUrl() }.getOrDefault(it.id.toString()) }
+        mutateConfigurations { list ->
+            val previous = list.filter { it.subscriptionId == id }
+            val byLink = previous.associateBy { runCatching { it.toUrl() }.getOrNull() }.toMutableMap()
+            val merged = fresh.map { c ->
+                val link = runCatching { c.toUrl() }.getOrNull()
+                val old = link?.let { byLink.remove(it) }
+                c.copy(id = old?.id ?: c.id, subscriptionId = id)
+            }
+            list.filterNot { it.subscriptionId == id } + merged
+        }
+        // What the panel said, as the phone records it: a moved URL, fronting, messages.
+        mutateSubscriptions { list -> list.map { if (it.id == id) SubscriptionMetadata.applyTo(it, result) else it } }
+        pruneSelection()
+        val live = liveConfiguration
+        if (live?.subscriptionId == id && _configurations.value.none { it.id == live.id }) reconnectIfNeeded()
+        return fresh.size
+    }
+
+    /** A panel that answered with nothing usable would say the same through any server. */
+    private fun Exception.isWorthADetour(): Boolean =
+        this !is SubscriptionFetcher.FetchError.NoConfigurations && this !is SubscriptionFetcher.FetchError.InvalidUrl
+
+    private fun notifySubscriptionFailure(subscription: Subscription, reason: String, canRetry: Boolean) {
+        val text = tr("subscription_failed_named", subscription.name, reason)
+        if (canRetry) notify(text, tr("through_working_server")) { updateSubscriptionThroughServer(subscription.id) }
+        else notify(text, long = true)
+    }
+
+    /**
+     * Fetches [id] through a server that works, for a panel this network
+     * cannot reach: the live server first, then the first servers to pass a
+     * fresh check, the subscription's own before the rest.
+     */
+    fun updateSubscriptionThroughServer(id: UUID) {
+        val subscription = _subscriptions.value.firstOrNull { it.id == id } ?: return
+        if (id in _updating.value) return
+        _updating.update { it + id }
+        notify(tr("subscription_retrying", subscription.name), long = true)
+        scope.launch {
+            var lastError: Exception? = null
+            try {
+                for (server in serversThatWork(id)) {
+                    try {
+                        val count = fetchSubscription(subscription, via = server, timeoutMs = THROUGH_SERVER_TIMEOUT_MS)
+                        logger.info("Subscription ${subscription.name} updated through ${server.name}")
+                        val name = _subscriptions.value.firstOrNull { it.id == id }?.name ?: subscription.name
+                        notify(tr("subscription_updated_through", name, server.name, count))
+                        return@launch
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: SubscriptionFetcher.FetchError.NoConfigurations) {
+                        lastError = e
+                        break
+                    } catch (e: Exception) {
+                        logger.warning("Subscription ${subscription.name} through ${server.name}: ${e.message}")
+                        lastError = e
+                    }
+                }
+                notify(
+                    lastError?.let { tr("subscription_failed_through", it.message ?: it.javaClass.simpleName) }
+                        ?: tr("no_working_server"),
+                    long = true
+                )
+            } finally {
+                _updating.update { it - id }
+            }
+        }
+    }
+
+    /** Servers to fetch [subscriptionId] through, checked just now; see [WorkingServers]. */
+    private suspend fun serversThatWork(subscriptionId: UUID): List<ProxyConfiguration> {
+        val all = _configurations.value
+        val live = if (isTunnelRunning && _connectivityOk.value) {
+            liveConfiguration?.let { l -> all.firstOrNull { it.id == l.id } }
+        } else null
+        return WorkingServers.find(
+            live = live,
+            candidates = WorkingServers.candidates(all, subscriptionId, _latencies.value),
+            onResult = { id, result -> _latencies.update { it + (id to result) } }
+        )
+    }
+
+    /**
+     * On start: refresh what the panel asked to have refreshed on every open
+     * (`subscription-auto-update-open-enable`), and speak up for one that
+     * kept failing last time.
+     */
+    private suspend fun refreshSubscriptionsOnOpen() {
+        // Let the window come up first.
+        delay(3_000)
+        val subscriptions = _subscriptions.value
+        subscriptions.filter { it.updateOnOpen }.forEach { updateSubscription(it.id) }
+        val failing = subscriptions.firstOrNull { it.isFailing && !it.updateOnOpen } ?: return
+        notifySubscriptionFailure(failing, failing.lastFailureMessage ?: tr("unknown_error"), canRetry = true)
     }
 
     fun deleteSubscription(id: UUID) {
@@ -998,7 +1099,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             val hours = _settings.value.subscriptionUpdateHours
             if (hours > 0) {
                 val stale = System.currentTimeMillis() - hours * 3_600_000L
-                _subscriptions.value.filter { (it.lastUpdate ?: 0L) < stale }.forEach { updateSubscription(it.id) }
+                // `subscription-auto-update-enable: 0`: the provider wants it refreshed by hand only.
+                _subscriptions.value.filter { it.autoUpdate && (it.lastUpdate ?: 0L) < stale }.forEach { updateSubscription(it.id) }
             }
             delay(10 * 60_000L)
         }
@@ -1118,13 +1220,29 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
     }
 
-    fun notify(text: String) {
-        _message.value = text
+    /**
+     * A line at the bottom of the window that goes away on its own: after
+     * four seconds, or twelve when it has an [actionLabel] to act on or is
+     * [long] enough to need reading.
+     */
+    fun notify(text: String, actionLabel: String? = null, long: Boolean = false, action: (() -> Unit)? = null) {
+        val notice = Notice(text, actionLabel?.takeIf { action != null }, action)
+        _message.value = notice
         messageJob?.cancel()
         messageJob = scope.launch {
-            delay(4_000)
-            if (_message.value == text) _message.value = null
+            delay(if (notice.actionLabel != null || long) 12_000 else 4_000)
+            if (_message.value === notice) _message.value = null
         }
+    }
+
+    /** Runs the bar's action and takes the bar away. */
+    fun actOnMessage(notice: Notice) {
+        if (_message.value === notice) _message.value = null
+        notice.action?.invoke()
+    }
+
+    fun dismissMessage() {
+        _message.value = null
     }
 
     fun clearLogs() {
@@ -1132,6 +1250,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     companion object {
+        /** How long the panel gets through each server tried. */
+        private const val THROUGH_SERVER_TIMEOUT_MS = 20_000
+
         const val DEFAULT_GROUP = "default"
         private const val MAX_LOG_LINES = 600
         private const val AUTO_FIRST_ROUND_DELAY_MS = 1_500L

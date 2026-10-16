@@ -61,7 +61,6 @@
     <string name="trademarks">商标</string>
     <string name="transport">传输</string>
     <string name="update">更新</string>
-    <string name="update_failed">更新失败</string>
     <string name="vpn_error">VPN 错误</string>
     <string name="latency_ms">%d 毫秒</string>
     <string name="trademarks_notice">所有商标、服务标识和公司名称均为其各自所有者的财产。</string>
@@ -438,6 +437,18 @@
     <string name="proto_pick_title">选择协议</string>
     <string name="subscription_support">客服</string>
     <string name="subscription_web_page">账户页面</string>
+    <string name="subscription_open_link">打开</string>
+    <string name="subscription_renew">续费</string>
+    <string name="subscription_expired_notice">订阅已到期</string>
+    <plurals name="subscription_expires_in_days">
+        <item quantity="other">订阅将在 %1$d 天后到期</item>
+    </plurals>
+    <string name="subscription_update_failed_named">无法更新“%1$s”：%2$s</string>
+    <string name="subscription_through_working_server">通过可用服务器重试</string>
+    <string name="subscription_retrying_through_server">正在通过可用服务器更新“%1$s”…</string>
+    <string name="subscription_updated_through">“%1$s”已通过 %2$s 更新</string>
+    <string name="subscription_failed_through_servers">通过可用服务器也未成功：%1$s</string>
+    <string name="subscription_no_working_server">没有服务器响应。请检查服务器后重试。</string>
     <string name="system_section">系统</string>
     <string name="verify_name">按名称验证证书（vcn）</string>
     <string name="wg_addresses">地址</string>

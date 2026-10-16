@@ -61,7 +61,6 @@
     <string name="trademarks">Haryt nyşanlary</string>
     <string name="transport">Transport</string>
     <string name="update">Täzele</string>
-    <string name="update_failed">Täzelemek şowsuz</string>
     <string name="vpn_error">VPN ýalňyşlygy</string>
     <string name="latency_ms">%d ms</string>
     <string name="trademarks_notice">Ähli haryt nyşanlary, hyzmat nyşanlary we kompaniýa atlary degişli eýeleriniň emlägidir.</string>
@@ -444,6 +443,19 @@
     <string name="proto_pick_title">Protokol saýlaň</string>
     <string name="subscription_support">Goldaw</string>
     <string name="subscription_web_page">Hasap sahypasy</string>
+    <string name="subscription_open_link">Aç</string>
+    <string name="subscription_renew">Uzalt</string>
+    <string name="subscription_expired_notice">Abunanyň möhleti gutardy</string>
+    <plurals name="subscription_expires_in_days">
+        <item quantity="one">Abunanyň möhleti %1$d günden gutarýar</item>
+        <item quantity="other">Abunanyň möhleti %1$d günden gutarýar</item>
+    </plurals>
+    <string name="subscription_update_failed_named">«%1$s» täzelenmedi: %2$s</string>
+    <string name="subscription_through_working_server">Işleýän serwer arkaly</string>
+    <string name="subscription_retrying_through_server">«%1$s» işleýän serwer arkaly täzelenýär…</string>
+    <string name="subscription_updated_through">«%1$s» %2$s arkaly täzelendi</string>
+    <string name="subscription_failed_through_servers">Işleýän serwer arkaly hem başartmady: %1$s</string>
+    <string name="subscription_no_working_server">Hiç bir serwer jogap bermedi. Serwerleri barlaň we gaýtadan synanyşyň.</string>
     <string name="system_section">Ulgam</string>
     <string name="verify_name">Sertifikaty at boýunça barla (vcn)</string>
     <string name="wg_addresses">Salgylar</string>

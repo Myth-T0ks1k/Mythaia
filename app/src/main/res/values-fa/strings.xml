@@ -61,7 +61,6 @@
     <string name="trademarks">علائم تجاری</string>
     <string name="transport">انتقال</string>
     <string name="update">به‌روزرسانی</string>
-    <string name="update_failed">به‌روزرسانی ناموفق بود</string>
     <string name="vpn_error">خطای VPN</string>
     <string name="latency_ms">%d میلی‌ثانیه</string>
     <string name="trademarks_notice">تمامی علائم تجاری، علائم خدماتی و نام‌های شرکت‌ها متعلق به صاحبان مربوطه آن‌ها است.</string>
@@ -444,6 +443,19 @@
     <string name="proto_pick_title">یک پروتکل انتخاب کنید</string>
     <string name="subscription_support">پشتیبانی</string>
     <string name="subscription_web_page">صفحهٔ حساب</string>
+    <string name="subscription_open_link">باز کردن</string>
+    <string name="subscription_renew">تمدید</string>
+    <string name="subscription_expired_notice">اشتراک شما منقضی شده است</string>
+    <plurals name="subscription_expires_in_days">
+        <item quantity="one">اشتراک شما %1$d روز دیگر منقضی می‌شود</item>
+        <item quantity="other">اشتراک شما %1$d روز دیگر منقضی می‌شود</item>
+    </plurals>
+    <string name="subscription_update_failed_named">«%1$s» به‌روز نشد: %2$s</string>
+    <string name="subscription_through_working_server">از طریق یک سرور فعال</string>
+    <string name="subscription_retrying_through_server">در حال به‌روزرسانی «%1$s» از طریق یک سرور فعال…</string>
+    <string name="subscription_updated_through">«%1$s» از طریق %2$s به‌روز شد</string>
+    <string name="subscription_failed_through_servers">از طریق سرور فعال هم نشد: %1$s</string>
+    <string name="subscription_no_working_server">هیچ سروری پاسخ نداد. سرورها را بررسی کنید و دوباره امتحان کنید.</string>
     <string name="system_section">سیستم</string>
     <string name="verify_name">بررسی گواهی برای نام (vcn)</string>
     <string name="wg_addresses">نشانی‌ها</string>

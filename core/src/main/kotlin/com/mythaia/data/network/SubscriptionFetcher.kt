@@ -1,6 +1,7 @@
 package com.mythaia.data.network
 
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.data.model.Subscription
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -18,14 +19,34 @@ import com.mythaia.vpn.util.decodeBase64Lenient
 object SubscriptionFetcher {
 
     /**
-     * What a panel says about the subscription besides the servers, in the
-     * headers Remnawave, Marzban and 3x-ui send (and Happ, v2rayN, Hiddify read).
+     * What a panel says about the subscription besides the servers: the keys
+     * Remnawave, Marzban and 3x-ui send and Happ reads, from the headers or
+     * from `#key: value` lines in the body. [SubscriptionMetadata] reads them
+     * and folds them into the stored subscription.
      */
     data class PanelInfo(
+        val title: String? = null,
+        val userInfo: String? = null,
         val announce: String? = null,
         val supportUrl: String? = null,
         val webPageUrl: String? = null,
-        val updateIntervalHours: Int? = null
+        val updateIntervalHours: Int? = null,
+        val updateOnOpen: Boolean? = null,
+        val autoUpdate: Boolean? = null,
+        val requestTimeoutSeconds: Int? = null,
+        val newUrl: String? = null,
+        val newDomain: String? = null,
+        val fallbackUrl: String? = null,
+        /** Hosts to dial instead of the panel; null when the panel did not say. */
+        val frontTargets: List<String>? = null,
+        /** `fronting-target: off`: fetch straight from the panel again. */
+        val frontingOff: Boolean = false,
+        val frontSni: String? = null,
+        /** Happ's `host`, beside a target: the panel's real host. */
+        val frontHost: String? = null,
+        val subInfo: Subscription.SubInfo? = null,
+        val expireNotice: Boolean? = null,
+        val expireButtonLink: String? = null
     )
 
     data class Result(
@@ -41,45 +62,93 @@ object SubscriptionFetcher {
     sealed class FetchError(message: String) : Exception(message) {
         class InvalidUrl : FetchError("Invalid subscription URL.")
         class NoConfigurations : FetchError("No valid configurations found in subscription.")
-        class NetworkError(message: String) : FetchError("Network error: $message")
+        class NetworkError(val detail: String) : FetchError("Network error: $detail")
     }
 
-    /** Fetches with the subscription's own fronting settings. */
+    private const val DEFAULT_TIMEOUT_MS = 30_000
+
+    /** How long the main URL gets when there is a fallback to try; Happ moves on after about nine seconds. */
+    private const val FALLBACK_AFTER_MS = 10_000
+
+    /**
+     * Fetches with the subscription's own fronting, timeout and fallback URL.
+     *
+     * @param via one of the user's servers to fetch through, for a panel that
+     *   cannot be reached from here at all; null to fetch directly.
+     * @param timeoutMs how long each URL gets; by default the panel's own
+     *   `subscription-request-timeout`, shorter when a fallback URL waits.
+     */
     suspend fun fetch(
-        subscription: com.mythaia.data.model.Subscription,
-        remnawaveHWID: String? = null
-    ): Result = fetch(
-        urlString = subscription.url,
-        remnawaveHWID = remnawaveHWID,
-        frontSni = subscription.frontSni,
-        frontTargets = subscription.frontTargets
-    )
+        subscription: Subscription,
+        remnawaveHWID: String? = null,
+        via: ProxyConfiguration? = null,
+        timeoutMs: Int? = null
+    ): Result {
+        val fallback = subscription.fallbackUrl?.takeIf { it != subscription.url }?.let { SubscriptionLink.parse(it) }
+        val mainTimeoutMs = timeoutMs
+            ?: subscription.requestTimeoutSeconds?.let { it * 1000 }
+            ?: if (fallback != null) FALLBACK_AFTER_MS else DEFAULT_TIMEOUT_MS
+        try {
+            return fetch(
+                urlString = subscription.url,
+                remnawaveHWID = remnawaveHWID,
+                frontSni = subscription.frontSni,
+                frontTargets = subscription.frontTargets,
+                via = via,
+                timeoutMs = mainTimeoutMs
+            )
+        } catch (e: FetchError.NetworkError) {
+            if (fallback == null) throw e
+            try {
+                return fetch(
+                    urlString = fallback.url,
+                    remnawaveHWID = remnawaveHWID,
+                    frontSni = fallback.frontSni,
+                    frontTargets = fallback.frontTargets,
+                    via = via,
+                    timeoutMs = timeoutMs ?: DEFAULT_TIMEOUT_MS
+                )
+            } catch (fallbackError: FetchError) {
+                val why = (fallbackError as? FetchError.NetworkError)?.detail ?: fallbackError.message
+                throw FetchError.NetworkError("${e.detail}; fallback URL: $why")
+            }
+        }
+    }
 
     /**
      * @param allowInsecure skip certificate and hostname checks. Never tied
      *   to the proxy-server "allow insecure" setting: that one is about the
      *   user's own self-signed server, whereas an unverified subscription
      *   download lets anyone on the path replace every server in the list.
+     * @param via see the overload above.
      */
     suspend fun fetch(
         urlString: String,
         allowInsecure: Boolean = false,
         remnawaveHWID: String? = null,
         frontSni: String? = null,
-        frontTargets: List<String> = emptyList()
+        frontTargets: List<String> = emptyList(),
+        via: ProxyConfiguration? = null,
+        timeoutMs: Int = DEFAULT_TIMEOUT_MS
     ): Result = withContext(Dispatchers.IO) {
         val url = runCatching { URL(urlString) }.getOrNull()
             ?: throw FetchError.InvalidUrl()
         // URL() also accepts file: and ftp:, whose connections are not HTTP
         // and would fail the cast below with a ClassCastException.
-        if (!url.protocol.equals("http", ignoreCase = true) && !url.protocol.equals("https", ignoreCase = true)) {
+        val https = url.protocol.equals("https", ignoreCase = true)
+        if (!https && !url.protocol.equals("http", ignoreCase = true)) {
             throw FetchError.InvalidUrl()
         }
 
         val targets = frontTargets.map { it.trim() }.filter { it.isNotEmpty() }
-        if (targets.isNotEmpty() && url.protocol.equals("https", ignoreCase = true)) {
+        if (targets.isNotEmpty() && https) {
             return@withContext fetchFronted(url, frontSni?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
-                targets, allowInsecure, remnawaveHWID)
+                targets, allowInsecure, remnawaveHWID, via, timeoutMs)
+        }
+        if (via != null) {
+            // The server dials the panel itself; nothing else changes.
+            val target = if (url.port > 0) "${url.host}:${url.port}" else url.host
+            return@withContext fetchFronted(url, url.host, listOf(target), allowInsecure, remnawaveHWID, via, timeoutMs)
         }
 
         val connection = url.openConnection() as HttpURLConnection
@@ -88,8 +157,8 @@ object SubscriptionFetcher {
             if (remnawaveHWID != null) {
                 connection.setRequestProperty("x-hwid", remnawaveHWID)
             }
-            connection.connectTimeout = 30_000
-            connection.readTimeout = 30_000
+            connection.connectTimeout = timeoutMs
+            connection.readTimeout = timeoutMs
 
             // Accept self-signed certificates only when the caller has indicated allowInsecure.
             if (connection is HttpsURLConnection && allowInsecure) {
@@ -121,12 +190,12 @@ object SubscriptionFetcher {
             )
 
             // The same parsing the fronted path and a pasted body get; a copy
-            // of it here once missed JSON subscriptions entirely.
+            // of it here once missed JSON subscriptions entirely. Secure is
+            // judged on the URL the answer came from: redirects are followed.
             parseBody(
                 data = data,
-                profileTitle = parseProfileTitle(connection),
-                userInfo = parseSubscriptionUserInfo(connection),
-                panel = panelInfo { connection.getHeaderField(it) }
+                header = { connection.getHeaderField(it) },
+                secure = !allowInsecure && connection.url.protocol.equals("https", ignoreCase = true)
             )
         } finally {
             connection.disconnect()
@@ -169,7 +238,9 @@ object SubscriptionFetcher {
         sni: String,
         targets: List<String>,
         allowInsecure: Boolean,
-        remnawaveHWID: String?
+        remnawaveHWID: String?,
+        via: ProxyConfiguration?,
+        timeoutMs: Int
     ): Result {
         val extra = buildMap {
             if (remnawaveHWID != null) put("x-hwid", remnawaveHWID)
@@ -177,7 +248,11 @@ object SubscriptionFetcher {
         var lastError: String? = null
         for (target in targets) {
             val response = try {
-                FrontedHttpClient.get(url, sni, target, extra, allowInsecure, MAX_BODY_BYTES)
+                FrontedHttpClient.get(url, sni, target, extra, allowInsecure, MAX_BODY_BYTES, via, timeoutMs.toLong())
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                // withTimeout's own: this front was slow, the caller was not cancelled.
+                lastError = FrontedHttpClient.describe(target, Exception("timed out"))
+                continue
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -190,32 +265,30 @@ object SubscriptionFetcher {
             }
             return parseBody(
                 data = gunzipIfNeeded(response.body, response.header("content-encoding")),
-                profileTitle = decodeProfileTitle(response.header("profile-title")),
-                userInfo = parseUserInfoValue(response.header("subscription-userinfo")),
-                panel = panelInfo { response.header(it) }
+                header = { response.header(it) },
+                secure = !allowInsecure && url.protocol.equals("https", ignoreCase = true)
             )
         }
         throw FetchError.NetworkError(lastError ?: "No front answered")
     }
 
-    /** The parsing shared by both transports. */
     /** Parses a subscription body already in hand (pasted text, a file), exactly as a fetch would. */
-    fun parse(data: ByteArray): Result = parseBody(data, null, UserInfo())
+    fun parse(data: ByteArray): Result = parseBody(data, header = { null }, secure = false)
 
-    /** The panel headers, read through [header] (case-insensitive on both transports). */
-    internal fun panelInfo(header: (String) -> String?): PanelInfo {
-        fun url(name: String) = header(name)?.trim()?.takeIf { it.startsWith("https://") || it.startsWith("http://") || it.startsWith("tg://") }
-        return PanelInfo(
-            // Same encoding as profile-title: plain, or "base64:" for anything non-ASCII.
-            announce = decodeProfileTitle(header("announce"))?.trim()?.take(1000),
-            supportUrl = url("support-url"),
-            webPageUrl = url("profile-web-page-url"),
-            updateIntervalHours = header("profile-update-interval")?.trim()?.toIntOrNull()?.takeIf { it in 1..720 }
-        )
-    }
-
-    private fun parseBody(data: ByteArray, profileTitle: String?, userInfo: UserInfo, panel: PanelInfo = PanelInfo()): Result {
-        val bodyString = decodeBody(data)
+    /**
+     * The parsing shared by every transport. [header] reads the response
+     * headers (case-insensitively); [secure] is whether they and the body
+     * came over verified TLS.
+     */
+    private fun parseBody(data: ByteArray, header: (String) -> String?, secure: Boolean): Result {
+        val (raw, bodyString) = decodeBodyText(data)
+        // Metadata lines may sit inside a base64 body or above it in plain text.
+        val fields = SubscriptionMetadata.bodyFields(bodyString).let { inner ->
+            if (raw === bodyString) inner else SubscriptionMetadata.bodyFields(raw) + inner
+        }
+        val panel = SubscriptionMetadata.read(header, fields, secure)
+        val profileTitle = panel.title
+        val userInfo = parseUserInfoValue(panel.userInfo)
 
         // Built at most once and shared by the checks and importers below,
         // which each parsed the body again: three trees for a JSON
@@ -325,19 +398,31 @@ object SubscriptionFetcher {
      * something that reads as a share-link list or a Clash document, raw
      * UTF-8 otherwise.
      */
-    internal fun decodeBody(data: ByteArray): String {
+    internal fun decodeBody(data: ByteArray): String = decodeBodyText(data).second
+
+    /**
+     * The body as received, and as the list to parse: without its metadata
+     * lines, and decoded when it was base64. The same instance twice when
+     * there was nothing to take away.
+     */
+    private fun decodeBodyText(data: ByteArray): Pair<String, String> {
         val raw = String(data, Charsets.UTF_8)
         val prefixes = ProxyConfiguration.parsableUrlPrefixes
         fun recognisable(text: String) =
             prefixes.any { text.contains(it) } || looksLikeClash(text) || XrayJsonImporter.looksLikeJson(text)
-        if (recognisable(raw)) return raw
+
+        // Metadata lines (`#key: value`) are not the list: their links would
+        // pass for share links, and around base64 they break the decoding.
+        val payload = if (!raw.trimStart().startsWith('#') && !raw.contains("\n#")) raw
+        else raw.lineSequence().filterNot { it.trimStart().startsWith('#') }.joinToString("\n")
+        if (recognisable(payload)) return raw to payload
 
         for (urlSafe in booleanArrayOf(false, true)) {
-            val decoded = runCatching { decodeBase64Lenient(raw, urlSafe) }.getOrNull() ?: continue
+            val decoded = runCatching { decodeBase64Lenient(payload, urlSafe) }.getOrNull() ?: continue
             val text = String(decoded, Charsets.UTF_8)
-            if (recognisable(text)) return text
+            if (recognisable(text)) return raw to text
         }
-        return raw
+        return raw to raw
     }
 
     /** A Clash document has a top-level `proxies:` key, not merely the word somewhere. */
@@ -347,34 +432,12 @@ object SubscriptionFetcher {
             t.startsWith("proxies:") || t.startsWith("proxy-providers:")
         }
 
-    private fun parseProfileTitle(connection: HttpURLConnection): String? =
-        decodeProfileTitle(connection.getHeaderField("profile-title"))
-
-    private fun decodeProfileTitle(value: String?): String? {
-        if (value == null) return null
-        val decoded = if (value.startsWith("base64:")) {
-            val encoded = value.removePrefix("base64:")
-            runCatching {
-                String(decodeBase64Lenient(encoded), Charsets.UTF_8)
-            }.getOrNull()
-        } else {
-            value
-        }
-        // Servers commonly send an empty `Profile-Title: base64:` for unnamed
-        // subscriptions. Treat blank results as missing so the call site falls
-        // back to the URL host instead of an empty string.
-        return decoded?.takeIf { it.isNotBlank() }
-    }
-
     data class UserInfo(
         val upload: Long? = null,
         val download: Long? = null,
         val total: Long? = null,
         val expire: Long? = null
     )
-
-    private fun parseSubscriptionUserInfo(connection: HttpURLConnection): UserInfo =
-        parseUserInfoValue(connection.getHeaderField("subscription-userinfo"))
 
     private fun parseUserInfoValue(value: String?): UserInfo {
         if (value == null) return UserInfo()

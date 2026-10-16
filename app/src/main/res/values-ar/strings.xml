@@ -61,7 +61,6 @@
     <string name="trademarks">العلامات التجارية</string>
     <string name="transport">النقل</string>
     <string name="update">تحديث</string>
-    <string name="update_failed">فشل التحديث</string>
     <string name="vpn_error">خطأ VPN</string>
     <string name="latency_ms">%d مللي ثانية</string>
     <string name="trademarks_notice">جميع العلامات التجارية وعلامات الخدمة وأسماء الشركات هي ملك لأصحابها المعنيين.</string>
@@ -468,6 +467,23 @@
     <string name="proto_pick_title">اختر بروتوكولًا</string>
     <string name="subscription_support">الدعم</string>
     <string name="subscription_web_page">صفحة الحساب</string>
+    <string name="subscription_open_link">فتح</string>
+    <string name="subscription_renew">تجديد</string>
+    <string name="subscription_expired_notice">انتهى اشتراكك</string>
+    <plurals name="subscription_expires_in_days">
+        <item quantity="zero">ينتهي اشتراكك خلال %1$d يوم</item>
+        <item quantity="one">ينتهي اشتراكك خلال يوم واحد</item>
+        <item quantity="two">ينتهي اشتراكك خلال يومين</item>
+        <item quantity="few">ينتهي اشتراكك خلال %1$d أيام</item>
+        <item quantity="many">ينتهي اشتراكك خلال %1$d يومًا</item>
+        <item quantity="other">ينتهي اشتراكك خلال %1$d يوم</item>
+    </plurals>
+    <string name="subscription_update_failed_named">تعذّر تحديث «%1$s»: %2$s</string>
+    <string name="subscription_through_working_server">عبر خادم يعمل</string>
+    <string name="subscription_retrying_through_server">جارٍ تحديث «%1$s» عبر خادم يعمل…</string>
+    <string name="subscription_updated_through">تم تحديث «%1$s» عبر %2$s</string>
+    <string name="subscription_failed_through_servers">لم ينجح ذلك عبر خادم يعمل أيضًا: %1$s</string>
+    <string name="subscription_no_working_server">لم يستجب أي خادم. تحقق من خوادمك وحاول مرة أخرى.</string>
     <string name="system_section">النظام</string>
     <string name="verify_name">التحقق من الشهادة باسم (vcn)</string>
     <string name="wg_addresses">العناوين</string>

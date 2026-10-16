@@ -26,6 +26,7 @@ import com.mythaia.data.network.SubscriptionDomainHelper
 import com.mythaia.data.network.SubscriptionFetcher
 import com.mythaia.data.network.SubscriptionRefreshScheduler
 import com.mythaia.data.network.SubscriptionUpdater
+import com.mythaia.data.network.WorkingServers
 import com.mythaia.data.repository.CertificateRepository
 import com.mythaia.data.repository.ChainRepository
 import com.mythaia.data.repository.ConfigRepository
@@ -184,9 +185,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _updatingSubscriptionId = MutableStateFlow<UUID?>(null)
     val updatingSubscriptionId: StateFlow<UUID?> = _updatingSubscriptionId.asStateFlow()
 
-    /** Why the last refresh failed, until the user dismisses it. */
-    private val _subscriptionUpdateError = MutableStateFlow<String?>(null)
-    val subscriptionUpdateError: StateFlow<String?> = _subscriptionUpdateError.asStateFlow()
+    /** The bar at the bottom about a subscription refresh; null when there is nothing to say. */
+    private val _subscriptionNotice = MutableStateFlow<SubscriptionNotice?>(null)
+    val subscriptionNotice: StateFlow<SubscriptionNotice?> = _subscriptionNotice.asStateFlow()
 
     /** True while a subscription link is being downloaded for import. */
     private val _subscriptionImporting = MutableStateFlow(false)
@@ -474,6 +475,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      * while hidden or with the screen off).
      */
     private fun onBecameVisible() {
+        refreshSubscriptionsOnOpen()
         if (_vpnStatus.value != VpnStatus.CONNECTED) return
         if (statsJob != null && !statsTick()) stopStatsPolling()
         if (_vpnStatus.value != VpnStatus.CONNECTED) return
@@ -1633,7 +1635,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun updateSubscription(subscription: Subscription) {
+    /**
+     * @param via a server to fetch through, for a panel this network cannot reach.
+     * @param timeoutMs overrides how long the panel gets.
+     */
+    suspend fun updateSubscription(
+        subscription: Subscription,
+        via: ProxyConfiguration? = null,
+        timeoutMs: Int? = null
+    ) {
         // Remnawave panels require the same x-hwid header on refresh as on the
         // initial import; without it the update fails or returns no configs.
         // Only sent when the user has opted in via the HWID setting.
@@ -1645,7 +1655,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             subscription = subscription,
             subscriptionRepository = subscriptionRepository,
             configRepository = configRepository,
-            remnawaveHWID = hwid
+            remnawaveHWID = hwid,
+            via = via,
+            timeoutMs = timeoutMs
         )
 
         recomputeSelection()
@@ -1667,19 +1679,130 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 updateSubscription(subscription)
+                if (_subscriptionNotice.value?.subscriptionId == subscription.id) _subscriptionNotice.value = null
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _subscriptionUpdateError.value =
-                    e.message ?: getApplication<Application>().getString(R.string.unknown_error)
+                reportSubscriptionFailure(subscription, e)
             } finally {
                 _updatingSubscriptionId.value = null
             }
         }
     }
 
-    fun clearSubscriptionUpdateError() {
-        _subscriptionUpdateError.value = null
+    private fun reportSubscriptionFailure(subscription: Subscription, e: Exception) {
+        _subscriptionNotice.value = SubscriptionNotice.Failed(
+            subscriptionId = subscription.id,
+            name = subscription.name,
+            message = e.message ?: getApplication<Application>().getString(R.string.unknown_error),
+            // A panel that answered with nothing usable would say the same
+            // through any server; only a failure to reach it is worth a detour.
+            canRetry = e !is SubscriptionFetcher.FetchError.NoConfigurations &&
+                e !is SubscriptionFetcher.FetchError.InvalidUrl
+        )
+    }
+
+    fun dismissSubscriptionNotice() {
+        _subscriptionNotice.value = null
+    }
+
+    /**
+     * Fetches [subscriptionId] through a server that works, for a panel this
+     * network cannot reach: the live server first, then the first servers to
+     * pass a fresh check, the subscription's own before the rest.
+     */
+    fun refreshSubscriptionThroughServer(subscriptionId: UUID) {
+        val subscription = subscriptionRepository.get(subscriptionId) ?: return
+        if (_updatingSubscriptionId.value != null) return
+        _updatingSubscriptionId.value = subscriptionId
+        _subscriptionNotice.value = SubscriptionNotice.Retrying(subscriptionId, subscription.name)
+        viewModelScope.launch {
+            var lastError: Exception? = null
+            try {
+                for (server in serversThatWork(subscriptionId)) {
+                    try {
+                        updateSubscription(subscription, via = applyGlobalAllowInsecure(server), timeoutMs = THROUGH_SERVER_TIMEOUT_MS)
+                        logger.info("[Sub] ${subscription.name} updated through ${server.name}")
+                        _subscriptionNotice.value = SubscriptionNotice.UpdatedThrough(subscriptionId, subscription.name, server.name)
+                        return@launch
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: SubscriptionFetcher.FetchError.NoConfigurations) {
+                        // The panel was reached and had nothing; another server will not change that.
+                        lastError = e
+                        break
+                    } catch (e: Exception) {
+                        logger.warning("[Sub] ${subscription.name} through ${server.name} failed: ${e.message ?: e}")
+                        lastError = e
+                    }
+                }
+                val app = getApplication<Application>()
+                _subscriptionNotice.value = SubscriptionNotice.Failed(
+                    subscriptionId = subscriptionId,
+                    name = subscription.name,
+                    message = lastError?.let { app.getString(R.string.subscription_failed_through_servers, it.message ?: app.getString(R.string.unknown_error)) }
+                        ?: app.getString(R.string.subscription_no_working_server),
+                    canRetry = false
+                )
+            } finally {
+                _updatingSubscriptionId.value = null
+            }
+        }
+    }
+
+    /** Servers to fetch [subscriptionId] through, checked just now; see [WorkingServers]. */
+    private suspend fun serversThatWork(subscriptionId: UUID): List<ProxyConfiguration> {
+        val all = configRepository.getAll()
+        val live = if (_vpnStatus.value == VpnStatus.CONNECTED && _connectivityOk.value != false) {
+            MythaiaVpnService.activeConfigId?.let { id -> all.firstOrNull { it.id == id } }
+        } else null
+        return WorkingServers.find(
+            live = live,
+            candidates = WorkingServers.candidates(all, subscriptionId, _latencyResults.value),
+            prepare = { applyGlobalAllowInsecure(it) },
+            onResult = { id, result -> _latencyResults.value = _latencyResults.value + (id to result) }
+        )
+    }
+
+    /** Subscription ids whose failure the bar has already shown this session. */
+    private val failuresShown = HashSet<UUID>()
+    private var openRefreshAt = 0L
+
+    /**
+     * The app came up: refresh what the panel asked to have refreshed on
+     * every open (`subscription-auto-update-open-enable`), then speak up for a
+     * subscription that keeps failing, in the background or by hand.
+     */
+    private fun refreshSubscriptionsOnOpen() {
+        val now = System.currentTimeMillis()
+        // Back from a share sheet or the permission screen is not an open.
+        if (now - openRefreshAt < OPEN_REFRESH_GAP_MS) return
+        openRefreshAt = now
+        viewModelScope.launch {
+            for (subscription in subscriptionRepository.getAll().filter { it.updateOnOpen }) {
+                if (_updatingSubscriptionId.value != null) continue
+                _updatingSubscriptionId.value = subscription.id
+                try {
+                    updateSubscription(subscription)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.warning("[Sub] Refresh on open failed for ${subscription.name}: ${e.message ?: e}")
+                } finally {
+                    _updatingSubscriptionId.value = null
+                }
+            }
+            if (_subscriptionNotice.value != null) return@launch
+            val failing = subscriptionRepository.getAll().firstOrNull { it.isFailing && it.id !in failuresShown }
+                ?: return@launch
+            failuresShown += failing.id
+            _subscriptionNotice.value = SubscriptionNotice.Failed(
+                subscriptionId = failing.id,
+                name = failing.name,
+                message = failing.lastFailureMessage ?: getApplication<Application>().getString(R.string.unknown_error),
+                canRetry = true
+            )
+        }
     }
 
     /**
@@ -1712,21 +1835,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     ?: result.name
                     ?: runCatching { URL(url).host }.getOrNull()
                     ?: getApplication<Application>().getString(R.string.subscription)
-                val subscription = Subscription(
-                    name = groupName,
-                    url = url,
-                    isNameCustomized = linkName != null,
-                    lastUpdate = System.currentTimeMillis(),
-                    upload = result.upload,
-                    download = result.download,
-                    total = result.total,
-                    expire = result.expire,
-                    frontSni = frontSni,
-                    frontTargets = frontTargets,
-                    announce = result.panel.announce,
-                    supportUrl = result.panel.supportUrl,
-                    webPageUrl = result.panel.webPageUrl,
-                    updateIntervalHours = result.panel.updateIntervalHours
+                // Everything else the panel said, as a refresh would record it.
+                val subscription = com.mythaia.data.network.SubscriptionMetadata.applyTo(
+                    Subscription(
+                        name = groupName,
+                        url = url,
+                        isNameCustomized = linkName != null,
+                        frontSni = frontSni,
+                        frontTargets = frontTargets
+                    ),
+                    result
                 )
                 onImported(result.configurations, subscription)
             } catch (e: CancellationException) {
@@ -2180,5 +2298,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         /** At most this many unattended reconnects per window. */
         const val AUTO_RECONNECT_MAX = 4
         const val AUTO_RECONNECT_WINDOW_MS = 10 * 60 * 1000L
+
+        /** How long the panel gets through each server tried. */
+        const val THROUGH_SERVER_TIMEOUT_MS = 20_000
+
+        /** Coming back sooner than this is not opening the app (refresh on open). */
+        const val OPEN_REFRESH_GAP_MS = 5 * 60 * 1000L
     }
 }

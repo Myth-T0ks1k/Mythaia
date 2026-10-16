@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,8 +27,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import com.mythaia.R
 import com.mythaia.data.model.Subscription
+import com.mythaia.ui.theme.OnSuccessContainerDark
+import com.mythaia.ui.theme.OnSuccessContainerLight
+import com.mythaia.ui.theme.SuccessContainerDark
+import com.mythaia.ui.theme.SuccessContainerLight
 import com.mythaia.ui.theme.WarningDark
 import com.mythaia.ui.theme.WarningLight
 
@@ -150,8 +157,10 @@ fun SubscriptionUsageCard(
 private const val WEEK_MS = 7L * 24 * 60 * 60 * 1000
 
 /**
- * What the provider said in the panel headers: an announcement, and where to
- * get help or manage the account. Renders nothing for a panel that sends none.
+ * What the provider said about the subscription: that it is about to expire
+ * or has (`sub-expire`), a coloured info block (`sub-info-*`), an
+ * announcement, and where to get help or manage the account. Renders
+ * nothing for a panel that says none of it.
  */
 @Composable
 fun SubscriptionNoticeCard(
@@ -161,41 +170,121 @@ fun SubscriptionNoticeCard(
     val announce = subscription.announce?.takeIf { it.isNotBlank() }
     val support = subscription.supportUrl
     val web = subscription.webPageUrl
-    if (announce == null && support == null && web == null) return
+    val info = subscription.subInfo
+    val expiry = subscription.expiryWarning()
+    if (announce == null && support == null && web == null && info == null && expiry == null) return
     val context = LocalContext.current
     fun open(url: String) {
         runCatching {
             context.startActivity(
-                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                android.content.Intent(android.content.Intent.ACTION_VIEW, url.toUri())
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
     }
-    androidx.compose.material3.Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow
-    ) {
-        androidx.compose.foundation.layout.Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            announce?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        expiry?.let { warning ->
+            val text = when (warning) {
+                Subscription.ExpiryWarning.Expired -> stringResource(R.string.subscription_expired_notice)
+                is Subscription.ExpiryWarning.Soon -> androidx.compose.ui.res.pluralStringResource(
+                    R.plurals.subscription_expires_in_days, warning.days, warning.days
                 )
             }
-            if (support != null || web != null) {
-                androidx.compose.foundation.layout.Row {
-                    support?.let { url ->
-                        androidx.compose.material3.TextButton(onClick = { open(url) }) {
-                            Text(androidx.compose.ui.res.stringResource(com.mythaia.R.string.subscription_support))
+            // Renew where the panel says, or at least on the account page.
+            val renew = subscription.expireButtonLink ?: web
+            val (container, content) = if (warning == Subscription.ExpiryWarning.Expired) {
+                MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+            } else {
+                val warningColor = if (LocalMythaiaDarkTheme.current) WarningDark else WarningLight
+                warningColor.copy(alpha = 0.16f) to MaterialTheme.colorScheme.onSurface
+            }
+            NoticeBlock(
+                text = text,
+                container = container,
+                content = content,
+                buttonText = renew?.let { stringResource(R.string.subscription_renew) },
+                onButton = { renew?.let { open(it) } }
+            )
+        }
+        info?.let {
+            val dark = LocalMythaiaDarkTheme.current
+            val (container, content) = when (it.color) {
+                "red" -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+                "green" -> (if (dark) SuccessContainerDark else SuccessContainerLight) to
+                    (if (dark) OnSuccessContainerDark else OnSuccessContainerLight)
+                else -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+            }
+            val link = it.buttonLink
+            NoticeBlock(
+                text = it.text,
+                container = container,
+                content = content,
+                buttonText = link?.let { _ -> it.buttonText ?: stringResource(R.string.subscription_open_link) },
+                onButton = { link?.let { url -> open(url) } }
+            )
+        }
+        if (announce != null || support != null || web != null) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    announce?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    if (support != null || web != null) {
+                        Row {
+                            support?.let { url ->
+                                TextButton(onClick = { open(url) }) {
+                                    Text(stringResource(R.string.subscription_support))
+                                }
+                            }
+                            web?.let { url ->
+                                TextButton(onClick = { open(url) }) {
+                                    Text(stringResource(R.string.subscription_web_page))
+                                }
+                            }
                         }
                     }
-                    web?.let { url ->
-                        androidx.compose.material3.TextButton(onClick = { open(url) }) {
-                            Text(androidx.compose.ui.res.stringResource(com.mythaia.R.string.subscription_web_page))
-                        }
-                    }
+                }
+            }
+        }
+    }
+}
+
+/** One tinted block: the provider's text and, when it gave a link, a button to it. */
+@Composable
+private fun NoticeBlock(
+    text: String,
+    container: Color,
+    content: Color,
+    buttonText: String?,
+    onButton: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = container,
+        contentColor = content
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = content,
+                modifier = Modifier.weight(1f).padding(vertical = 6.dp)
+            )
+            buttonText?.let {
+                TextButton(onClick = onButton, colors = ButtonDefaults.textButtonColors(contentColor = content)) {
+                    Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

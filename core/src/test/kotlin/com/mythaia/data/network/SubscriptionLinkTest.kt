@@ -114,4 +114,26 @@ class SubscriptionLinkTest {
             LinkExtractor.extract("https://panel.example.com/sub#front=104.16.1.1&sni=www.example.org")
         )
     }
+    @Test
+    fun `Happ's form fronts the URL's host and asks for host`() {
+        val link = SubscriptionLink.parse(
+            "https://cdn.example.net/sub/TOKEN#My%20VPN?resolve-address=104.16.1.1&host=panel.example.com"
+        )!!
+        assertEquals("https://panel.example.com/sub/TOKEN", link.url)
+        assertEquals("cdn.example.net", link.frontSni)
+        assertEquals(listOf("104.16.1.1"), link.frontTargets)
+        assertEquals("My VPN", link.name)
+
+        // Without host the URL is the panel; resolve-address alone is where it is dialled.
+        val dialOnly = SubscriptionLink.parse("https://panel.example.com/sub#?resolve-address=104.16.1.1")!!
+        assertEquals("https://panel.example.com/sub", dialOnly.url)
+        assertNull(dialOnly.frontSni)
+        assertEquals(listOf("104.16.1.1"), dialOnly.frontTargets)
+
+        // host alone: the front is dialled by its own name.
+        val hostOnly = SubscriptionLink.parse("https://cdn.example.net:8443/sub#host=panel.example.com")!!
+        assertEquals("https://panel.example.com:8443/sub", hostOnly.url)
+        assertEquals("cdn.example.net", hostOnly.frontSni)
+        assertEquals(listOf("cdn.example.net:8443"), hostOnly.frontTargets)
+    }
 }

@@ -141,6 +141,12 @@ val WarningLight = Color(0xFFE8890C)
 /** Warning/expiring orange, dark mode. */
 val WarningDark = Color(0xFFF5A83E)
 
+/** A provider's green notice (`sub-info-color: green`), light and dark. */
+val SuccessContainerLight = Color(0xFFDDEBDD)
+val OnSuccessContainerLight = Color(0xFF1F4A2A)
+val SuccessContainerDark = Color(0xFF1C3A27)
+val OnSuccessContainerDark = Color(0xFFD0E8D5)
+
 // ---------------------------------------------------------------------------
 // Background gradients (names are referenced by HomeScreen/OnboardingScreen —
 // keep the names; values are Wing-toned).

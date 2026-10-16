@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
@@ -25,11 +27,13 @@ import androidx.compose.material.icons.filled.Subject
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mythaia.desktop.AppState
 import com.mythaia.desktop.ConnectionState
+import com.mythaia.desktop.Notice
 import com.mythaia.desktop.S
 import com.mythaia.desktop.tr
 
@@ -98,23 +103,39 @@ fun App(state: AppState) {
             }
             StatusBar(state)
         }
+        // The last notice stays composed while it fades out.
+        var lastNotice by remember { mutableStateOf<Notice?>(null) }
+        LaunchedEffect(message) { if (message != null) lastNotice = message }
         AnimatedVisibility(
             visible = message != null,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp, start = 24.dp, end = 24.dp)
         ) {
+            val notice = message ?: lastNotice
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = MaterialTheme.colorScheme.inverseSurface,
-                shadowElevation = 6.dp
+                shadowElevation = 6.dp,
+                modifier = Modifier.widthIn(max = 640.dp)
             ) {
-                Text(
-                    text = message.orEmpty(),
-                    color = MaterialTheme.colorScheme.inverseOnSurface,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = notice?.text.orEmpty(),
+                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f, fill = false).padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
+                    )
+                    val label = notice?.actionLabel
+                    if (notice != null && label != null) {
+                        TextButton(onClick = { state.actOnMessage(notice) }) {
+                            Text(label, color = MaterialTheme.colorScheme.inversePrimary)
+                        }
+                        IconButton(onClick = { state.dismissMessage() }) {
+                            Icon(Icons.Default.Close, contentDescription = tr("close"), tint = MaterialTheme.colorScheme.inverseOnSurface)
+                        }
+                    }
+                }
             }
         }
     }

@@ -1,8 +1,13 @@
 package com.mythaia.data.network
 
+import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.TlsConfiguration
+import com.mythaia.vpn.protocol.ProxyClientFactory
+import com.mythaia.vpn.protocol.ProxyConnection
+import com.mythaia.vpn.protocol.TunneledTransport
 import com.mythaia.vpn.protocol.tls.TlsClient
 import com.mythaia.vpn.protocol.tls.TlsRecordConnection
+import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
@@ -18,6 +23,10 @@ private val logger = MythaiaLogger("FrontedHttp")
  * The app's own TLS client can, so a subscription behind a blocked domain is
  * fetched by dialling the front (a CDN edge, an IP) with the front's name in
  * the ClientHello and the panel's name only inside the encrypted request.
+ *
+ * The same request can also go through one of the user's servers (`via`),
+ * which is how a subscription whose panel is blocked outright still updates:
+ * the server dials the panel, and TLS runs end to end inside the tunnel.
  *
  * Deliberately minimal: one request, `Connection: close`, no redirects
  * followed (a redirect would leave the front), no compression asked for.
@@ -35,6 +44,8 @@ object FrontedHttpClient {
      * @param url the subscription URL; its host goes in the `Host` header.
      * @param sni the name presented in TLS and used to verify the certificate.
      * @param target `host` or `host:port` to actually connect to.
+     * @param via a server of the user's to send the request through, or null
+     *   to connect directly. Only with [via] may [url] be plain `http`.
      */
     suspend fun get(
         url: URL,
@@ -42,22 +53,38 @@ object FrontedHttpClient {
         target: String,
         extraHeaders: Map<String, String>,
         allowInsecure: Boolean,
-        maxBody: Int
-    ): Response = withTimeout(TIMEOUT_MS) {
-        val (targetHost, targetPort) = splitTarget(target, if (url.port > 0) url.port else 443)
-        val tls = TlsConfiguration(
-            serverName = sni,
-            alpn = listOf("http/1.1"),
-            allowInsecure = allowInsecure
-        )
-        val client = TlsClient(tls)
-        val connection: TlsRecordConnection = client.connect(targetHost, targetPort)
+        maxBody: Int,
+        via: ProxyConfiguration? = null,
+        timeoutMs: Long = TIMEOUT_MS
+    ): Response = withTimeout(timeoutMs) {
+        val https = url.protocol.equals("https", ignoreCase = true)
+        require(https || via != null) { "plain HTTP needs a server to go through" }
+        val (targetHost, targetPort) = splitTarget(target, if (url.port > 0) url.port else url.defaultPort)
+        val opened = ArrayList<ProxyConnection>()
+        var tlsClient: TlsClient? = null
+        var record: TlsRecordConnection? = null
         try {
+            val tunnel = via?.let { openTunnel(it, targetHost, targetPort, opened) }
+            val send: suspend (ByteArray) -> Unit
+            val receive: suspend () -> ByteArray?
+            if (https) {
+                val client = TlsClient(TlsConfiguration(serverName = sni, alpn = listOf("http/1.1"), allowInsecure = allowInsecure))
+                tlsClient = client
+                val connection = if (tunnel != null) client.connect(TunneledTransport(tunnel))
+                else client.connect(targetHost, targetPort)
+                record = connection
+                send = { connection.send(it) }
+                receive = { connection.receive() }
+            } else {
+                val plain = checkNotNull(tunnel)
+                send = { plain.send(it) }
+                receive = { plain.receive() }
+            }
             val path = buildString {
                 append(url.path.ifEmpty { "/" })
                 url.query?.let { append('?').append(it) }
             }
-            val hostHeader = if (url.port > 0 && url.port != 443) "${url.host}:${url.port}" else url.host
+            val hostHeader = if (url.port > 0 && url.port != url.defaultPort) "${url.host}:${url.port}" else url.host
             val request = buildString {
                 append("GET ").append(path).append(" HTTP/1.1\r\n")
                 append("Host: ").append(hostHeader).append("\r\n")
@@ -66,11 +93,37 @@ object FrontedHttpClient {
                 for ((k, v) in extraHeaders) append(k).append(": ").append(v).append("\r\n")
                 append("Connection: close\r\n\r\n")
             }
-            connection.send(request.toByteArray(Charsets.US_ASCII))
-            readResponse(connection, maxBody)
+            send(request.toByteArray(Charsets.US_ASCII))
+            readResponse(receive, maxBody)
         } finally {
-            runCatching { connection.cancel() }
+            record?.let { runCatching { it.cancel() } } ?: tlsClient?.let { runCatching { it.cancel() } }
+            opened.asReversed().forEach { runCatching { it.cancel() } }
         }
+    }
+
+    /**
+     * A stream to [host]:[port] through [config], hop by hop when it is a
+     * chain. Server names are resolved first, as the latency test does, so
+     * the dial does not wait on DNS through a tunnel that may be the problem.
+     */
+    private suspend fun openTunnel(
+        config: ProxyConfiguration,
+        host: String,
+        port: Int,
+        opened: MutableList<ProxyConnection>
+    ): ProxyConnection {
+        fun resolved(c: ProxyConfiguration): ProxyConfiguration =
+            if (c.resolvedIP != null || DnsCache.isIpAddress(c.serverAddress)) c
+            else DnsCache.resolveHost(c.serverAddress)?.let { c.copy(resolvedIP = it) } ?: c
+        val last = resolved(config)
+        val chain = config.chain.orEmpty().map { resolved(it) }
+        var tunnel: ProxyConnection? = null
+        for (i in chain.indices) {
+            val next = if (i + 1 < chain.size) chain[i + 1] else last
+            tunnel = ProxyClientFactory.connect(chain[i], next.connectAddress, next.serverPort.toInt(), tunnel = tunnel)
+                .also { opened += it }
+        }
+        return ProxyClientFactory.connect(last, host, port, tunnel = tunnel).also { opened += it }
     }
 
     private fun splitTarget(target: String, defaultPort: Int): Pair<String, Int> {
@@ -93,11 +146,11 @@ object FrontedHttpClient {
         return t to defaultPort
     }
 
-    private suspend fun readResponse(connection: TlsRecordConnection, maxBody: Int): Response {
+    private suspend fun readResponse(receive: suspend () -> ByteArray?, maxBody: Int): Response {
         val buffer = ByteArrayOutputStream()
         var headerEnd = -1
         while (headerEnd < 0) {
-            val chunk = connection.receive() ?: break
+            val chunk = receive() ?: break
             buffer.write(chunk)
             headerEnd = indexOfHeaderEnd(buffer.toByteArray())
             if (headerEnd < 0 && buffer.size() > MAX_HEADER_BYTES) {
@@ -137,7 +190,7 @@ object FrontedHttpClient {
             // tail looks like the end of one; before the gate it ran after
             // every TLS record, quadratic in the body size.
             while (!(mayEndChunkedBody(body) && chunkedComplete(body.toByteArray()))) {
-                val chunk = connection.receive() ?: break
+                val chunk = receive() ?: break
                 body.write(chunk)
                 ensureBounded()
             }
@@ -146,7 +199,7 @@ object FrontedHttpClient {
 
         if (contentLength != null) {
             while (body.size() < contentLength) {
-                val chunk = connection.receive() ?: break
+                val chunk = receive() ?: break
                 body.write(chunk)
                 ensureBounded()
             }
@@ -156,7 +209,7 @@ object FrontedHttpClient {
 
         // Neither: the body runs until the server closes.
         while (true) {
-            val chunk = connection.receive() ?: break
+            val chunk = receive() ?: break
             body.write(chunk)
             ensureBounded()
         }
@@ -235,6 +288,7 @@ object FrontedHttpClient {
     /** Whether [message] looks like a failure of the front rather than of the panel. */
     fun describe(target: String, e: Throwable): String {
         logger.warning("Front $target failed: ${e.message ?: e}")
-        return "$target: ${e.message ?: e.javaClass.simpleName}"
+        val why = (e as? SubscriptionFetcher.FetchError.NetworkError)?.detail ?: e.message ?: e.javaClass.simpleName
+        return "$target: $why"
     }
 }

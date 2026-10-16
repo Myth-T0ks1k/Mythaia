@@ -59,6 +59,8 @@ class SubscriptionRefreshWorker(
         var failed = 0
         val now = System.currentTimeMillis()
         for (subscription in subscriptions) {
+            // `subscription-auto-update-enable: 0`: the provider wants it refreshed by hand only.
+            if (!subscription.autoUpdate) continue
             // A panel that asks for a longer interval than the user's gets it:
             // refreshing more often only adds load for the same list.
             val panelHours = subscription.updateIntervalHours

@@ -140,7 +140,6 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     val subscriptionToConfigure = subscriptionToConfigureId?.let { id -> subscriptions.firstOrNull { it.id.toString() == id } }
     // The refresh lives in the view model, where a tab switch cannot cancel it.
     val updatingSubscriptionId by viewModel.updatingSubscriptionId.collectAsState()
-    val subscriptionErrorMessage by viewModel.subscriptionUpdateError.collectAsState()
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var sortByLatency by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -651,21 +650,6 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                 ).show()
             },
             onDismiss = { confirmRemoveFailed = false }
-        )
-    }
-
-    subscriptionErrorMessage?.let { message ->
-        AlertDialog(
-            onDismissRequest = { viewModel.clearSubscriptionUpdateError() },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            title = { Text(stringResource(R.string.update_failed)) },
-            text = { Text(message) },
-            confirmButton = {
-                TextButton(onClick = { viewModel.clearSubscriptionUpdateError() }) { Text(stringResource(R.string.ok)) }
-            }
         )
     }
 }

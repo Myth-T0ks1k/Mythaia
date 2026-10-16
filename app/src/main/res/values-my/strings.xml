@@ -61,7 +61,6 @@
     <string name="trademarks">ကုန်အမှတ်တံဆိပ်များ</string>
     <string name="transport">အပို့အဆောင်</string>
     <string name="update">အပ်ဒိတ်</string>
-    <string name="update_failed">အပ်ဒိတ် မအောင်မြင်ပါ</string>
     <string name="vpn_error">VPN အမှား</string>
     <string name="latency_ms">%d ms</string>
     <string name="trademarks_notice">ကုန်အမှတ်တံဆိပ်များ၊ ဝန်ဆောင်မှုအမှတ်တံဆိပ်များနှင့် ကုမ္ပဏီအမည်များအားလုံးသည် သက်ဆိုင်ရာပိုင်ရှင်များ၏ ပိုင်ဆိုင်မှုဖြစ်ပါသည်။</string>
@@ -438,6 +437,18 @@
     <string name="proto_pick_title">ပရိုတိုကော ရွေးပါ</string>
     <string name="subscription_support">အကူအညီ</string>
     <string name="subscription_web_page">အကောင့် စာမျက်နှာ</string>
+    <string name="subscription_open_link">ဖွင့်ရန်</string>
+    <string name="subscription_renew">သက်တမ်းတိုးရန်</string>
+    <string name="subscription_expired_notice">စာရင်းသွင်းမှု သက်တမ်းကုန်သွားပါပြီ</string>
+    <plurals name="subscription_expires_in_days">
+        <item quantity="other">စာရင်းသွင်းမှု %1$d ရက်အတွင်း သက်တမ်းကုန်ပါမည်</item>
+    </plurals>
+    <string name="subscription_update_failed_named">“%1$s” ကို အပ်ဒိတ်လုပ်၍ မရပါ- %2$s</string>
+    <string name="subscription_through_working_server">အလုပ်လုပ်သော ဆာဗာမှတစ်ဆင့်</string>
+    <string name="subscription_retrying_through_server">“%1$s” ကို အလုပ်လုပ်သော ဆာဗာမှတစ်ဆင့် အပ်ဒိတ်လုပ်နေသည်…</string>
+    <string name="subscription_updated_through">“%1$s” ကို %2$s မှတစ်ဆင့် အပ်ဒိတ်လုပ်ပြီးပါပြီ</string>
+    <string name="subscription_failed_through_servers">အလုပ်လုပ်သော ဆာဗာမှတစ်ဆင့်လည်း မရပါ- %1$s</string>
+    <string name="subscription_no_working_server">မည်သည့်ဆာဗာမှ မတုံ့ပြန်ပါ။ ဆာဗာများကို စစ်ဆေးပြီး ထပ်စမ်းပါ။</string>
     <string name="system_section">စနစ်</string>
     <string name="verify_name">အမည်ဖြင့် လက်မှတ်စစ်ရန် (vcn)</string>
     <string name="wg_addresses">လိပ်စာများ</string>

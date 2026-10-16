@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -245,6 +246,7 @@ private fun ServersTab(state: AppState) {
         sub.lastUpdate?.let { parts += tr("updated_at", formatDateTime(it)) }
         parts += tr("servers_n", configs.size)
         Text(parts.joinToString("  ·  "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 8.dp))
+        ProviderNotices(sub)
     }
 
     Spacer(Modifier.height(10.dp))
@@ -697,4 +699,78 @@ fun ConfirmDialog(question: String, onDismiss: () -> Unit, onConfirm: () -> Unit
         confirmButton = { Button(onClick = onConfirm) { Text(tr("yes")) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(tr("cancel")) } }
     )
+}
+
+/**
+ * What the provider said about the subscription: that it expires soon or
+ * has (`sub-expire`), a coloured info block (`sub-info-*`), the
+ * announcement, and links for help and the account.
+ */
+@Composable
+private fun ProviderNotices(sub: Subscription) {
+    val expiry = sub.expiryWarning()
+    val info = sub.subInfo
+    val announce = sub.announce?.takeIf { it.isNotBlank() }
+    if (expiry == null && info == null && announce == null && sub.supportUrl == null && sub.webPageUrl == null) return
+    val dark = LocalDarkTheme.current
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        expiry?.let { warning ->
+            val text = when (warning) {
+                Subscription.ExpiryWarning.Expired -> tr("sub_expired")
+                is Subscription.ExpiryWarning.Soon -> if (warning.days <= 1) tr("sub_expires_1") else tr("sub_expires_n", warning.days)
+            }
+            val renew = sub.expireButtonLink ?: sub.webPageUrl
+            val expired = warning == Subscription.ExpiryWarning.Expired
+            NoticeBlock(
+                text = text,
+                container = if (expired) MaterialTheme.colorScheme.errorContainer else Color(0xFFE8890C).copy(alpha = 0.16f),
+                content = if (expired) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface,
+                buttonText = renew?.let { tr("sub_renew") },
+                link = renew
+            )
+        }
+        info?.let {
+            val (container, content) = when (it.color) {
+                "red" -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+                "green" -> if (dark) Color(0xFF1C3A27) to Color(0xFFD0E8D5) else Color(0xFFDDEBDD) to Color(0xFF1F4A2A)
+                else -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+            }
+            NoticeBlock(it.text, container, content, it.buttonLink?.let { _ -> it.buttonText ?: tr("sub_open_link") }, it.buttonLink)
+        }
+        if (announce != null || sub.supportUrl != null || sub.webPageUrl != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    announce.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f).padding(vertical = 6.dp)
+                )
+                sub.supportUrl?.let { url -> TextButton(onClick = { openLink(url) }) { Text(tr("sub_support")) } }
+                sub.webPageUrl?.let { url -> TextButton(onClick = { openLink(url) }) { Text(tr("sub_web_page")) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoticeBlock(text: String, container: Color, content: Color, buttonText: String?, link: String?) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(container)
+            .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text, style = MaterialTheme.typography.bodySmall, color = content, modifier = Modifier.weight(1f).padding(vertical = 6.dp))
+        if (buttonText != null && link != null) {
+            TextButton(onClick = { openLink(link) }) { Text(buttonText, color = content, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+    }
+}
+
+/** Opens a provider's link in the browser (or Telegram, for tg://). */
+private fun openLink(url: String) {
+    runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) }
 }
