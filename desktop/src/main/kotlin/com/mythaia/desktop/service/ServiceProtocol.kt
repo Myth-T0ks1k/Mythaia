@@ -39,6 +39,8 @@ object ServiceProtocol {
         val ok: Boolean,
         val error: String? = null,
         val version: Int = VERSION,
+        /** The service's Mythaia Pro version, so the window can tell an outdated copy; absent before 1.1.2. */
+        val appVersion: String? = null,
         val running: Boolean = false,
         val status: String = "STOPPED",
         val configurationId: String? = null,

@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mythaia.data.model.DomainRuleType
+import com.mythaia.desktop.APP_VERSION
 import com.mythaia.desktop.AppPaths
 import com.mythaia.desktop.AppState
 import com.mythaia.desktop.Lang
@@ -71,11 +72,15 @@ fun SettingsScreen(state: AppState) {
                 )
                 val serviceInstalled by state.serviceInstalled.collectAsState()
                 val serviceAvailable by state.serviceAvailable.collectAsState()
+                val serviceVersion by state.serviceVersion.collectAsState()
+                // The service runs its own copy in Program Files, which an app update does not touch.
+                val serviceOutdated = serviceAvailable && serviceVersion != APP_VERSION
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(tr("service"), style = MaterialTheme.typography.bodyLarge)
                         Text(
                             when {
+                                serviceOutdated -> tr("service_outdated", serviceVersion ?: tr("service_version_old"))
                                 serviceAvailable -> tr("service_running")
                                 serviceInstalled -> tr("service_installed_stopped")
                                 else -> tr("service_not_installed")
@@ -83,8 +88,14 @@ fun SettingsScreen(state: AppState) {
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (serviceInstalled) TextButton(onClick = { state.uninstallService() }) { Text(tr("service_remove")) }
-                    else TextButton(onClick = { state.installService() }) { Text(tr("service_install")) }
+                    if (serviceInstalled) {
+                        if (serviceOutdated || !serviceAvailable) {
+                            TextButton(onClick = { state.installService() }) { Text(tr("service_update")) }
+                        }
+                        TextButton(onClick = { state.uninstallService() }) { Text(tr("service_remove")) }
+                    } else {
+                        TextButton(onClick = { state.installService() }) { Text(tr("service_install")) }
+                    }
                 }
                 if (needsElevation) {
                     androidx.compose.material3.AlertDialog(

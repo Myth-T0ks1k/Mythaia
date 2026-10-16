@@ -26,8 +26,11 @@ import java.io.File
  * administrator token, so the app starts its own launcher once more,
  * elevated, with [INSTALL_ARG] or [UNINSTALL_ARG] — the one time Windows
  * asks for permission — and that process talks to the service control
- * manager directly. No shell sits in between: the launcher's path reaches
- * CreateService as it is, with its spaces and non-Latin letters.
+ * manager directly. No shell sits in between: paths reach CreateService as
+ * they are, with their spaces and non-Latin letters.
+ *
+ * The service runs from its own copy of the app in Program Files
+ * ([ServiceImage]), never from the folder the user started the app from.
  */
 object ServiceInstaller {
     const val INSTALL_ARG = "--install-service"
@@ -42,7 +45,8 @@ object ServiceInstaller {
     private const val SERVICE_NO_CHANGE = -1
     private const val SEE_MASK_NOCLOSEPROCESS = 0x40
     private const val SEE_MASK_NOASYNC = 0x100
-    private const val HELPER_TIMEOUT_MS = 120_000
+    /** Copying the app (some 180 MB) to Program Files is the slow part. */
+    private const val HELPER_TIMEOUT_MS = 300_000
     private const val STOP_TIMEOUT_MS = 15_000L
 
     /** Whether the service is registered with the service control manager. */
@@ -61,15 +65,19 @@ object ServiceInstaller {
     /** The launcher the service must point at; null when running from Gradle. */
     fun launcher(): File? = AppPaths.launcherExe()
 
-    /** Registers and starts the service from an elevated copy of the launcher. */
-    fun install(): Outcome {
+    /**
+     * Copies the app to Program Files, registers the service there and
+     * starts it, from an elevated copy of the launcher. [onStarted] runs once
+     * the administrator prompt has been accepted.
+     */
+    fun install(onStarted: () -> Unit = {}): Outcome {
         launcher() ?: return Outcome.NO_LAUNCHER
-        val outcome = runElevated(INSTALL_ARG)
+        val outcome = runElevated(INSTALL_ARG, onStarted)
         if (outcome != Outcome.DONE) return outcome
         return if (isInstalled()) Outcome.DONE else Outcome.FAILED
     }
 
-    /** Stops and deletes the service from an elevated copy of the app. */
+    /** Stops and deletes the service and its copy of the app, from an elevated copy of the app. */
     fun uninstall(): Outcome {
         val outcome = runElevated(UNINSTALL_ARG)
         if (outcome != Outcome.DONE) return outcome
@@ -77,61 +85,64 @@ object ServiceInstaller {
     }
 
     /**
-     * Runs in the elevated process: creates the service, or points an
-     * existing one (from another folder or version) at this launcher, then
-     * starts it. Returns 0 or the Win32 error that stopped it.
+     * Runs in the elevated process: stops a registered service, copies this
+     * app to [ServiceImage.directory], then creates the service — or points
+     * the existing one at the copy — and starts it. Returns 0 or the Win32
+     * error that stopped it.
      */
     fun installHere(): Int {
         val exe = launcher() ?: return WinError.ERROR_FILE_NOT_FOUND.also { logger.error("No installed launcher to register") }
-        val binPath = "\"${exe.absolutePath}\" --service"
         val advapi = Advapi32.INSTANCE
         val manager = advapi.OpenSCManager(null, null, Winsvc.SC_MANAGER_ALL_ACCESS)
             ?: return failure("OpenSCManager")
+        var service: W32Service? = null
         try {
-            var created = true
-            val handle = advapi.CreateService(
+            // A registered service may run from the folder about to be replaced.
+            service = advapi.OpenService(manager, ServiceProtocol.SERVICE_NAME, Winsvc.SERVICE_ALL_ACCESS)?.let(::W32Service)
+            val existed = service != null
+            if (service != null) stop(service)
+
+            val target = ServiceImage.directory()
+            val serviceExe = try {
+                ServiceImage.deploy(exe, target)
+            } catch (e: Exception) {
+                logger.error("Could not copy the app to $target: ${e.message}")
+                return WinError.ERROR_WRITE_FAULT
+            }
+            val binPath = "\"${serviceExe.absolutePath}\" --service"
+
+            val registered = service ?: advapi.CreateService(
                 manager, ServiceProtocol.SERVICE_NAME, ServiceProtocol.DISPLAY_NAME, Winsvc.SERVICE_ALL_ACCESS,
                 WinNT.SERVICE_WIN32_OWN_PROCESS, WinNT.SERVICE_AUTO_START, WinNT.SERVICE_ERROR_NORMAL,
                 binPath, null, null, null, null, null
-            ) ?: run {
-                val error = Native.getLastError()
-                if (error != WinError.ERROR_SERVICE_EXISTS) return failure("CreateService", error)
-                created = false
-                advapi.OpenService(manager, ServiceProtocol.SERVICE_NAME, Winsvc.SERVICE_ALL_ACCESS)
-            } ?: return failure("OpenService")
-            val service = W32Service(handle)
-            try {
-                if (!created) {
-                    runCatching { service.stopService(STOP_TIMEOUT_MS) }
-                        .onFailure { logger.warning("Could not stop the old service: ${it.message}") }
-                    val changed = advapiEx.ChangeServiceConfigW(
-                        handle, SERVICE_NO_CHANGE, WinNT.SERVICE_AUTO_START, SERVICE_NO_CHANGE,
-                        WString(binPath), null, null, null, null, null, WString(ServiceProtocol.DISPLAY_NAME)
-                    )
-                    if (!changed) return failure("ChangeServiceConfig")
-                }
-                advapi.ChangeServiceConfig2(
-                    handle, Winsvc.SERVICE_CONFIG_DESCRIPTION,
-                    Winsvc.SERVICE_DESCRIPTION().apply { lpDescription = DESCRIPTION }
+            )?.let(::W32Service)?.also { service = it } ?: return failure("CreateService")
+            if (existed) {
+                val changed = advapiEx.ChangeServiceConfigW(
+                    registered.handle, SERVICE_NO_CHANGE, WinNT.SERVICE_AUTO_START, SERVICE_NO_CHANGE,
+                    WString(binPath), null, null, null, null, null, WString(ServiceProtocol.DISPLAY_NAME)
                 )
-                runCatching {
-                    service.setFailureActions(listOf(restartAfter(2_000), restartAfter(5_000)), 60, null, null)
-                }.onFailure { logger.warning("Could not set the restart policy: ${it.message}") }
-                if (!advapi.StartService(handle, 0, null)) {
-                    val error = Native.getLastError()
-                    if (error != WinError.ERROR_SERVICE_ALREADY_RUNNING) return failure("StartService", error)
-                }
-                logger.info("Service ${if (created) "registered" else "updated"}: $binPath")
-                return 0
-            } finally {
-                service.close()
+                if (!changed) return failure("ChangeServiceConfig")
             }
+            advapi.ChangeServiceConfig2(
+                registered.handle, Winsvc.SERVICE_CONFIG_DESCRIPTION,
+                Winsvc.SERVICE_DESCRIPTION().apply { lpDescription = DESCRIPTION }
+            )
+            runCatching {
+                registered.setFailureActions(listOf(restartAfter(2_000), restartAfter(5_000)), 60, null, null)
+            }.onFailure { logger.warning("Could not set the restart policy: ${it.message}") }
+            if (!advapi.StartService(registered.handle, 0, null)) {
+                val error = Native.getLastError()
+                if (error != WinError.ERROR_SERVICE_ALREADY_RUNNING) return failure("StartService", error)
+            }
+            logger.info("Service ${if (existed) "updated" else "registered"}: $binPath")
+            return 0
         } finally {
+            service?.close()
             advapi.CloseServiceHandle(manager)
         }
     }
 
-    /** Runs in the elevated process: stops and deletes the service. Returns 0 or a Win32 error. */
+    /** Runs in the elevated process: stops and deletes the service and its copy of the app. Returns 0 or a Win32 error. */
     fun uninstallHere(): Int {
         val advapi = Advapi32.INSTANCE
         val manager = advapi.OpenSCManager(null, null, Winsvc.SC_MANAGER_CONNECT)
@@ -140,33 +151,42 @@ object ServiceInstaller {
             val handle = advapi.OpenService(
                 manager, ServiceProtocol.SERVICE_NAME,
                 Winsvc.SERVICE_STOP or Winsvc.SERVICE_QUERY_STATUS or WinNT.DELETE
-            ) ?: run {
+            )
+            if (handle == null) {
                 val error = Native.getLastError()
-                return if (error == WinError.ERROR_SERVICE_DOES_NOT_EXIST) 0 else failure("OpenService", error)
-            }
-            val service = W32Service(handle)
-            try {
-                runCatching { service.stopService(STOP_TIMEOUT_MS) }
-                    .onFailure { logger.warning("Could not stop the service: ${it.message}") }
-                if (!advapi.DeleteService(handle)) {
-                    val error = Native.getLastError()
-                    if (error != WinError.ERROR_SERVICE_MARKED_FOR_DELETE) return failure("DeleteService", error)
+                if (error != WinError.ERROR_SERVICE_DOES_NOT_EXIST) return failure("OpenService", error)
+            } else {
+                val service = W32Service(handle)
+                try {
+                    stop(service)
+                    if (!advapi.DeleteService(handle)) {
+                        val error = Native.getLastError()
+                        if (error != WinError.ERROR_SERVICE_MARKED_FOR_DELETE) return failure("DeleteService", error)
+                    }
+                    logger.info("Service removed")
+                } finally {
+                    service.close()
                 }
-                logger.info("Service removed")
-                return 0
-            } finally {
-                service.close()
             }
+            val target = ServiceImage.directory()
+            runCatching { ServiceImage.remove(target) }
+                .onFailure { logger.warning("Could not delete $target: ${it.message}") }
+            return 0
         } finally {
             advapi.CloseServiceHandle(manager)
         }
+    }
+
+    private fun stop(service: W32Service) {
+        runCatching { service.stopService(STOP_TIMEOUT_MS) }
+            .onFailure { logger.warning("Could not stop the service: ${it.message}") }
     }
 
     /**
      * Starts this app again with [argument] through ShellExecuteEx "runas"
      * (the UAC prompt) and waits for it to finish.
      */
-    private fun runElevated(argument: String): Outcome {
+    private fun runElevated(argument: String, onStarted: () -> Unit = {}): Outcome {
         val (file, args) = try {
             Elevation.launchCommand(listOf(argument))
         } catch (e: Exception) {
@@ -191,6 +211,7 @@ object ServiceInstaller {
             return Outcome.FAILED
         }
         val process = info.hProcess ?: return Outcome.FAILED.also { logger.warning("The elevated helper gave no process handle") }
+        runCatching(onStarted)
         try {
             if (Kernel32.INSTANCE.WaitForSingleObject(process, HELPER_TIMEOUT_MS) != WinBase.WAIT_OBJECT_0) {
                 logger.warning("The elevated helper did not finish in ${HELPER_TIMEOUT_MS / 1000} s")

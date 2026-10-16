@@ -92,6 +92,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     val serviceAvailable = MutableStateFlow(false)
     val serviceInstalled = MutableStateFlow(false)
 
+    /** The version the answering service reports; null before 1.1.2 or when it is not answering. */
+    val serviceVersion = MutableStateFlow<String?>(null)
+
     /** The TUN tunnel the service is running for us, and its outbound. */
     @Volatile
     private var remoteTun: ProxyConfiguration? = null
@@ -208,6 +211,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                     disconnect()
                 } else {
                     serviceAvailable.value = true
+                    serviceVersion.value = status.appVersion
                     stats.up.set(status.up)
                     stats.down.set(status.down)
                     stats.connections.set(status.connections)
@@ -219,16 +223,25 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 }
                 delay(1_000)
             } else {
-                serviceAvailable.value = installed && com.mythaia.desktop.service.ServiceClient.isAvailable()
+                val reply = if (installed) com.mythaia.desktop.service.ServiceClient.ping() else null
+                serviceAvailable.value = reply != null
+                serviceVersion.value = reply?.appVersion
                 delay(5_000)
             }
         }
     }
 
-    /** Registers the service (one administrator prompt) and waits for it to answer. */
+    /**
+     * Copies the app to Program Files and registers the service there (one
+     * administrator prompt), or updates an installed one, then waits for it
+     * to answer.
+     */
     fun installService() {
         scope.launch {
-            when (com.mythaia.desktop.service.ServiceInstaller.install()) {
+            // Updating stops the service, and with it a tunnel it runs for us.
+            if (remoteTun != null) disconnect()
+            val outcome = com.mythaia.desktop.service.ServiceInstaller.install(onStarted = { notify(tr("service_installing")) })
+            when (outcome) {
                 ServiceOutcome.NO_LAUNCHER -> { notify(tr("service_needs_install")); return@launch }
                 ServiceOutcome.DECLINED -> { notify(tr("service_prompt_declined")); return@launch }
                 ServiceOutcome.FAILED -> { notify(tr("service_install_failed")); return@launch }
@@ -237,8 +250,10 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             serviceInstalled.value = true
             // The service is a JVM of its own; give it time to open its pipe.
             repeat(60) {
-                if (com.mythaia.desktop.service.ServiceClient.isAvailable()) {
+                val reply = com.mythaia.desktop.service.ServiceClient.ping()
+                if (reply != null) {
                     serviceAvailable.value = true
+                    serviceVersion.value = reply.appVersion
                     notify(tr("service_installed"))
                     return@launch
                 }

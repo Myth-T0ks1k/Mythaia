@@ -1,6 +1,7 @@
 package com.mythaia.desktop.service
 
 import com.mythaia.data.model.ProxyConfiguration
+import com.mythaia.desktop.APP_VERSION
 import com.mythaia.desktop.engine.TrafficStats
 import com.mythaia.desktop.model.DesktopSettings
 import com.mythaia.desktop.model.RouteRule
@@ -133,6 +134,7 @@ class ServiceCore(private val control: TunControl, private val pipeName: String 
         return ServiceProtocol.Response(
             ok = ok,
             error = error,
+            appVersion = APP_VERSION,
             running = control.isRunning,
             status = control.statusName,
             configurationId = control.configuration?.id?.toString(),
