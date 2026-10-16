@@ -1,0 +1,12 @@
+<p>Mythaia is a proxy client with its own protocol stack, written in Kotlin from the ground up and built for networks that filter hard. It needs no account and shows no ads.</p>
+<p><b>Protocols:</b> VLESS with Vision, Reality and XHTTP, VMess, Trojan, Shadowsocks (AEAD and 2022), Hysteria2 with Salamander, TUIC v5, AnyTLS, NaiveProxy, WireGuard and SOCKS5 — over TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP and QUIC.</p>
+<ul>
+<li><b>Fronting in one link:</b> when a panel's domain is blocked, the subscription downloads through a CDN that is not, and the fronting can travel inside the subscription link itself.</li>
+<li><b>Auto:</b> picks the fastest server of a group, keeps measuring and moves only for a clear gain; reconnects on its own when a server is blocked.</li>
+<li><b>Routing:</b> rule and global modes, rule sets by domain, IP and GeoIP, country bypass, per-app split tunnelling, ad blocking, Fake-IP DNS, DNS over HTTPS and TLS.</li>
+<li><b>Servers:</b> share links, QR codes, Clash YAML, Xray and sing-box JSON, proxy chains; ping over TCP or UDP, removal of non-working servers, export as links.</li>
+<li><b>TLS:</b> browser fingerprints, ECH, ClientHello fragmentation, certificate pinning. An insecure setting is marked in red, never hidden.</li>
+<li>Quick Settings tile, home-screen widget, Always-on VPN, Android TV, nine languages.</li>
+</ul>
+<p>Mythaia runs no servers of its own: it connects to your servers or a provider's subscription.</p>
+<p>This build has no Wear OS companion: talking to a watch needs Google Play services.</p>

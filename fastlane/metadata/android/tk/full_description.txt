@@ -1,0 +1,12 @@
+<p>Mythaia — güýçli süzgüçli torlar üçin Kotlin-de noldan ýazylan, öz protokol stegi bolan proksi müşderisi. Hasaba durmak gerek däl, mahabat ýok.</p>
+<p><b>Protokollar:</b> Vision, Reality we XHTTP bilen VLESS, VMess, Trojan, Shadowsocks (AEAD we 2022), Salamander bilen Hysteria2, TUIC v5, AnyTLS, NaiveProxy, WireGuard we SOCKS5 — TCP, WebSocket, HTTPUpgrade, gRPC, XHTTP we QUIC üsti bilen.</p>
+<ul>
+<li><b>Bir baglanyşykda fronting:</b> paneliň domeni petiklenen bolsa, abuna petiklenmedik CDN arkaly ýüklenýär, fronting sazlamalary bolsa abuna baglanyşygynyň özünde geçip bilýär.</li>
+<li><b>Awto:</b> toparyň iň çalt serwerini saýlaýar, ölçemegi dowam edýär we diňe ep-esli utuş bolanda geçýär; serwer petiklenende özbaşdak täzeden birikýär.</li>
+<li><b>Marşrutlaşdyrma:</b> «Düzgün» we «Global» režimler, domen, IP we GeoIP boýunça düzgün toplumlary, ýurt aýlawy, programmalar boýunça bölünen tunnel, mahabat blokirlemek, Fake-IP DNS, HTTPS we TLS üsti bilen DNS.</li>
+<li><b>Serwerler:</b> baglanyşyklar, QR kodlar, Clash YAML, Xray we sing-box JSON, proksi zynjyrlary; TCP ýa-da UDP boýunça ping, işlemeýän serwerleri pozmak, baglanyşyk görnüşinde eksport.</li>
+<li><b>TLS:</b> brauzer barmak yzlary, ECH, ClientHello bölmek, sertifikat berkitmek. Howply sazlama gizlenmän, gyzyl bilen bellenýär.</li>
+<li>Çalt sazlamalar plitkasy, widžet, hemişelik VPN, Android TV, dokuz dil.</li>
+</ul>
+<p>Mythaia-nyň öz serwerleri ýok: ol siziň serwerleriňize ýa-da üpjün edijiniň abunasyna birikýär.</p>
+<p>Bu gurnamada Wear OS sagat programmasy ýok: sagat bilen aragatnaşyk Google Play hyzmatlaryny talap edýär.</p>

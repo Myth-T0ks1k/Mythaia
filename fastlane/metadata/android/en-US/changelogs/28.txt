@@ -1,0 +1,2 @@
+• QR codes are read on the phone with ZXing: scanning works offline and without Google Play services, and light-on-dark codes read too.
+• A build without Google Play services, for F-Droid.

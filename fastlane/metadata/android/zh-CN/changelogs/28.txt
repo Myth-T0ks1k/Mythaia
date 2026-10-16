@@ -1,0 +1,2 @@
+• 二维码在手机上用 ZXing 识别：扫描无需联网、无需 Google Play 服务，也能识别深色背景上的浅色二维码。
+• 不含 Google Play 服务的版本，供 F-Droid 使用。

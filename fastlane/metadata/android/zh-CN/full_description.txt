@@ -1,0 +1,12 @@
+<p>Mythaia 是拥有自研协议栈的代理客户端，以 Kotlin 从零编写，专为严格过滤的网络而设计。无需注册，没有广告。</p>
+<p><b>协议：</b>带 Vision、Reality 和 XHTTP 的 VLESS、VMess、Trojan、Shadowsocks（AEAD 与 2022）、带 Salamander 的 Hysteria2、TUIC v5、AnyTLS、NaiveProxy、WireGuard 和 SOCKS5，可运行于 TCP、WebSocket、HTTPUpgrade、gRPC、XHTTP 和 QUIC 之上。</p>
+<ul>
+<li><b>一条链接里的域前置：</b>面板域名被封锁时，订阅会通过未被封锁的 CDN 下载，而且域前置设置可以直接写在订阅链接里。</li>
+<li><b>自动选择：</b>选出分组中最快的服务器，持续测速，仅在明显更快时才切换；服务器被封锁时自动重新连接。</li>
+<li><b>路由：</b>规则与全局模式，按域名、IP 和 GeoIP 的规则集，按国家绕行，按应用分流，广告拦截，Fake-IP DNS，DNS over HTTPS 与 TLS。</li>
+<li><b>服务器：</b>分享链接、二维码、Clash YAML、Xray 与 sing-box JSON、代理链；按 TCP 或 UDP 测延迟，删除不可用的服务器，导出为链接。</li>
+<li><b>TLS：</b>浏览器指纹、ECH、ClientHello 分片、证书固定。不安全的设置会以红色标出，绝不隐藏。</li>
+<li>快捷设置磁贴、桌面小部件、始终开启的 VPN、Android TV，九种语言。</li>
+</ul>
+<p>Mythaia 没有自己的服务器：它连接你的服务器或服务商的订阅。</p>
+<p>此版本不含 Wear OS 手表应用：与手表通信需要 Google Play 服务。</p>
