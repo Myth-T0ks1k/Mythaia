@@ -42,6 +42,13 @@ fun main(args: Array<String>) {
     if (args.contains("--service")) com.mythaia.desktop.service.MythaiaService.runUnderScm()
     if (args.contains("--service-console")) com.mythaia.desktop.service.MythaiaService.runInConsole()
     val logger = installLogging()
+    // The elevated helper the running app starts to register or remove the service: no window, no lock.
+    if (args.contains(com.mythaia.desktop.service.ServiceInstaller.INSTALL_ARG)) {
+        exitProcess(com.mythaia.desktop.service.ServiceInstaller.installHere())
+    }
+    if (args.contains(com.mythaia.desktop.service.ServiceInstaller.UNINSTALL_ARG)) {
+        exitProcess(com.mythaia.desktop.service.ServiceInstaller.uninstallHere())
+    }
     InstanceLock.lock = acquireInstanceLock()
     if (InstanceLock.lock == null) {
         // Ask the running instance to show itself (and import a link we were given), then leave.

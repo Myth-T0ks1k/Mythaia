@@ -1,6 +1,7 @@
 package com.mythaia.desktop
 
 import com.mythaia.data.model.FragmentSettings
+import com.mythaia.desktop.service.ServiceInstaller.Outcome as ServiceOutcome
 import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.Subscription
@@ -227,32 +228,38 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     /** Registers the service (one administrator prompt) and waits for it to answer. */
     fun installService() {
         scope.launch {
-            if (com.mythaia.desktop.service.ServiceInstaller.launcher() == null) {
-                notify(tr("service_needs_install"))
-                return@launch
+            when (com.mythaia.desktop.service.ServiceInstaller.install()) {
+                ServiceOutcome.NO_LAUNCHER -> { notify(tr("service_needs_install")); return@launch }
+                ServiceOutcome.DECLINED -> { notify(tr("service_prompt_declined")); return@launch }
+                ServiceOutcome.FAILED -> { notify(tr("service_install_failed")); return@launch }
+                ServiceOutcome.DONE -> Unit
             }
-            val ok = com.mythaia.desktop.service.ServiceInstaller.install()
-            if (!ok) { notify(tr("service_install_failed")); return@launch }
-            repeat(20) {
+            serviceInstalled.value = true
+            // The service is a JVM of its own; give it time to open its pipe.
+            repeat(60) {
                 if (com.mythaia.desktop.service.ServiceClient.isAvailable()) {
                     serviceAvailable.value = true
-                    serviceInstalled.value = true
                     notify(tr("service_installed"))
                     return@launch
                 }
                 delay(500)
             }
-            notify(tr("service_install_failed"))
+            notify(tr("service_not_answering"))
         }
     }
 
     fun uninstallService() {
         scope.launch {
             if (remoteTun != null) disconnect()
-            val ok = com.mythaia.desktop.service.ServiceInstaller.uninstall()
-            serviceAvailable.value = false
-            serviceInstalled.value = !ok && serviceInstalled.value
-            notify(if (ok) tr("service_removed") else tr("service_install_failed"))
+            when (com.mythaia.desktop.service.ServiceInstaller.uninstall()) {
+                ServiceOutcome.DONE -> {
+                    serviceAvailable.value = false
+                    serviceInstalled.value = false
+                    notify(tr("service_removed"))
+                }
+                ServiceOutcome.DECLINED -> notify(tr("service_prompt_declined"))
+                else -> notify(tr("service_remove_failed"))
+            }
         }
     }
 
