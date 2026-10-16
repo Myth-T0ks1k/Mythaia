@@ -4,6 +4,20 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-10-16
+
+### Fixed
+
+- **Windows: the TUN service installs again.** *Install* in the settings never registered it: the
+  command that created the service lost its quotes on the way to `sc`, and the launcher's path —
+  `Mythaia Pro.exe` always has a space — reached Windows broken. The app now starts itself once
+  with administrator rights and registers the service through the Windows API, so any folder
+  works, Cyrillic and spaces included. Installing again over an existing service points it at the
+  current copy.
+- Windows: a declined administrator prompt, a failed installation and a service that does not
+  answer now each say so, instead of one message for all three.
+- The Android native library no longer carries the source paths of the machine that built it.
+
 ## [1.1.0] — 2026-10-15
 
 ### Added
@@ -108,6 +122,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[1.1.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.0.0...v1.0.1

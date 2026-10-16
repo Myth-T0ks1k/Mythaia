@@ -69,12 +69,12 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 
 | Платформа | Файл | Примечание |
 |---|---|---|
-| Android | `Mythaia-1.1.0-android-universal.apk` | Для любого устройства: arm64, armeabi-v7a, x86, x86_64 |
-| Android | `Mythaia-1.1.0-android-arm64-v8a.apk` | Компактнее, для современных телефонов |
-| Wear OS | `Mythaia-1.1.0-wear-os.apk` | Дополнение к приложению на телефоне, Wear OS 3 и новее |
-| Windows | `Mythaia-Pro-1.1.0-windows-x64-setup.exe` | Установщик для текущего пользователя, права администратора не нужны |
-| Windows | `Mythaia-Pro-1.1.0-windows-x64.msi` | То же в виде MSI-пакета |
-| Windows | `Mythaia-Pro-1.1.0-windows-x64-portable.zip` | Распакуйте куда угодно и запустите `Mythaia Pro.exe` |
+| Android | `Mythaia-1.1.1-android-universal.apk` | Для любого устройства: arm64, armeabi-v7a, x86, x86_64 |
+| Android | `Mythaia-1.1.1-android-arm64-v8a.apk` | Компактнее, для современных телефонов |
+| Wear OS | `Mythaia-1.1.1-wear-os.apk` | Дополнение к приложению на телефоне, Wear OS 3 и новее |
+| Windows | `Mythaia-Pro-1.1.1-windows-x64-setup.exe` | Установщик для текущего пользователя, права администратора не нужны |
+| Windows | `Mythaia-Pro-1.1.1-windows-x64.msi` | То же в виде MSI-пакета |
+| Windows | `Mythaia-Pro-1.1.1-windows-x64-portable.zip` | Распакуйте куда угодно и запустите `Mythaia Pro.exe` |
 
 В каждом релизе есть `SHA256SUMS.txt` с контрольными суммами всех файлов. Нужны Android 8.0 или
 новее и Windows 10 или 11 (x64); для TUN-режима Windows попросит права администратора.

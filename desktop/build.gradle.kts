@@ -77,7 +77,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "Mythaia Pro"
-            packageVersion = "1.1.0"
+            packageVersion = "1.1.1"
             description = "Mythaia Pro proxy client"
             vendor = "Mythaia"
             copyright = "Mythaia"
