@@ -2,6 +2,7 @@ package com.mythaia.desktop.tun
 
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.desktop.AppPaths
+import com.mythaia.desktop.Platform
 import com.mythaia.desktop.engine.Router
 import com.mythaia.desktop.engine.TrafficStats
 import com.mythaia.desktop.model.DesktopSettings
@@ -268,7 +269,8 @@ class TunEngine(val stats: TrafficStats, private val platform: TunPlatform = def
         private val FALLBACK_DNS = listOf("1.1.1.1", "8.8.8.8")
 
         /** The system side for the system this runs on. */
-        fun defaultPlatform(): TunPlatform = WindowsTunPlatform(AppPaths.tunRouteSnapshot)
+        fun defaultPlatform(): TunPlatform =
+            if (Platform.isMac) MacTunPlatform(AppPaths.macTunSnapshot) else WindowsTunPlatform(AppPaths.tunRouteSnapshot)
 
         /** Whether this process may create the adapter. */
         fun isElevated(): Boolean = Elevation.isElevated()
@@ -280,8 +282,21 @@ class TunEngine(val stats: TrafficStats, private val platform: TunPlatform = def
          */
         fun relaunchElevated(args: List<String> = listOf("--tun")): Boolean = Elevation.relaunchElevated(args)
 
-        /** Whether `wintun.dll` and the JNI library are both where the app can load them. */
-        fun isAvailable(): Boolean = WindowsNet.isWindows && NativeBridge.isLoaded && AppPaths.wintunLibrary() != null
+        /**
+         * Whether what TUN mode loads is where the app can load it: the JNI
+         * library everywhere, and `wintun.dll` on Windows (macOS has utun built in).
+         */
+        fun isAvailable(): Boolean = when {
+            Platform.isMac -> NativeBridge.isLoaded
+            else -> WindowsNet.isWindows && NativeBridge.isLoaded && AppPaths.wintunLibrary() != null
+        }
+
+        /** What [isAvailable] found missing, for the message. */
+        fun missingComponent(): String = when {
+            !NativeBridge.isLoaded -> Platform.nativeLibraryName
+            Platform.isMac -> "utun"
+            else -> "wintun.dll"
+        }
 
         /** The wintun.dll this run would load, or null. */
         fun wintunLibrary(): File? = AppPaths.wintunLibrary()
@@ -292,8 +307,11 @@ class TunEngine(val stats: TrafficStats, private val platform: TunPlatform = def
          * delete and then discard the snapshot an elevated start could act on.
          */
         fun cleanupLeftovers() {
-            if (!WindowsNet.isWindows || !isElevated()) return
-            WindowsRoutes(AppPaths.tunRouteSnapshot).cleanupLeftovers()
+            if (!isElevated()) return
+            when {
+                Platform.isMac -> MacNetwork(AppPaths.macTunSnapshot).cleanupLeftovers()
+                WindowsNet.isWindows -> WindowsRoutes(AppPaths.tunRouteSnapshot).cleanupLeftovers()
+            }
         }
     }
 }

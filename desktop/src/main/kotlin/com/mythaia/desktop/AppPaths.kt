@@ -38,6 +38,8 @@ object AppPaths {
      * command lines and is never read again.
      */
     val tunRouteSnapshot: File get() = File(dataDir, "tun-routes-v2.json")
+    /** The macOS counterpart: the routes TUN mode added and every network service's DNS before it. */
+    val macTunSnapshot: File get() = File(dataDir, "tun-network-mac.json")
     val geoIp: File get() = File(dataDir, "geoip.mmdb")
     val logDir: File get() = File(dataDir, "logs").apply { mkdirs() }
     val instanceLock: File get() = File(dataDir, "instance.lock")

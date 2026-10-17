@@ -10,7 +10,9 @@ import java.lang.management.ManagementFactory
 /**
  * Creating a Wintun adapter needs an administrator token. This answers
  * whether the process has one and, if not, starts another copy that does
- * (Windows shows the UAC prompt; the user may decline).
+ * (Windows shows the UAC prompt; the user may decline). On macOS the
+ * question is whether the process runs as root; there is no relaunch there,
+ * TUN mode goes through the service daemon instead.
  */
 object Elevation {
     private val logger = MythaiaLogger("Elevation")
@@ -26,6 +28,7 @@ object Elevation {
 
     /** True when this process runs elevated (or as the built-in Administrator). */
     fun isElevated(): Boolean {
+        if (com.mythaia.desktop.Platform.isMac) return MacUtun.isRoot()
         if (!WindowsNet.isWindows) return false
         return runCatching { shell32?.IsUserAnAdmin() ?: false }.getOrDefault(false)
     }
