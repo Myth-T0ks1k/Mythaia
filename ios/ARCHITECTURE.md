@@ -30,7 +30,7 @@ ios/
 
 ## Rules for all code
 
-- Swift 5 language mode, Swift 5.9 or newer, iOS 16 / macOS 13. No third-party
+- Swift 5 language mode, Swift 5.10 or newer, iOS 16 / macOS 13. No third-party
   packages: Foundation, Network, CryptoKit, Security, SQLite3, SwiftUI,
   NetworkExtension, AVFoundation only.
 - MythaiaKit must build for macOS too (its tests run there), so no UIKit in it.
@@ -176,6 +176,24 @@ public struct TunnelStartOptions: Codable {
     public var configuration: ProxyConfiguration      // chain already resolved into configuration.chain
     public var settings: AppSettings
     public var groupConfigurations: [ProxyConfiguration]  // for Auto inside the tunnel; empty when pinned
+}
+
+// Protocols/ — UDP (added after the first round; protocols without UDP throw unsupported)
+extension Dialer {
+    /// A UDP flow to `target` through `configuration` (VLESS, Trojan, VMess UDP over the stream;
+    /// SOCKS5 UDP ASSOCIATE; Shadowsocks UDP). Each packet is one datagram to or from `target`.
+    public static func connectUDP(_ configuration: ProxyConfiguration, to target: Endpoint,
+                                  timeout: Double = 15) async throws -> DatagramStream
+    /// A UDP flow to `target` without a proxy.
+    public static func directUDP(to target: Endpoint) async throws -> DatagramStream
+}
+
+// MythaiaTunnel/Tun/ — the packet-level tunnel (lwIP), used when the tunnel runs in TUN mode
+final class TunStack {
+    init(packetFlow: NEPacketTunnelFlow, router: Router, stats: TrafficStats)
+    func start()      // reads packets from packetFlow, feeds lwIP, dials flows through Router/Dialer
+    func stop()
+    func switchConfiguration(_ configuration: ProxyConfiguration)
 }
 
 // Engine/

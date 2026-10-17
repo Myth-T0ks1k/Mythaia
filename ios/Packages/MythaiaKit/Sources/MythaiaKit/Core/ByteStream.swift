@@ -70,6 +70,10 @@ public struct Endpoint: Hashable, Codable, CustomStringConvertible {
 /// Buffered reading on top of a `ByteStream` for the parsers that need exact
 /// lengths or delimiters (proxy reply headers, TLS records, HTTP heads).
 /// Owned by one reading task.
+///
+/// The buffer is always a fresh `Data` whose indices start at zero: slicing
+/// `Data` (which `removeFirst` does, `Data` being its own subsequence) keeps
+/// the parent's indices, and every offset below assumes zero-based ones.
 public final class StreamReader {
     public let stream: ByteStream
     private var buffer = Data()
@@ -87,9 +91,7 @@ public final class StreamReader {
             guard let chunk = try await stream.receive() else { throw MythaiaError.closed }
             buffer.append(chunk)
         }
-        let out = buffer.prefix(count)
-        buffer.removeFirst(count)
-        return Data(out)
+        return take(count)
     }
 
     /// Whatever is buffered, or else the next chunk; nil at end of stream.
@@ -107,11 +109,9 @@ public final class StreamReader {
     public func readThrough(_ delimiter: Data, limit: Int = 64 * 1024) async throws -> Data {
         var searchFrom = 0
         while true {
-            if let range = buffer.range(of: delimiter, in: max(0, searchFrom - delimiter.count)..<buffer.count) {
-                let end = range.upperBound
-                let out = buffer.prefix(end)
-                buffer.removeFirst(end)
-                return Data(out)
+            let lower = max(0, searchFrom - delimiter.count)
+            if let range = buffer.range(of: delimiter, in: lower..<buffer.count) {
+                return take(range.upperBound)
             }
             if buffer.count > limit { throw MythaiaError.parse("header too long") }
             searchFrom = buffer.count
@@ -123,7 +123,16 @@ public final class StreamReader {
     /// Puts bytes back in front of what is buffered.
     public func unread(_ data: Data) {
         guard !data.isEmpty else { return }
-        buffer = data + buffer
+        var joined = Data(data)
+        joined.append(buffer)
+        buffer = joined
+    }
+
+    /// The first `count` bytes, leaving the rest as a new zero-based buffer.
+    private func take(_ count: Int) -> Data {
+        let out = Data(buffer.prefix(count))
+        buffer = count >= buffer.count ? Data() : Data(buffer.suffix(from: count))
+        return out
     }
 
     /// Hands back whatever is buffered, leaving the reader empty; used when
@@ -166,20 +175,42 @@ public final class PrefixedStream: ByteStream {
 }
 
 /// Runs `operation`, failing with `timeout(what)` after `seconds`.
+///
+/// The result travels through a box rather than as the task group's child
+/// result, because a task group needs a `Sendable` result type and most
+/// results here (streams) are not.
 public func withTimeout<T>(
     _ seconds: Double,
     _ what: String,
     _ operation: @escaping () async throws -> T
 ) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
+    let box = TimeoutResultBox<T>()
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+            box.set(try await operation())
+        }
         group.addTask {
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             throw MythaiaError.timeout(what)
         }
         defer { group.cancelAll() }
-        guard let first = try await group.next() else { throw MythaiaError.timeout(what) }
-        return first
+        _ = try await group.next()
+    }
+    guard let value = box.get() else { throw MythaiaError.timeout(what) }
+    return value
+}
+
+private final class TimeoutResultBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T?
+
+    func set(_ newValue: T) {
+        lock.lock(); value = newValue; lock.unlock()
+    }
+
+    func get() -> T? {
+        lock.lock(); defer { lock.unlock() }
+        return value
     }
 }
 
