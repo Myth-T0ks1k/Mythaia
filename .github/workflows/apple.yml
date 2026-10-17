@@ -7,7 +7,9 @@ name: Apple
 # needs a signing team (see ios/README.md).
 on:
   push:
-    branches: [apple]
+    # apple-wip carries throwaway snapshots for compiling work in progress;
+    # only the iOS job runs there.
+    branches: [apple, apple-wip]
   pull_request:
     paths:
       - "ios/**"
@@ -33,6 +35,7 @@ concurrency:
 jobs:
   macos:
     name: macOS app (${{ matrix.arch }})
+    if: github.ref != 'refs/heads/apple-wip'
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +97,7 @@ jobs:
 
   lab:
     name: Interop lab on macOS
+    if: github.ref != 'refs/heads/apple-wip'
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -141,9 +145,11 @@ jobs:
           xcodebuild -version
           swift --version
 
+      # Release builds the module in one frontend job (whole-module), which
+      # reports every type error at once instead of stopping at the first file.
       - name: MythaiaKit build
         working-directory: ios/Packages/MythaiaKit
-        run: swift build 2>&1 | tee ../../../swift-build.log
+        run: swift build -c release 2>&1 | tee ../../../swift-build.log
 
       - name: MythaiaKit tests
         working-directory: ios/Packages/MythaiaKit
