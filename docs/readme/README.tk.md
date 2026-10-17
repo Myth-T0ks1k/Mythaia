@@ -11,7 +11,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Myth-T0ks1k/Mythaia/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Myth-T0ks1k/Mythaia/actions/workflows/ci.yml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#ýükläp-almak)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#ýükläp-almak)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white)](#ýükläp-almak)
+[![iOS](https://img.shields.io/badge/iOS-16%2B-000000?style=flat-square&logo=apple&logoColor=white)](#ýükläp-almak)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?style=flat-square&logo=swift&logoColor=white)](https://www.swift.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
 [![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
 [![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
@@ -24,8 +27,9 @@
 
 ---
 
-Mythaia — **Android** we **Windows** üçin proksi kliýenti. Onuň öz tor steki bar we ol Kotlin dilinde
-noldan ýazyldy. Xray-core ýa-da sing-box-a daýanman, Reality bilen VLESS, Hysteria2, TUIC, Trojan,
+Mythaia — **Android**, **Windows**, **macOS** we **iOS** (häzirlikçe diňe çeşme kodundan) üçin
+proksi kliýenti. Onuň öz tor steki bar: ol Kotlin dilinde noldan ýazyldy, iOS üçin bolsa Swift
+diline geçirildi. Xray-core ýa-da sing-box-a daýanman, Reality bilen VLESS, Hysteria2, TUIC, Trojan,
 Shadowsocks, WireGuard we beýleki protokollar bilen işleýär. Programma güýçli süzgüçli torlar üçin
 döredildi: domen frontingi, ClientHello bölmek, ECH, serweri awtomatik saýlamak we ýurt aýlawy
 goşmaça däl-de, programmanyň öz bölegidir.
@@ -39,11 +43,12 @@ goşmaça däl-de, programmanyň öz bölegidir.
 
 ## Näme üçin Mythaia
 
-- **Bir ýerli stek.** Protokollar, transportlar, TLS we marşrutlaşdyrma Kotlin-de ýazyldy. Birnäçe
-  kiçi C kitaphanasy (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) diňe ýerli kodda has gowy işleýän işleri edýär.
-  Go gurşawy ýok, köpri ýok, APK ýeňil.
-- **Iki platforma, bir ýadro.** Android we Windows programmalary umumy `core` modulyny ulanýar:
-  baglanyşyk, abuna ýa-da düzediş iki ýerde-de birmeňzeş işleýär.
+- **Bir ýerli stek.** Protokollar, transportlar, TLS we marşrutlaşdyrma Kotlin-de (iOS-da Swift-de)
+  ýazyldy. Birnäçe kiçi C kitaphanasy (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) diňe ýerli kodda has
+  gowy işleýän işleri edýär. Go gurşawy ýok, köpri ýok, APK ýeňil.
+- **Dört platforma, bir ýadro.** Android, Windows we macOS programmalary umumy `core` modulyny
+  ulanýar: baglanyşyk, abuna ýa-da düzediş üçüsinde-de birmeňzeş işleýär. iOS programmasy bu
+  ýadronyň Swift-e geçirilen görnüşinde işleýär we şol bir nusgalyk serwerlerde barlanýar.
 - **Süzgüçli torlar üçin döredildi.** Abunalar front arkaly ýüklenýär, serwerler täzeden ölçelýär we
   özbaşdak çalşylýar, ýerli trafik ýerli galýar, howply sazlamalar bolsa gizlenmän, gyzyl bilen
   bellenýär.
@@ -61,6 +66,8 @@ goşmaça däl-de, programmanyň öz bölegidir.
 | **Awto** | Toparyň iň çalt serwerini saýlaýar, ölçemegi dowam edýär we diňe ep-esli utuş bolanda geçýär; serwer petiklenende özbaşdak täzeden birikýär |
 | **Android** | Çalt sazlamalar plitkasy, widžet, hemişelik VPN, Android TV, Wear OS goşmaçasy, öz sertifikatyňyz bilen HTTPS aralyk tutmak, 9 dil |
 | **Windows** | Ulgam proksi režimi (bir portda SOCKS5 we HTTP) ýa-da Wintun arkaly doly TUN režimi, treý nyşany, şol bir serwerler, abunalar we Awto |
+| **macOS** | Şol bir iş stoly programmasy: ulgam proksi režimi (her tor hyzmatynyň web, howpsuz web we SOCKS proksileri; birikme kesilende öňki sazlamalar dikeldilýär) ýa-da utun arkaly doly TUN režimi, ony administrator paroly bir gezek soralyp gurnalýan kiçi hyzmat (LaunchDaemon) dolandyrýar; menýu zolagyndaky nyşan, ulgama girlende özbaşdak işe başlamak, `mythaia://` we serwer baglanyşyklaryny açmak; ýadronyň ähli protokollary, şol sanda Hysteria2 we TUIC |
+| **iOS** | Swift-de ýazylan ýerli programma, ýadro Kotlin-den geçirildi: VLESS (Vision, Reality, WebSocket, HTTPUpgrade, gRPC, XHTTP), VMess, Trojan, Shadowsocks (AEAD we 2022), SOCKS5, AnyTLS, NaiveProxy (HTTP/2), Hysteria2, TUIC v5, WireGuard we AmneziaWG; brauzer barmak yzlary we ClientHello bölmek; fronting bilen abunalar, Awto, ýurt aýlawy, marşrutlaşdyrma düzgünleri, serwer we zynjyr redaktorlary; ähli programmalaryň trafigi üçin paket tunneli ýa-da proksi sazlamalary režimi, baş ekran widžeti, Dolandyryş merkezinde düwme (iOS 18), 9 dil. Entek ýok: VLESS şifrlemesi (ML-KEM), Sudoku, Nowhere, HTTPS aralyk tutmak |
 
 ## Ýükläp almak
 
@@ -75,10 +82,21 @@ Täze wersiýalar Telegram kanalynda [@mythaia](https://t.me/mythaia) hem çap e
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | Häzirki ulanyjy üçin gurnaýjy, administrator hukuklary gerek däl |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | Şol bir zat, MSI bukjasy görnüşinde |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | Islendik ýere açyň we `Mythaia Pro.exe` işlediň |
+| macOS | `Mythaia-Pro-1.3.0-macos-arm64.dmg` | Apple silicon |
+| macOS | `Mythaia-Pro-1.3.0-macos-x64.dmg` | Intel |
+| iOS | — | Häzirlikçe ýaýradylmaýar: gurnamak üçin Apple-iň işläp düzüji hasaby gerek, taslamada bolsa entek ol ýok. [Çeşme kodundan ýygnamak](#çeşme-kodundan-ýygnamak) |
 
-Her neşirde ähli faýllaryň SHA-256 jemleri bilen `SHA256SUMS.txt` bar. Android 8.0 ýa-da täzesi we
-Windows 10 ýa-da 11 (x64) gerek; TUN režimi üçin Windows administrator hukuklaryny sorar — her gezek
-ýa-da Program Files-daky öz nusgasyndan işleýän Mythaia hyzmatyny gurnanyňyzda bir gezek.
+Her neşirde ähli faýllaryň SHA-256 jemleri bilen `SHA256SUMS.txt` bar. Android 8.0 ýa-da täzesi,
+Windows 10 ýa-da 11 (x64) we macOS 12 ýa-da täzesi (Apple silicon ýa-da Intel) gerek; TUN režimi
+üçin Windows administrator hukuklaryny sorar — her gezek ýa-da Program Files-daky öz nusgasyndan
+işleýän Mythaia hyzmatyny gurnanyňyzda bir gezek. macOS-da TUN režimi administrator parolyny bir
+gezek sorar: kiçi hyzmat (LaunchDaemon) gurnalýar, ol root hökmünde programmanyň öz nusgasyndan
+işleýär.
+
+macOS programmasyna ad hoc gol çekilen we ol Apple-iň notarizasiýasyndan geçmedik, şonuň üçin
+ilkinji gezek açylanda macOS ony açmaz. **System Settings → Privacy & Security** bölümini açyň we
+Mythaia Pro barada habaryň ýanyndaky **Open Anyway** düwmesine basyň; macOS 14 we has öňki
+wersiýalarda programmanyň üstünde sag basyň we **Open** saýlaň.
 
 Windows-da ony Scoop arkaly hem gurup we täzeläp bolýar:
 
@@ -116,7 +134,7 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
 - Islendik görnüşi goýsaňyz, skanirleseňiz ýa-da açsaňyz, goşmak penjiresindäki **Fronting**
   meýdançalary özbaşdak doldurylýar we ýüklemezden öň olary barlap bolýar.
 - **Abuna sazlamalary → Fronting bilen baglanyşygy göçür** bar bolan abunany şeýle baglanyşyga
-  öwürýär — Android-de-de, Windows-da-da.
+  öwürýär — ähli platformalarda.
 
 Salgyda front, `host`-da panel görkezilýän Happ görnüşi hem işleýär:
 
@@ -200,6 +218,48 @@ Gurnaýjylar üçin `PATH`-da WiX 3.14 gerek. Ulanyjynyň maglumatlary `%APPDATA
 
 </details>
 
+<details>
+<summary><b>macOS programmasy</b></summary>
+
+<br>
+
+Xcode-yň buýruk setiri gurallary, CMake we `JAVA_HOME`-da JDK 21 bolan Mac gerek. Skript ýerli
+kitaphanany Apple silicon we Intel üçin bir faýl edip ýygnaýar, soňra Gradle programmanyň bukjasyny
+ýygnaýar.
+
+```bash
+sh desktop/native/macos/build.sh
+./gradlew :desktop:createDistributable
+```
+
+Taýýar programma `desktop/build/compose/binaries/main/app/` bukjasyna düşýär. Android SDK ýok
+bolsa, ilki `settings.gradle.kts` faýlyndan `:app` we `:wear` setirlerini aýyryň — release workflow-y
+hem şeýle edýär. Ulanyjynyň maglumatlary `~/Library/Application Support/Mythaia` bukjasynda saklanýar.
+
+</details>
+
+<details>
+<summary><b>iOS programmasy</b></summary>
+
+<br>
+
+iOS programmasy we onuň Swift ýadrosy [`ios`](../../ios) bukjasynda. Xcode 16 ýa-da täzesi we
+XcodeGen bolan Mac gerek:
+
+```bash
+sh ios/bootstrap.sh                                  # beýleki programmalar bilen umumy C kody
+cp ios/Config.example.xcconfig ios/Config.xcconfig   # soňra öz team id-ňizi ýazyň
+cd ios && xcodegen && open Mythaia.xcodeproj
+```
+
+Tunnel üçin Apple-iň Network Extension rugsady gerek, şonuň üçin programmany enjamda işletmek üçin
+tölegli Apple işläp düzüji hasaby zerur. CI gol çekilmedik `.ipa` faýlyny hem ýygnamanyň artefakty
+hökmünde saklaýar: ony TrollStore arkaly gurnap bolýar, mugt Apple ID bilen AltStore ýa-da
+Sideloadly arkaly gurnalanda bolsa tunnel işlemeýär. Jikme-jiklikler [ios/README.md](../../ios/README.md)
+faýlynda.
+
+</details>
+
 ## Taslamanyň gurluşy
 
 | Modul | Näme |
@@ -207,7 +267,8 @@ Gurnaýjylar üçin `PATH`-da WiX 3.14 gerek. Ulanyjynyň maglumatlary `%APPDATA
 | [`core`](../../core) | Platforma bagly bolmadyk Kotlin: modeller, baglanyşyklar, abunalar, ähli protokollar we TLS steki |
 | [`app`](../../app) | Android programmasy: Jetpack Compose interfeýsi, `VpnService` we lwIP esasly ulanyjy TCP/IP steki |
 | [`wear`](../../wear) | Wear OS programmasy: birikmäniň ýagdaýy we bir basyşda açmak |
-| [`desktop`](../../desktop) | Windows programmasy: Compose for Desktop, ulgam proksi we Wintun TUN hereketlendirijileri |
+| [`desktop`](../../desktop) | Windows we macOS programmasy: Compose for Desktop, ulgam proksi we Wintun ýa-da utun arkaly TUN hereketlendirijileri |
+| [`ios`](../../ios) | Swift-de ýazylan iOS programmasy: MythaiaKit (`core`-yň Swift-e geçirilen görnüşi), programmanyň özi, onuň paket tunneli we widžeti |
 
 `core` moduly [GitHub Packages](https://github.com/Myth-T0ks1k?tab=packages&repo_name=Mythaia)-da
 `com.mythaia:mythaia-core` ady bilen hem çap edildi.

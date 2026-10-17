@@ -11,7 +11,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Myth-T0ks1k/Mythaia/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Myth-T0ks1k/Mythaia/actions/workflows/ci.yml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#download)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#download)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white)](#download)
+[![iOS](https://img.shields.io/badge/iOS-16%2B-000000?style=flat-square&logo=apple&logoColor=white)](#download)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?style=flat-square&logo=swift&logoColor=white)](https://www.swift.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](LICENSE.txt)
 [![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
 [![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
@@ -24,11 +27,12 @@
 
 ---
 
-Mythaia is a proxy client for **Android** and **Windows** with its own protocol stack, written from
-the ground up in Kotlin. It speaks VLESS with Reality, Hysteria2, TUIC, Trojan, Shadowsocks,
-WireGuard and more without wrapping Xray-core or sing-box, and it is built for networks that filter
-hard: domain fronting, ClientHello fragmentation, ECH, automatic server selection and a country
-bypass are part of the app, not add-ons.
+Mythaia is a proxy client for **Android**, **Windows**, **macOS** and **iOS** (for now, from source)
+with its own protocol stack, written from the ground up in Kotlin and ported to Swift for iOS. It
+speaks VLESS with Reality, Hysteria2, TUIC, Trojan, Shadowsocks, WireGuard and more without wrapping
+Xray-core or sing-box, and it is built for networks that filter hard: domain fronting, ClientHello
+fragmentation, ECH, automatic server selection and a country bypass are part of the app, not
+add-ons.
 
 <div align="center">
   <img src="docs/assets/screenshots/home.png" width="24%" alt="Home screen, connected">
@@ -39,11 +43,12 @@ bypass are part of the app, not add-ons.
 
 ## Why Mythaia
 
-- **One native stack.** Protocols, transports, TLS and routing are Kotlin. A few small vendored C
-  libraries (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) cover what native code does best. No Go runtime, no
-  bridge, a small APK.
-- **Two platforms, one core.** The Android and Windows apps share the same `core` module, so a
-  link, a subscription or a fix behaves the same on both.
+- **One native stack.** Protocols, transports, TLS and routing are Kotlin (Swift on iOS). A few
+  small vendored C libraries (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) cover what native code does
+  best. No Go runtime, no bridge, a small APK.
+- **Four platforms, one core.** The Android, Windows and macOS apps share the same `core` module, so
+  a link, a subscription or a fix behaves the same on all three. The iOS app runs a Swift port of
+  it, checked against the same reference servers.
 - **Made for filtered networks.** Subscriptions download through a front, servers are re-measured
   and switched automatically, local traffic stays local, and insecure settings are spelled out in
   red rather than hidden.
@@ -61,6 +66,8 @@ bypass are part of the app, not add-ons.
 | **Auto** | Picks the fastest server of a group, keeps re-measuring and moves only for a clear gain; reconnects on its own when a server is blocked |
 | **Android** | Quick Settings tile, home-screen widget, Always-on VPN, Android TV, Wear OS companion, HTTPS interception with your own CA, 9 languages |
 | **Windows** | System-proxy mode (SOCKS5 and HTTP on one port) or full TUN mode over Wintun, tray icon, the same servers, subscriptions and Auto |
+| **macOS** | The same desktop app: system-proxy mode (the web, secure web and SOCKS proxies of every network service, restored on disconnect) or full TUN mode over utun, run by a launch daemon installed with one administrator prompt; menu-bar icon, launch at login, opens `mythaia://` and share links; every protocol of the core, Hysteria2 and TUIC included |
+| **iOS** | A native Swift app on a Swift port of the core: VLESS (Vision, Reality, WebSocket, HTTPUpgrade, gRPC, XHTTP), VMess, Trojan, Shadowsocks (AEAD and 2022), SOCKS5, AnyTLS, NaiveProxy (HTTP/2), Hysteria2, TUIC v5, WireGuard and AmneziaWG; browser fingerprints and ClientHello fragmentation; subscriptions with fronting, Auto, country bypass, routing rules, server and chain editors; a packet tunnel for every app's traffic or proxy-settings mode, home-screen widget, Control Center toggle (iOS 18), 9 languages. Not yet: VLESS encryption (ML-KEM), Sudoku, Nowhere, HTTPS interception |
 
 ## Download
 
@@ -75,10 +82,19 @@ New versions are also posted in the Telegram channel [@mythaia](https://t.me/myt
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | Installer, per user, no administrator rights needed |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | The same as an MSI package |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | Unzip anywhere and run `Mythaia Pro.exe` |
+| macOS | `Mythaia-Pro-1.3.0-macos-arm64.dmg` | Apple silicon |
+| macOS | `Mythaia-Pro-1.3.0-macos-x64.dmg` | Intel |
+| iOS | — | Not distributed yet: installing needs an Apple developer account, which the project does not have yet. [Build from source](#building-from-source) |
 
-Every release lists the SHA-256 of each file in `SHA256SUMS.txt`. Android 8.0 or newer and Windows
-10 or 11 (x64) are required; TUN mode on Windows asks for administrator rights — each time, or once
-to install the Mythaia service, which runs from its own copy in Program Files.
+Every release lists the SHA-256 of each file in `SHA256SUMS.txt`. Android 8.0 or newer, Windows
+10 or 11 (x64) and macOS 12 or newer (Apple silicon or Intel) are required; TUN mode on Windows asks
+for administrator rights — each time, or once to install the Mythaia service, which runs from its
+own copy in Program Files. On macOS, TUN mode asks for an administrator password once, to install a
+small launch daemon that runs from its own root-owned copy of the app.
+
+The macOS app is signed ad hoc and not notarized, so macOS refuses to open it the first time. Open
+**System Settings → Privacy & Security** and click **Open Anyway** next to the message about
+Mythaia Pro; on macOS 14 and older, right-click the app and choose **Open** instead.
 
 On Windows, Scoop installs and updates it too:
 
@@ -117,7 +133,7 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
 - Pasting, scanning or opening either form fills in the **Fronting** fields of the Add sheet, so
   you can check them before anything is downloaded.
 - **Subscription settings → Copy link with fronting** turns a subscription you already have into such a
-  link, on Android and on Windows.
+  link, on every platform.
 
 Happ’s form, where the URL names the front and `host` the panel, works too:
 
@@ -201,6 +217,47 @@ The installers need WiX 3.14 on the `PATH`. User data lives in `%APPDATA%\Mythai
 
 </details>
 
+<details>
+<summary><b>macOS app</b></summary>
+
+<br>
+
+On a Mac, the native library needs the Xcode command line tools, CMake and a JDK 21 in
+`JAVA_HOME`, and comes out as one file for both Apple silicon and Intel; Gradle then builds the app
+bundle.
+
+```bash
+sh desktop/native/macos/build.sh
+./gradlew :desktop:createDistributable
+```
+
+The app lands in `desktop/build/compose/binaries/main/app/`. Without the Android SDK, take the
+`:app` and `:wear` lines out of `settings.gradle.kts` first, as the release workflow does. User
+data lives in `~/Library/Application Support/Mythaia`.
+
+</details>
+
+<details>
+<summary><b>iOS app</b></summary>
+
+<br>
+
+The iOS app and its Swift core live in [`ios`](ios). On a Mac with Xcode 16 or newer and
+XcodeGen:
+
+```bash
+sh ios/bootstrap.sh                                  # the vendored C it shares with the other apps
+cp ios/Config.example.xcconfig ios/Config.xcconfig   # then set your team id
+cd ios && xcodegen && open Mythaia.xcodeproj
+```
+
+The tunnel needs Apple's Network Extension entitlement, so running the app on a device takes a paid
+Apple developer account. CI also keeps an unsigned `.ipa` as a build artifact: TrollStore can
+install it, while AltStore or Sideloadly with a free Apple ID cannot run the tunnel. See
+[ios/README.md](ios/README.md) for the details.
+
+</details>
+
 ## Project layout
 
 | Module | What it is |
@@ -208,7 +265,8 @@ The installers need WiX 3.14 on the `PATH`. User data lives in `%APPDATA%\Mythai
 | [`core`](core) | Platform-free Kotlin: models, share links, subscriptions, every protocol and the TLS stack |
 | [`app`](app) | Android app: Jetpack Compose UI, `VpnService` and an lwIP-based userspace TCP/IP stack |
 | [`wear`](wear) | Wear OS companion: connection status and a one-tap toggle |
-| [`desktop`](desktop) | Windows app: Compose for Desktop, system-proxy and Wintun TUN engines |
+| [`desktop`](desktop) | Windows and macOS app: Compose for Desktop, system-proxy engines and TUN over Wintun or utun |
+| [`ios`](ios) | iOS app in Swift: MythaiaKit (the Swift port of `core`), the app, its packet tunnel and widget |
 
 The `core` module is also published to
 [GitHub Packages](https://github.com/Myth-T0ks1k?tab=packages&repo_name=Mythaia) as

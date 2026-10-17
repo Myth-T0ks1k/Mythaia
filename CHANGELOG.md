@@ -4,6 +4,37 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Mythaia Pro for macOS.** The desktop app runs on macOS 12 or newer, Apple silicon and Intel,
+  over the same core as on Android and Windows, with every protocol of it, Hysteria2 and TUIC
+  included. It has the two modes of the Windows app: *system proxy* sets the web, secure web and
+  SOCKS proxies of every network service and restores them on disconnect; *TUN* brings up a utun
+  interface with its routes and DNS, run by a small launch daemon that the app installs with one
+  administrator prompt and that runs from its own root-owned copy of the app. It has a menu-bar
+  icon and launch at login, and opens `mythaia://` and share links. Releases carry
+  `Mythaia-Pro-X.Y.Z-macos-arm64.dmg` and `Mythaia-Pro-X.Y.Z-macos-x64.dmg`. The app is signed
+  ad hoc, not notarized, so macOS refuses it on first launch until it is allowed in
+  **System Settings → Privacy & Security → Open Anyway** (on macOS 14 and older: right-click →
+  **Open**).
+- **Mythaia Pro for iOS.** A native Swift app for iOS 16 or newer, on a Swift port of the core:
+  VLESS (Vision, Reality, WebSocket, HTTPUpgrade, gRPC, XHTTP), VMess, Trojan, Shadowsocks (AEAD
+  and 2022), SOCKS5, AnyTLS, NaiveProxy over HTTP/2, Hysteria2 (Salamander, Gecko), TUIC v5,
+  WireGuard and AmneziaWG, over its own TLS 1.3 client with browser fingerprints and ClientHello
+  fragmentation. Subscriptions with Happ metadata, fronting and download through a working
+  server; Auto; country bypass; routing rules; server and chain editors. The packet tunnel either
+  carries every app's traffic (TUN mode, over lwIP) or applies proxy settings. A home-screen
+  widget, a Control Center toggle on iOS 18, nine languages. Not yet: VLESS encryption (ML-KEM),
+  Sudoku, Nowhere and HTTPS interception. **Not distributed yet:** installing it needs an Apple
+  developer account for the Network Extension entitlement, which the project does not have, so
+  there is no App Store or TestFlight build. It builds from source (see `ios/README.md`); CI keeps
+  an unsigned IPA as a build artifact, which TrollStore can install, while AltStore or Sideloadly
+  with a free Apple ID cannot run the tunnel.
+- **The interop lab runs on macOS too.** A macOS runner checks the desktop core, the Swift core
+  and macOS TUN mode against the lab's reference servers.
+
 ## [1.3.0] — 2026-10-16
 
 ### Added
@@ -188,6 +219,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[Unreleased]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.0...HEAD
 [1.3.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.1...v1.1.2

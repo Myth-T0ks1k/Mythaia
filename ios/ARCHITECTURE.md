@@ -11,21 +11,27 @@ names.
 ios/
   project.yml                  XcodeGen spec (the .xcodeproj is generated, not committed)
   Config.example.xcconfig      copy to Config.xcconfig: team id and bundle id
+  bootstrap.sh                 copies the vendored C (ngtcp2, Mbed TLS) from app/src/main/jni into CQuic/vendor
   Packages/MythaiaKit/         Swift package: everything that is not UI
+    Sources/CQuic/             C bridge over ngtcp2 (QUIC), with function-pointer callbacks
     Sources/MythaiaKit/
       Core/                    ByteStream, StreamReader, MythaiaError, Log, relay, withTimeout
       Model/                   ProxyConfiguration and friends, Subscription, ProxyChain, settings
       Links/                   share links (parse + export), base64 bodies, Clash YAML, Xray/sing-box JSON
-      Subscription/            fetcher, Happ metadata, WorkingServers
-      Crypto/                  primitives CryptoKit lacks: SHAKE128, BLAKE3, FNV-1a, HKDF helpers
+      Subscription/            fetcher, Happ metadata, fronting, WorkingServers
+      Crypto/                  primitives CryptoKit lacks: SHAKE128, BLAKE2b/2s, BLAKE3, FNV-1a, XChaCha20-Poly1305
       Transport/               TCP (Network.framework), system TLS, WebSocket, HTTPUpgrade, HTTP/2, gRPC, XHTTP
-      TLS/                     own TLS 1.3 client (fingerprinted ClientHello) and REALITY
-      Protocols/               VLESS (+Vision), Trojan, Shadowsocks (AEAD, 2022), VMess, SOCKS5, HTTP CONNECT; Dialer
+      TLS/                     own TLS 1.3 client (fingerprinted ClientHello, fragmentation) and REALITY
+      Protocols/               VLESS (+Vision), Trojan, Shadowsocks, VMess, SOCKS5, AnyTLS, Naive (HTTP/1.1, HTTP/2),
+                               QUIC + Hysteria2 + TUIC, WireGuard/AmneziaWG (protocol half); Dialer (TCP and UDP)
       Engine/                  local SOCKS5/HTTP proxy, router, rules database, latency tests, Auto
       Store/                   persistence in the App Group container, shared by app and tunnel
-    Tests/MythaiaKitTests/     XCTest; run with `swift test` on a Mac
+    Tests/MythaiaKitTests/     XCTest; run with `swift test` on a Mac (LabInteropTests against the lab servers)
   Mythaia/                     the iOS app (SwiftUI)
   MythaiaTunnel/               the packet tunnel extension (NEPacketTunnelProvider)
+    Tun/                       TUN mode: lwIP (app/src/main/jni/lwip) driven from Swift, Fake-IP DNS
+    WireGuard/                 the WireGuard engine (layer 3, instead of the packet stack)
+  MythaiaWidget/               home-screen widget and the iOS 18 Control Center toggle
 ```
 
 ## Rules for all code
@@ -53,19 +59,30 @@ ios/
 ## Data flow
 
 The app stores servers and subscriptions in the App Group container
-(`Store/`). Connecting saves the chosen server and the routing settings to the
-container and starts the tunnel through `NETunnelProviderManager`. The tunnel
-reads them, starts `Engine.LocalProxy` (one mixed SOCKS5/HTTP port on
-127.0.0.1) and points the system at it with `NEProxySettings`; each inbound
-flow goes through `Router` (rule or global mode, country bypass from
-Rules.db) to `Dialer`, which builds the stack for the server:
-TCP → TLS or REALITY → transport (WebSocket, HTTPUpgrade, gRPC, XHTTP) →
-protocol (VLESS, Trojan, ...). The app talks to the running tunnel with
-provider messages (switch server, stats, log tail).
+(`Store/`), and the advanced settings (allow insecure, trusted certificates,
+routing rules, fragmentation) beside them. Connecting saves the chosen server
+and the routing settings to the container and starts the tunnel through
+`NETunnelProviderManager`. The tunnel reads them and runs one of three
+engines:
 
-A full packet-level tunnel (lwIP, as on Android) is the next step after this
-proxy-settings tunnel; the Engine API is built so the flows from either inbound
-reach the same Router and Dialer.
+- TUN mode (the default, `AppSettings.tunnelMode`): the interface takes the
+  default routes and DNS; `TunStack` terminates every TCP and UDP flow of the
+  device in lwIP and answers DNS from a Fake-IP pool, so flows carry names.
+- Proxy mode: no routes; `LocalProxyServer` (one mixed SOCKS5/HTTP port on
+  127.0.0.1) and `NEProxySettings` pointing the system at it.
+- WireGuard: a layer-3 profile replaces both; its AllowedIPs are the routes.
+
+In the first two, each flow goes through `Router` (rule or global mode, the
+user's rules, country bypass from Rules.db) to `Dialer`, which builds the stack
+for the server: TCP or QUIC → TLS or REALITY → transport (WebSocket,
+HTTPUpgrade, gRPC, XHTTP) → protocol (VLESS, Trojan, ...), chains included.
+The app talks to the running tunnel with provider messages (switch server,
+stats, log tail, reload, app active), and Auto runs in the tunnel while the
+app is away.
+
+The CI (`.github/workflows/apple.yml`) runs `swift test` on macOS with the
+interop lab's reference servers up, so every protocol the Dialer supports is
+checked against Xray and sing-box on each push.
 
 ## Interfaces between modules
 

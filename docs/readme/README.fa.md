@@ -11,7 +11,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Myth-T0ks1k/Mythaia/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Myth-T0ks1k/Mythaia/actions/workflows/ci.yml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#دانلود)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#دانلود)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white)](#دانلود)
+[![iOS](https://img.shields.io/badge/iOS-16%2B-000000?style=flat-square&logo=apple&logoColor=white)](#دانلود)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?style=flat-square&logo=swift&logoColor=white)](https://www.swift.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
 [![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
 [![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
@@ -24,8 +27,9 @@
 
 ---
 
-Mythaia یک کلاینت پروکسی برای **Android** و **Windows** است که پشتهٔ پروتکل خودش را دارد و از صفر با
-Kotlin نوشته شده است. بدون تکیه بر Xray-core یا sing-box با VLESS همراه Reality، Hysteria2، TUIC، Trojan،
+Mythaia یک کلاینت پروکسی برای **Android**، **Windows**، **macOS** و **iOS** (فعلاً فقط با ساخت از سورس)
+است که پشتهٔ پروتکل خودش را دارد؛ این پشته از صفر با Kotlin نوشته شده و برای iOS به Swift منتقل شده است.
+بدون تکیه بر Xray-core یا sing-box با VLESS همراه Reality، Hysteria2، TUIC، Trojan،
 Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند و برای شبکه‌هایی با فیلترینگ سنگین ساخته شده است:
 دامین فرانتینگ، تکه‌تکه کردن ClientHello، ECH، انتخاب خودکار سرور و عبور بر اساس کشور بخشی از خود
 برنامه‌اند، نه افزونه.
@@ -39,11 +43,12 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 
 ## چرا Mythaia
 
-- **یک پشتهٔ بومی.** پروتکل‌ها، لایه‌های انتقال، TLS و مسیریابی با Kotlin نوشته شده‌اند. چند کتابخانهٔ کوچک
+- **یک پشتهٔ بومی.** پروتکل‌ها، لایه‌های انتقال، TLS و مسیریابی با Kotlin نوشته شده‌اند (در iOS با Swift). چند کتابخانهٔ کوچک
   C (lwIP، BLAKE3، libyaml، ngtcp2، Mbed TLS) کارهایی را انجام می‌دهند که کد بومی در آن‌ها بهتر است. نه محیط اجرای Go،
   نه پل ارتباطی، و یک APK سبک.
-- **دو پلتفرم، یک هسته.** برنامه‌های Android و Windows از یک ماژول مشترک `core` استفاده می‌کنند؛ یک لینک،
-  یک اشتراک یا یک اصلاح در هر دو یکسان رفتار می‌کند.
+- **چهار پلتفرم، یک هسته.** برنامه‌های Android، Windows و macOS از یک ماژول مشترک `core` استفاده می‌کنند؛
+  یک لینک، یک اشتراک یا یک اصلاح در هر سه یکسان رفتار می‌کند. برنامهٔ iOS روی نسخهٔ Swift همین هسته کار
+  می‌کند که با همان سرورهای مرجع آزموده می‌شود.
 - **ساخته‌شده برای شبکه‌های فیلترشده.** اشتراک‌ها از طریق فرانت دانلود می‌شوند، سرورها دوباره سنجیده و
   خودکار عوض می‌شوند، ترافیک داخلی داخلی می‌ماند و تنظیمات ناامن به‌جای پنهان شدن با رنگ قرمز مشخص می‌شوند.
 
@@ -60,6 +65,8 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 | **خودکار** | سریع‌ترین سرور گروه را انتخاب می‌کند، سنجش را ادامه می‌دهد و فقط با بهبود محسوس جابه‌جا می‌شود؛ وقتی سروری مسدود شود، خودش دوباره وصل می‌شود |
 | **Android** | کاشی تنظیمات سریع، ویجت صفحهٔ اصلی، VPN همیشه روشن، Android TV، برنامهٔ همراه Wear OS، رهگیری HTTPS با CA شخصی، ۹ زبان |
 | **Windows** | حالت پروکسی سیستم (SOCKS5 و HTTP روی یک پورت) یا حالت کامل TUN با Wintun، آیکون در سینی سیستم، همان سرورها، اشتراک‌ها و حالت خودکار |
+| **macOS** | همان برنامهٔ دسکتاپ: حالت پروکسی سیستم (پروکسی وب، وب امن و SOCKS برای همهٔ سرویس‌های شبکه، که با قطع اتصال به حالت قبل برمی‌گردند) یا حالت کامل TUN با utun که یک LaunchDaemon کوچک آن را اجرا می‌کند و با یک بار وارد کردن رمز مدیر نصب می‌شود؛ آیکون در نوار منو، اجرا هنگام ورود به سیستم، باز کردن لینک‌های `mythaia://` و لینک‌های سرور؛ همهٔ پروتکل‌های هسته، از جمله Hysteria2 و TUIC |
+| **iOS** | برنامهٔ بومی Swift با هسته‌ای که از Kotlin منتقل شده است: VLESS (Vision، Reality، WebSocket، HTTPUpgrade، gRPC، XHTTP)، VMess، Trojan، Shadowsocks (AEAD و 2022)، SOCKS5، AnyTLS، NaiveProxy (HTTP/2)، Hysteria2، TUIC v5، WireGuard و AmneziaWG؛ اثر انگشت مرورگرها و تکه‌تکه کردن ClientHello؛ اشتراک با فرانتینگ، حالت خودکار، عبور بر اساس کشور، قواعد مسیریابی، ویرایشگر سرور و زنجیره؛ تونل بسته‌ای برای ترافیک همهٔ برنامه‌ها یا حالت تنظیمات پروکسی، ویجت صفحهٔ اصلی، کلید در مرکز کنترل (iOS 18)، ۹ زبان. هنوز نیست: رمزنگاری VLESS (ML-KEM)، Sudoku، Nowhere، رهگیری HTTPS |
 
 ## دانلود
 
@@ -74,10 +81,19 @@ Shadowsocks، WireGuard و پروتکل‌های دیگر کار می‌کند �
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | نصب‌کننده برای کاربر فعلی، بدون نیاز به دسترسی مدیر |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | همان، به‌صورت بستهٔ MSI |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | در هر جایی از حالت فشرده خارج کنید و `Mythaia Pro.exe` را اجرا کنید |
+| macOS | `Mythaia-Pro-1.3.0-macos-arm64.dmg` | Apple silicon |
+| macOS | `Mythaia-Pro-1.3.0-macos-x64.dmg` | Intel |
+| iOS | — | هنوز منتشر نمی‌شود: نصب آن به حساب توسعه‌دهندهٔ Apple نیاز دارد که پروژه هنوز ندارد. [ساخت از سورس](#ساخت-از-سورس) |
 
-هر نسخه فایل `SHA256SUMS.txt` را با چکسام SHA-256 همهٔ فایل‌ها دارد. Android 8.0 یا جدیدتر و Windows
-10 یا 11 (x64) لازم است؛ حالت TUN در Windows دسترسی مدیر می‌خواهد — هر بار، یا فقط یک بار هنگام نصب
-سرویس Mythaia که از نسخهٔ خودش در Program Files اجرا می‌شود.
+هر نسخه فایل `SHA256SUMS.txt` را با چکسام SHA-256 همهٔ فایل‌ها دارد. Android 8.0 یا جدیدتر، Windows
+10 یا 11 (x64) و macOS 12 یا جدیدتر (Apple silicon یا Intel) لازم است؛ حالت TUN در Windows دسترسی مدیر
+می‌خواهد — هر بار، یا فقط یک بار هنگام نصب سرویس Mythaia که از نسخهٔ خودش در Program Files اجرا می‌شود.
+در macOS حالت TUN فقط یک بار رمز مدیر را می‌خواهد تا یک LaunchDaemon کوچک نصب شود که با دسترسی root از
+نسخهٔ اختصاصی خودش از برنامه اجرا می‌شود.
+
+برنامهٔ macOS امضای ad hoc دارد و notarize نشده است، بنابراین macOS بار اول آن را باز نمی‌کند. در
+**System Settings** بخش **Privacy & Security** را باز کنید و کنار پیام مربوط به Mythaia Pro روی
+**Open Anyway** بزنید؛ در macOS 14 و نسخه‌های قدیمی‌تر، روی برنامه راست‌کلیک کنید و **Open** را انتخاب کنید.
 
 در Windows می‌توانید آن را با Scoop هم نصب و به‌روزرسانی کنید:
 
@@ -115,7 +131,7 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
 - با چسباندن، اسکن یا باز کردن هر دو شکل، فیلدهای **فرانتینگ** در پنجرهٔ افزودن خودکار پر می‌شوند و
   می‌توانید پیش از دانلود آن‌ها را بررسی کنید.
 - **تنظیمات اشتراک ← کپی لینک همراه با فرانتینگ** اشتراکی را که دارید به چنین لینکی تبدیل می‌کند،
-  هم در Android و هم در Windows.
+  در همهٔ پلتفرم‌ها.
 
 شکل Happ هم کار می‌کند، که در آن آدرس به فرانت و `host` به پنل اشاره دارد:
 
@@ -199,6 +215,46 @@ gradlew :desktop:packageExe :desktop:packageMsi
 
 </details>
 
+<details>
+<summary><b>برنامهٔ macOS</b></summary>
+
+<br>
+
+به یک Mac با ابزارهای خط فرمان Xcode، CMake و JDK 21 در `JAVA_HOME` نیاز است. اسکریپت کتابخانهٔ بومی را
+به‌صورت یک فایل برای Apple silicon و Intel می‌سازد و سپس Gradle بستهٔ برنامه را می‌سازد.
+
+```bash
+sh desktop/native/macos/build.sh
+./gradlew :desktop:createDistributable
+```
+
+برنامه در `desktop/build/compose/binaries/main/app/` ساخته می‌شود. اگر Android SDK ندارید، ابتدا خطوط
+`:app` و `:wear` را از `settings.gradle.kts` بردارید؛ workflow انتشار هم همین کار را می‌کند. داده‌های
+کاربر در `~/Library/Application Support/Mythaia` ذخیره می‌شوند.
+
+</details>
+
+<details>
+<summary><b>برنامهٔ iOS</b></summary>
+
+<br>
+
+برنامهٔ iOS و هستهٔ Swift آن در [`ios`](../../ios) قرار دارند. به یک Mac با Xcode 16 یا جدیدتر و XcodeGen
+نیاز است:
+
+```bash
+sh ios/bootstrap.sh                                  # the vendored C it shares with the other apps
+cp ios/Config.example.xcconfig ios/Config.xcconfig   # then set your team id
+cd ios && xcodegen && open Mythaia.xcodeproj
+```
+
+تونل به مجوز Network Extension از Apple نیاز دارد، پس اجرای برنامه روی دستگاه به حساب پولی توسعه‌دهندهٔ
+Apple نیاز دارد. CI یک فایل `.ipa` امضانشده را هم به‌عنوان artifact ساخت نگه می‌دارد: TrollStore می‌تواند
+آن را نصب کند، اما با AltStore یا Sideloadly و یک Apple ID رایگان تونل اجرا نمی‌شود. جزئیات در
+[ios/README.md](../../ios/README.md).
+
+</details>
+
 ## ساختار پروژه
 
 | ماژول | چیست |
@@ -206,7 +262,8 @@ gradlew :desktop:packageExe :desktop:packageMsi
 | [`core`](../../core) | Kotlin مستقل از پلتفرم: مدل‌ها، لینک‌ها، اشتراک‌ها، همهٔ پروتکل‌ها و پشتهٔ TLS |
 | [`app`](../../app) | برنامهٔ Android: رابط Jetpack Compose، `VpnService` و پشتهٔ TCP/IP در فضای کاربر بر پایهٔ lwIP |
 | [`wear`](../../wear) | برنامهٔ Wear OS: وضعیت اتصال و روشن و خاموش کردن با یک لمس |
-| [`desktop`](../../desktop) | برنامهٔ Windows: Compose for Desktop، موتورهای پروکسی سیستم و TUN با Wintun |
+| [`desktop`](../../desktop) | برنامهٔ Windows و macOS: Compose for Desktop، موتورهای پروکسی سیستم و TUN با Wintun یا utun |
+| [`ios`](../../ios) | برنامهٔ iOS با Swift: MythaiaKit (نسخهٔ Swift از `core`)، خود برنامه، تونل بسته‌ای و ویجت آن |
 
 ماژول `core` همچنین با نام `com.mythaia:mythaia-core` در
 [GitHub Packages](https://github.com/Myth-T0ks1k?tab=packages&repo_name=Mythaia) منتشر شده است.

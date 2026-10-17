@@ -11,7 +11,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Myth-T0ks1k/Mythaia/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Myth-T0ks1k/Mythaia/actions/workflows/ci.yml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#скачать)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#скачать)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white)](#скачать)
+[![iOS](https://img.shields.io/badge/iOS-16%2B-000000?style=flat-square&logo=apple&logoColor=white)](#скачать)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?style=flat-square&logo=swift&logoColor=white)](https://www.swift.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
 [![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
 [![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
@@ -24,8 +27,9 @@
 
 ---
 
-Mythaia — прокси-клиент для **Android** и **Windows** с собственным сетевым стеком, написанным с нуля
-на Kotlin. Он работает с VLESS и Reality, Hysteria2, TUIC, Trojan, Shadowsocks, WireGuard и другими
+Mythaia — прокси-клиент для **Android**, **Windows**, **macOS** и **iOS** (пока только сборка
+из исходников) с собственным сетевым стеком, написанным с нуля на Kotlin и перенесённым на Swift
+для iOS. Он работает с VLESS и Reality, Hysteria2, TUIC, Trojan, Shadowsocks, WireGuard и другими
 протоколами без обёртки над Xray-core или sing-box и рассчитан на сети с жёсткой фильтрацией:
 доменный фронтинг, фрагментация ClientHello, ECH, автовыбор сервера и обход по стране встроены
 в приложение, а не прикручены сбоку.
@@ -39,11 +43,12 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 
 ## Почему Mythaia
 
-- **Один нативный стек.** Протоколы, транспорты, TLS и маршрутизация написаны на Kotlin. Несколько
-  небольших C-библиотек (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) берут на себя то, что лучше делать в нативном
-  коде. Ни среды Go, ни мостов, лёгкий APK.
-- **Две платформы, одно ядро.** Приложения для Android и Windows используют общий модуль `core`:
-  ссылка, подписка или исправление ведут себя одинаково везде.
+- **Один нативный стек.** Протоколы, транспорты, TLS и маршрутизация написаны на Kotlin (на iOS —
+  на Swift). Несколько небольших C-библиотек (lwIP, BLAKE3, libyaml, ngtcp2, Mbed TLS) берут на себя
+  то, что лучше делать в нативном коде. Ни среды Go, ни мостов, лёгкий APK.
+- **Четыре платформы, одно ядро.** Приложения для Android, Windows и macOS используют общий модуль
+  `core`: ссылка, подписка или исправление ведут себя одинаково во всех трёх. Приложение для iOS
+  работает на переносе этого ядра на Swift, проверенном на тех же эталонных серверах.
 - **Создан для фильтруемых сетей.** Подписки скачиваются через фронт, серверы перемеряются
   и переключаются сами, местный трафик остаётся местным, а небезопасные настройки подписаны
   красным, а не спрятаны.
@@ -61,6 +66,8 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 | **Авто** | Выбирает самый быстрый сервер группы, продолжает замеры и переключается только при заметном выигрыше; сам переподключается, когда сервер блокируют |
 | **Android** | Плитка в шторке, виджет, постоянный VPN, Android TV, приложение для Wear OS, перехват HTTPS со своим сертификатом, 9 языков |
 | **Windows** | Режим системного прокси (SOCKS5 и HTTP на одном порту) или полный TUN через Wintun, значок в трее, те же серверы, подписки и Авто |
+| **macOS** | То же настольное приложение: режим системного прокси (веб-, защищённый веб- и SOCKS-прокси каждой сетевой службы, при отключении всё возвращается как было) или полный TUN через utun, которым управляет служба (LaunchDaemon), устанавливаемая с одним запросом пароля администратора; значок в строке меню, запуск при входе, открытие ссылок `mythaia://` и ссылок на серверы; все протоколы ядра, включая Hysteria2 и TUIC |
+| **iOS** | Нативное приложение на Swift, ядро перенесено с Kotlin: VLESS (Vision, Reality, WebSocket, HTTPUpgrade, gRPC, XHTTP), VMess, Trojan, Shadowsocks (AEAD и 2022), SOCKS5, AnyTLS, NaiveProxy (HTTP/2), Hysteria2, TUIC v5, WireGuard и AmneziaWG; отпечатки браузеров и фрагментация ClientHello; подписки с фронтингом, Авто, обход по стране, правила маршрутизации, редакторы серверов и цепочек; пакетный туннель для трафика всех приложений или режим настроек прокси, виджет, переключатель в Пункте управления (iOS 18), 9 языков. Пока нет: шифрования VLESS (ML-KEM), Sudoku, Nowhere, перехвата HTTPS |
 
 ## Скачать
 
@@ -75,10 +82,21 @@ Mythaia — прокси-клиент для **Android** и **Windows** с со�
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | Установщик для текущего пользователя, права администратора не нужны |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | То же в виде MSI-пакета |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | Распакуйте куда угодно и запустите `Mythaia Pro.exe` |
+| macOS | `Mythaia-Pro-1.3.0-macos-arm64.dmg` | Apple silicon |
+| macOS | `Mythaia-Pro-1.3.0-macos-x64.dmg` | Intel |
+| iOS | — | Пока не распространяется: для установки нужен аккаунт разработчика Apple, которого у проекта пока нет. [Сборка из исходников](#сборка-из-исходников) |
 
 В каждом релизе есть `SHA256SUMS.txt` с контрольными суммами всех файлов. Нужны Android 8.0 или
-новее и Windows 10 или 11 (x64); для TUN-режима Windows попросит права администратора — каждый раз
-или один раз при установке службы Mythaia, которая работает из своей копии в Program Files.
+новее, Windows 10 или 11 (x64) и macOS 12 или новее (Apple silicon или Intel); для TUN-режима
+Windows попросит права администратора — каждый раз или один раз при установке службы Mythaia,
+которая работает из своей копии в Program Files. На macOS TUN-режим один раз попросит пароль
+администратора, чтобы установить небольшую службу (LaunchDaemon); она работает от root из своей
+копии приложения.
+
+Приложение для macOS подписано ad hoc и не нотаризовано, поэтому при первом запуске macOS откажется
+его открыть. Откройте **Системные настройки → Конфиденциальность и безопасность** и нажмите
+**Все равно открыть** рядом с сообщением о Mythaia Pro; в macOS 14 и более ранних нажмите на
+приложение правой кнопкой и выберите **Открыть**.
 
 На Windows установить и обновлять его можно и через Scoop:
 
@@ -116,7 +134,7 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
 - Если вставить, отсканировать или открыть любой из вариантов, поля **Фронтинг** в окне добавления
   заполнятся сами, и их можно проверить до скачивания.
 - **Настройки подписки → Скопировать ссылку с фронтингом** превращает уже добавленную подписку в такую
-  ссылку — и на Android, и на Windows.
+  ссылку — на любой платформе.
 
 Форма Happ, где в адресе — фронт, а в `host` — панель, тоже работает:
 
@@ -200,6 +218,47 @@ gradlew :desktop:packageExe :desktop:packageMsi
 
 </details>
 
+<details>
+<summary><b>Приложение для macOS</b></summary>
+
+<br>
+
+Нужен Mac с инструментами командной строки Xcode, CMake и JDK 21 в `JAVA_HOME`. Скрипт собирает
+нативную библиотеку — один файл и для Apple silicon, и для Intel, — а Gradle затем собирает
+пакет приложения.
+
+```bash
+sh desktop/native/macos/build.sh
+./gradlew :desktop:createDistributable
+```
+
+Готовое приложение появится в `desktop/build/compose/binaries/main/app/`. Если Android SDK нет,
+сначала уберите строки `:app` и `:wear` из `settings.gradle.kts`, как это делает релизный
+workflow. Данные пользователя хранятся в `~/Library/Application Support/Mythaia`.
+
+</details>
+
+<details>
+<summary><b>Приложение для iOS</b></summary>
+
+<br>
+
+Приложение для iOS и его ядро на Swift лежат в [`ios`](../../ios). Нужен Mac с Xcode 16 или новее
+и XcodeGen:
+
+```bash
+sh ios/bootstrap.sh                                  # общий с другими приложениями C-код
+cp ios/Config.example.xcconfig ios/Config.xcconfig   # затем укажите свой team id
+cd ios && xcodegen && open Mythaia.xcodeproj
+```
+
+Туннелю нужно разрешение Network Extension от Apple, поэтому для запуска на устройстве требуется
+платный аккаунт разработчика Apple. CI также сохраняет неподписанный `.ipa` как артефакт сборки:
+его можно установить через TrollStore, а через AltStore или Sideloadly с бесплатным Apple ID
+туннель работать не будет. Подробности — в [ios/README.md](../../ios/README.md).
+
+</details>
+
 ## Структура проекта
 
 | Модуль | Что это |
@@ -207,7 +266,8 @@ gradlew :desktop:packageExe :desktop:packageMsi
 | [`core`](../../core) | Kotlin без привязки к платформе: модели, ссылки, подписки, все протоколы и стек TLS |
 | [`app`](../../app) | Приложение для Android: интерфейс на Jetpack Compose, `VpnService` и пользовательский стек TCP/IP на lwIP |
 | [`wear`](../../wear) | Приложение для Wear OS: состояние подключения и включение в одно касание |
-| [`desktop`](../../desktop) | Приложение для Windows: Compose for Desktop, движки системного прокси и TUN на Wintun |
+| [`desktop`](../../desktop) | Приложение для Windows и macOS: Compose for Desktop, движки системного прокси и TUN на Wintun или utun |
+| [`ios`](../../ios) | Приложение для iOS на Swift: MythaiaKit (перенос `core` на Swift), само приложение, его пакетный туннель и виджет |
 
 Модуль `core` также опубликован в
 [GitHub Packages](https://github.com/Myth-T0ks1k?tab=packages&repo_name=Mythaia) как

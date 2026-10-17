@@ -11,7 +11,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Myth-T0ks1k/Mythaia/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Myth-T0ks1k/Mythaia/actions/workflows/ci.yml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#下载)
 [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](#下载)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white)](#下载)
+[![iOS](https://img.shields.io/badge/iOS-16%2B-000000?style=flat-square&logo=apple&logoColor=white)](#下载)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?style=flat-square&logo=swift&logoColor=white)](https://www.swift.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-14213A?style=flat-square)](../../LICENSE.txt)
 [![Telegram](https://img.shields.io/badge/Telegram-%40mythaia-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia)
 [![Chat](https://img.shields.io/badge/chat-%40mythaia__chat-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/mythaia_chat)
@@ -24,7 +27,8 @@
 
 ---
 
-Mythaia 是一款适用于 **Android** 和 **Windows** 的代理客户端，拥有完全用 Kotlin 从零编写的协议栈。
+Mythaia 是一款适用于 **Android**、**Windows**、**macOS** 和 **iOS**（目前需从源码构建）的代理客户端，
+拥有完全用 Kotlin 从零编写的协议栈（iOS 版移植为 Swift）。
 它无需封装 Xray-core 或 sing-box，即可使用 VLESS（含 Reality）、Hysteria2、TUIC、Trojan、Shadowsocks、
 WireGuard 等协议，并专为严格过滤的网络而设计：域前置、ClientHello 分片、ECH、自动选择服务器和按国家绕行
 都是应用本身的一部分，而不是附加组件。
@@ -38,9 +42,10 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 
 ## 为什么选择 Mythaia
 
-- **一套原生协议栈。** 协议、传输层、TLS 和路由均以 Kotlin 实现，仅用少量 C 库（lwIP、BLAKE3、libyaml、
+- **一套原生协议栈。** 协议、传输层、TLS 和路由均以 Kotlin 实现（iOS 上为 Swift），仅用少量 C 库（lwIP、BLAKE3、libyaml、
   ngtcp2、Mbed TLS）处理最适合原生代码的部分。没有 Go 运行时，没有桥接层，APK 体积小巧。
-- **两个平台，一个核心。** Android 与 Windows 应用共用同一个 `core` 模块，链接、订阅和修复在两端表现一致。
+- **四个平台，一个核心。** Android、Windows 与 macOS 应用共用同一个 `core` 模块，链接、订阅和修复在三端表现一致；
+  iOS 应用运行的是它的 Swift 移植版，并在同一组参考服务器上验证。
 - **为受过滤的网络而生。** 订阅通过前置下载，服务器会持续测速并自动切换，本地流量留在本地，
   不安全的设置会以红色明确标出，而不是被隐藏。
 
@@ -57,6 +62,8 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 | **自动** | 选出分组中最快的服务器，持续测速，仅在明显更快时才切换；服务器被封锁时自动重新连接 |
 | **Android** | 快捷设置磁贴、桌面小部件、始终开启的 VPN、Android TV、Wear OS 配套应用、使用自有 CA 的 HTTPS 拦截、9 种语言 |
 | **Windows** | 系统代理模式（同一端口支持 SOCKS5 与 HTTP）或基于 Wintun 的完整 TUN 模式、托盘图标，以及同样的服务器、订阅和自动选择 |
+| **macOS** | 与 Windows 相同的桌面应用：系统代理模式（为每个网络服务设置网页代理、安全网页代理和 SOCKS 代理，断开时恢复原设置）或基于 utun 的完整 TUN 模式，由只需一次管理员授权即可安装的 LaunchDaemon 运行；菜单栏图标、登录时启动、可打开 `mythaia://` 和分享链接；支持核心的全部协议，包括 Hysteria2 和 TUIC |
+| **iOS** | 原生 Swift 应用，核心移植自 Kotlin：VLESS（Vision、Reality、WebSocket、HTTPUpgrade、gRPC、XHTTP）、VMess、Trojan、Shadowsocks（AEAD 与 2022）、SOCKS5、AnyTLS、NaiveProxy（HTTP/2）、Hysteria2、TUIC v5、WireGuard 与 AmneziaWG；浏览器指纹与 ClientHello 分片；带域前置的订阅、自动选择、按国家绕行、路由规则、服务器与代理链编辑器；接管所有应用流量的数据包隧道或代理设置模式、桌面小部件、控制中心开关（iOS 18）、9 种语言。暂不支持：VLESS 加密（ML-KEM）、Sudoku、Nowhere、HTTPS 拦截 |
 
 ## 下载
 
@@ -71,10 +78,18 @@ WireGuard 等协议，并专为严格过滤的网络而设计：域前置、Clie
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-setup.exe` | 按用户安装，无需管理员权限 |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64.msi` | 同上，MSI 安装包 |
 | Windows | `Mythaia-Pro-1.3.0-windows-x64-portable.zip` | 解压到任意位置后运行 `Mythaia Pro.exe` |
+| macOS | `Mythaia-Pro-1.3.0-macos-arm64.dmg` | Apple 芯片 |
+| macOS | `Mythaia-Pro-1.3.0-macos-x64.dmg` | Intel |
+| iOS | — | 暂未发布：安装需要 Apple 开发者账号，而本项目目前还没有。[从源码构建](#从源码构建) |
 
-每个版本都附有 `SHA256SUMS.txt`，列出所有文件的 SHA-256 校验值。需要 Android 8.0 或更高版本，
-以及 Windows 10 或 11（x64）；在 Windows 上使用 TUN 模式时会请求管理员权限——每次都请求，或只在安装 Mythaia 服务时请求一次；
-该服务从 Program Files 中自己的副本运行。
+每个版本都附有 `SHA256SUMS.txt`，列出所有文件的 SHA-256 校验值。需要 Android 8.0 或更高版本、
+Windows 10 或 11（x64），以及 macOS 12 或更高版本（Apple 芯片或 Intel）；在 Windows 上使用 TUN 模式时会请求管理员权限——每次都请求，或只在安装 Mythaia 服务时请求一次；
+该服务从 Program Files 中自己的副本运行。在 macOS 上，TUN 模式只会请求一次管理员密码，用于安装一个小型
+LaunchDaemon，它以 root 身份从应用自己的副本运行。
+
+macOS 应用采用临时签名（ad hoc），未经公证，因此首次打开时 macOS 会拒绝运行。请打开
+**系统设置 → 隐私与安全性**，在关于 Mythaia Pro 的提示旁点击 **仍要打开**；在 macOS 14 及更早版本上，
+改为右键点击应用并选择 **打开**。
 
 在 Windows 上也可以通过 Scoop 安装和更新：
 
@@ -107,7 +122,7 @@ mythaia://import?url=https://panel.example.com/sub/TOKEN&front=104.16.1.1&sni=ww
 - 第一种是普通 URL：`#` 之后的部分永远不会发送到面板，因此该链接在其他客户端中同样可用。
 - 第二种可以直接从浏览器或聊天软件中打开 Mythaia。
 - 粘贴、扫描或打开任意一种链接，添加窗口中的**域前置**字段都会自动填好，下载前即可核对。
-- **订阅设置 → 复制带域前置的链接** 可以把已有的订阅转换成这样的链接，Android 和 Windows 均支持。
+- **订阅设置 → 复制带域前置的链接** 可以把已有的订阅转换成这样的链接，所有平台均支持。
 
 Happ 的写法也可以用：地址写前置域名，`host` 写面板：
 
@@ -191,6 +206,43 @@ gradlew :desktop:packageExe :desktop:packageMsi
 
 </details>
 
+<details>
+<summary><b>macOS 应用</b></summary>
+
+<br>
+
+需要一台装有 Xcode 命令行工具和 CMake、且 `JAVA_HOME` 指向 JDK 21 的 Mac。脚本构建原生库（一个文件同时支持
+Apple 芯片和 Intel），随后由 Gradle 构建应用包。
+
+```bash
+sh desktop/native/macos/build.sh
+./gradlew :desktop:createDistributable
+```
+
+应用包位于 `desktop/build/compose/binaries/main/app/`。如果没有安装 Android SDK，请先从 `settings.gradle.kts`
+中删除 `:app` 和 `:wear` 两行，发布工作流也是这样做的。用户数据保存在 `~/Library/Application Support/Mythaia`。
+
+</details>
+
+<details>
+<summary><b>iOS 应用</b></summary>
+
+<br>
+
+iOS 应用及其 Swift 核心位于 [`ios`](../../ios)。需要一台装有 Xcode 16 或更高版本以及 XcodeGen 的 Mac：
+
+```bash
+sh ios/bootstrap.sh                                  # 与其他应用共用的 C 代码
+cp ios/Config.example.xcconfig ios/Config.xcconfig   # 然后填写你的 team id
+cd ios && xcodegen && open Mythaia.xcodeproj
+```
+
+隧道需要 Apple 的 Network Extension 权限，因此要在设备上运行应用，需要付费的 Apple 开发者账号。CI 还会把未签名的
+`.ipa` 保存为构建产物：TrollStore 可以安装它，而用免费 Apple ID 通过 AltStore 或 Sideloadly 安装时隧道无法运行。
+详见 [ios/README.md](../../ios/README.md)。
+
+</details>
+
 ## 项目结构
 
 | 模块 | 说明 |
@@ -198,7 +250,8 @@ gradlew :desktop:packageExe :desktop:packageMsi
 | [`core`](../../core) | 与平台无关的 Kotlin 代码：模型、分享链接、订阅、全部协议和 TLS 协议栈 |
 | [`app`](../../app) | Android 应用：Jetpack Compose 界面、`VpnService` 以及基于 lwIP 的用户态 TCP/IP 协议栈 |
 | [`wear`](../../wear) | Wear OS 应用：显示连接状态，一键开关 |
-| [`desktop`](../../desktop) | Windows 应用：Compose for Desktop、系统代理与 Wintun TUN 引擎 |
+| [`desktop`](../../desktop) | Windows 与 macOS 应用：Compose for Desktop、系统代理引擎，以及基于 Wintun 或 utun 的 TUN 引擎 |
+| [`ios`](../../ios) | 用 Swift 编写的 iOS 应用：MythaiaKit（`core` 的 Swift 移植版）、应用本体、数据包隧道和小部件 |
 
 `core` 模块也以 `com.mythaia:mythaia-core` 发布在
 [GitHub Packages](https://github.com/Myth-T0ks1k?tab=packages&repo_name=Mythaia)。
