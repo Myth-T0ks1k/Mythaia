@@ -37,10 +37,10 @@ class LocalTunControl(private val engine: TunEngine) : TunControl {
 
 /**
  * The service's request loop: accepts one window connection at a time on
- * the named pipe and answers each line. Log lines are kept in a ring so the
- * window can show what the service did.
+ * [transport] (the named pipe, the Unix socket) and answers each line. Log
+ * lines are kept in a ring so the window can show what the service did.
  */
-class ServiceCore(private val control: TunControl, private val pipeName: String = ServiceProtocol.PIPE_NAME) {
+class ServiceCore(private val control: TunControl, private val transport: ServiceTransport = ServiceTransports.forThisSystem()) {
     private val logger = MythaiaLogger("Service")
     private val running = AtomicBoolean(false)
     private val logSeq = AtomicLong(0)
@@ -57,13 +57,13 @@ class ServiceCore(private val control: TunControl, private val pipeName: String 
     /** Serves until [stop]; each client connection is one or more request lines. */
     fun serve() {
         running.set(true)
-        logger.info("Listening on $pipeName")
+        logger.info("Listening on ${transport.address}")
         while (running.get()) {
             val connection = try {
-                NamedPipe.accept(pipeName)
+                transport.accept()
             } catch (e: Exception) {
                 if (running.get()) {
-                    logger.error("Pipe accept failed: ${e.message}")
+                    logger.error("Accept failed: ${e.message}")
                     Thread.sleep(500)
                 }
                 continue
@@ -85,8 +85,7 @@ class ServiceCore(private val control: TunControl, private val pipeName: String 
     fun stop() {
         running.set(false)
         runCatching { control.stop() }
-        // Unblock accept() by connecting once.
-        runCatching { NamedPipe.exchange(pipeName, """{"cmd":"ping"}""", 500) }
+        runCatching { transport.close() }
     }
 
     /** The reply line for one request line. */

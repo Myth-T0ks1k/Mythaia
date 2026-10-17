@@ -8,11 +8,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.UUID
 import kotlin.concurrent.thread
 
-/** The pipe protocol end to end, with a fake tunnel behind the service. */
+/** The service protocol end to end, with a fake tunnel behind the service, over each transport. */
 class ServiceCoreTest {
 
     private class FakeControl : TunControl {
@@ -64,11 +68,92 @@ class ServiceCoreTest {
         assertNotNull(bad.error)
     }
 
+    private fun decode(reply: String?): ServiceProtocol.Response {
+        assertNotNull("no reply", reply)
+        return ServiceProtocol.json.decodeFromString(ServiceProtocol.Response.serializer(), reply!!)
+    }
+
+    private fun encode(request: ServiceProtocol.Request) =
+        ServiceProtocol.json.encodeToString(ServiceProtocol.Request.serializer(), request)
+
+    /** Start, status, switch and stop through [transport], with [core] serving on another thread. */
+    private fun conversation(transport: ServiceTransport, control: FakeControl) {
+        val core = ServiceCore(control, transport)
+        val server = thread(isDaemon = true) { core.serve() }
+        try {
+            var ping: String? = null
+            for (attempt in 0 until 50) {
+                ping = transport.exchange("""{"cmd":"ping"}""", 2_000)
+                if (ping != null) break
+                Thread.sleep(100)
+            }
+            assertTrue(decode(ping).ok)
+
+            val started = decode(transport.exchange(encode(ServiceProtocol.Request("start", DesktopSettings(), config("a"), emptyList())), 5_000))
+            assertTrue(started.ok)
+            assertTrue(started.running)
+            assertEquals(control.configuration?.id?.toString(), started.configurationId)
+
+            val switched = decode(transport.exchange(encode(ServiceProtocol.Request("switch", configuration = config("b"))), 5_000))
+            assertEquals("b", control.configuration?.name)
+            assertTrue(switched.running)
+
+            val failed = decode(transport.exchange(encode(ServiceProtocol.Request("start", DesktopSettings(), config("broken"), emptyList())), 5_000))
+            assertFalse(failed.ok)
+            assertEquals("adapter refused", failed.error)
+
+            val stopped = decode(transport.exchange("""{"cmd":"stop"}""", 5_000))
+            assertTrue(stopped.ok)
+            assertFalse(stopped.running)
+        } finally {
+            core.stop()
+            server.join(3_000)
+        }
+        assertFalse("serve() returns once stopped", server.isAlive)
+    }
+
+    @Test
+    fun `the core is the same over any transport`() {
+        conversation(MemoryTransport(), FakeControl())
+    }
+
+    @Test
+    fun `a round trip over a Unix domain socket`() {
+        // AF_UNIX paths are short and, on Windows, must be ASCII; the JDK's own socket directory is both.
+        val base = System.getProperty("jdk.net.unixdomain.tmpdir") ?: System.getProperty("java.io.tmpdir")
+        assumeTrue("no ASCII temp directory for the socket", base.all { it.code < 128 })
+        val dir = File(base, "mythaia-sock-${UUID.randomUUID().toString().take(8)}")
+        val path: Path = File(dir, "s.sock").toPath()
+        try {
+            val transport = UnixSocketTransport(path)
+            assertEquals("nobody listens yet", null, transport.exchange("""{"cmd":"ping"}""", 500))
+            // A socket file left by a run that died is replaced, not an obstacle.
+            dir.mkdirs()
+            Files.write(path, ByteArray(0))
+            assertEquals("a stale file is not a listener", null, transport.exchange("""{"cmd":"ping"}""", 500))
+            conversation(transport, FakeControl())
+            assertFalse("the socket file goes with the service", Files.exists(path))
+        } finally {
+            Files.deleteIfExists(path)
+            dir.delete()
+        }
+    }
+
+    @Test
+    fun `lines are read up to the newline, without the carriage return`() {
+        val input = "{\"cmd\":\"ping\"}\r\nsecond\nlast".byteInputStream()
+        assertEquals("{\"cmd\":\"ping\"}", UnixSocketTransport.readLineFrom(input))
+        assertEquals("second", UnixSocketTransport.readLineFrom(input))
+        assertEquals("last", UnixSocketTransport.readLineFrom(input))
+        assertEquals(null, UnixSocketTransport.readLineFrom(input))
+    }
+
     @Test
     fun `a round trip over a real named pipe works without privileges`() {
+        assumeTrue("named pipes are Windows'", com.mythaia.desktop.Platform.isWindows)
         val control = FakeControl()
         val name = "\\\\.\\pipe\\MythaiaTest-${UUID.randomUUID()}"
-        val core = ServiceCore(control, name)
+        val core = ServiceCore(control, NamedPipeTransport(name))
         val server = thread(isDaemon = true) { core.serve() }
         try {
             var reply: String? = null

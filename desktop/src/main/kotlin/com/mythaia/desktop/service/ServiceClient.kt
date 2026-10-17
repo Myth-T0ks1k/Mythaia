@@ -6,9 +6,10 @@ import com.mythaia.desktop.model.RouteRule
 import com.mythaia.vpn.util.MythaiaLogger
 import java.io.IOException
 
-/** The window's side of the pipe. Every call is one short connection. */
+/** The window's side of the pipe or socket. Every call is one short connection. */
 object ServiceClient {
     private val logger = MythaiaLogger("ServiceClient")
+    private val transport: ServiceTransport by lazy { ServiceTransports.forThisSystem() }
 
     /** Whether the service is up and answering. */
     fun isAvailable(): Boolean = runCatching { ping() != null }.getOrDefault(false)
@@ -40,9 +41,9 @@ object ServiceClient {
     private fun send(request: ServiceProtocol.Request, timeoutMs: Long): ServiceProtocol.Response? {
         val line = ServiceProtocol.json.encodeToString(ServiceProtocol.Request.serializer(), request)
         val reply = try {
-            NamedPipe.exchange(ServiceProtocol.PIPE_NAME, line, timeoutMs)
+            transport.exchange(line, timeoutMs)
         } catch (e: Exception) {
-            logger.debug("pipe: ${e.message}")
+            logger.debug("${transport.address}: ${e.message}")
             null
         } ?: return null
         return runCatching { ServiceProtocol.json.decodeFromString(ServiceProtocol.Response.serializer(), reply) }

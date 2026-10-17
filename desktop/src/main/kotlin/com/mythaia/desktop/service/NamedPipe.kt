@@ -47,11 +47,11 @@ object NamedPipe {
     }
 
     /** One connected client on the server side. */
-    class ServerConnection internal constructor(private val handle: WinNT.HANDLE) : AutoCloseable {
+    class ServerConnection internal constructor(private val handle: WinNT.HANDLE) : ServiceConnection {
         private val pending = ByteArrayOutputStream()
 
         /** The next line without its terminator, or null when the client went away. */
-        fun readLine(): String? {
+        override fun readLine(): String? {
             val chunk = ByteArray(BUFFER)
             val read = IntByReference()
             while (true) {
@@ -69,7 +69,7 @@ object NamedPipe {
             }
         }
 
-        fun writeLine(text: String) {
+        override fun writeLine(text: String) {
             val bytes = (text + "\n").toByteArray(Charsets.UTF_8)
             var offset = 0
             val written = IntByReference()

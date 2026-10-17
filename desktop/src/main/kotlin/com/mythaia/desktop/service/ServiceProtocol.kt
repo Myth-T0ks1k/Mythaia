@@ -8,12 +8,19 @@ import kotlinx.serialization.json.Json
 
 /**
  * What the window and the service say to each other: one JSON object per
- * line over the named pipe `\\.\pipe\MythaiaService`. The service holds no
- * configuration of its own; every start carries the settings, the server
+ * line, over the named pipe `\\.\pipe\MythaiaService` on Windows and the
+ * Unix socket [SOCKET_PATH] on macOS ([ServiceTransport]). The service holds
+ * no configuration of its own; every start carries the settings, the server
  * and the rules it is to use.
  */
 object ServiceProtocol {
     const val PIPE_NAME = "\\\\.\\pipe\\MythaiaService"
+
+    /** The macOS daemon's socket, in a directory only root can write to. */
+    const val SOCKET_PATH = "/var/run/mythaia/service.sock"
+
+    /** The group whose members may connect to [SOCKET_PATH]: every account that signs in on a Mac. */
+    const val SOCKET_GROUP = "staff"
     const val SERVICE_NAME = "MythaiaService"
     const val DISPLAY_NAME = "Mythaia Pro Service"
     const val VERSION = 1
