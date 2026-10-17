@@ -148,6 +148,12 @@ jobs:
           xcodebuild -version
           swift --version
 
+      # The vendored ngtcp2 and mbedTLS that MythaiaKit's CQuic target
+      # compiles, copied from app/src/main/jni; swift build, swift test and
+      # the Xcode build of the app all need them.
+      - name: Vendored C sources
+        run: sh ios/bootstrap.sh
+
       # Release builds the module in one frontend job (whole-module), which
       # reports every type error at once instead of stopping at the first file.
       - name: MythaiaKit build

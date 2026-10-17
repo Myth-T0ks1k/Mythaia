@@ -45,6 +45,8 @@ extension Dialer {
             return
         case .anytls:
             _ = try anyTlsSecurity(config)
+        case .hysteria2, .tuic:
+            return
         case .naiveHttp11, .naiveHttp2:
             throw MythaiaError.unsupported("UDP through \(config.outboundProtocol.displayName)")
         default:
@@ -64,6 +66,10 @@ extension Dialer {
             let connection = ShadowsocksUdpConnection(socket: socket, mode: mode, destinationHost: target.host, destinationPort: target.port)
             resources.track(connection)
             return connection
+        }
+        if isQuicProtocol(config.outboundProtocol) {
+            // QUIC datagrams on the server's pooled connection; see DialerQuic.
+            return try await dialQuicUdp(config, chain: chain, target: target, resources: resources)
         }
 
         var below: ByteStream? = nil

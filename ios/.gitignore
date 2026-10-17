@@ -9,5 +9,8 @@ build/
 DerivedData/
 Packages/MythaiaKit/.build/
 Packages/MythaiaKit/.swiftpm/
+
+# Vendored C copied in by bootstrap.sh from app/src/main/jni
+Packages/MythaiaKit/Sources/CQuic/vendor/
 *.ipa
 *.xcarchive

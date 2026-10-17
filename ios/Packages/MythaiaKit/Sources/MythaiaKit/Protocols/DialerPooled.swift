@@ -1,8 +1,8 @@
 import Foundation
 
-/// The protocols whose connections outlive one flow: AnyTLS sessions and
-/// NaiveProxy's HTTP/2 connections are pooled per server, and each dial is
-/// one more stream on them.
+/// The protocols whose connections outlive one flow: AnyTLS sessions,
+/// NaiveProxy's HTTP/2 connections and the Hysteria2/TUIC QUIC connections
+/// are pooled per server, and each dial is one more stream on them.
 extension Dialer {
     /// Closes the pooled connections that dialling `configuration` (its chain
     /// included) left without a flow. Meant for after a one-off dial such as
@@ -19,6 +19,8 @@ extension Dialer {
                 AnyTlsPool.releaseIdle(hop.id)
             case .naiveHttp2:
                 NaiveSessionPool.shared.releaseIdle(NaiveSessionPool.key(for: hop))
+            case .hysteria2, .tuic:
+                QuicClientPool.releaseIdle(hop)
             default:
                 break
             }

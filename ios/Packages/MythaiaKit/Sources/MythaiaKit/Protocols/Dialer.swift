@@ -58,6 +58,8 @@ public enum Dialer {
             return
         case .anytls:
             _ = try anyTlsSecurity(hop)
+        case .hysteria2, .tuic:
+            return
         default:
             throw MythaiaError.unsupported(hop.outboundProtocol.displayName)
         }
@@ -142,6 +144,8 @@ public enum Dialer {
             return try await dialHttp2(hop, below: below, target: target, initialData: initialData, resources: resources)
         case .anytls:
             return try await dialAnyTls(hop, below: below, target: target, initialData: initialData, resources: resources)
+        case .hysteria2, .tuic:
+            return try await dialQuic(hop, below: below, target: target, initialData: initialData, resources: resources)
         default:
             throw MythaiaError.unsupported(hop.outboundProtocol.displayName)
         }
