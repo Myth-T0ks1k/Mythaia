@@ -34,8 +34,8 @@ final class DialerTests: XCTestCase {
 
     // MARK: - Refused before dialling
 
-    func testProtocolsThatNeedQuicOrAreNotPortedAreRefusedByName() async {
-        for outbound in [OutboundProtocol.hysteria2, .tuic, .anytls, .wireguard, .sudoku, .nowhere, .naiveHttp2] {
+    func testProtocolsThatAreNotPortedAreRefusedByName() async {
+        for outbound in [OutboundProtocol.wireguard, .sudoku, .nowhere] {
             await expectError(.unsupported(outbound.displayName)) {
                 _ = try await Dialer.connect(server(outbound), to: target, timeout: 2)
             }
@@ -44,8 +44,8 @@ final class DialerTests: XCTestCase {
 
     func testAnUnsupportedHopInTheChainIsRefusedToo() async {
         var exit = server(.trojan)
-        exit.chain = [server(.hysteria2)]
-        await expectError(.unsupported("Hysteria2")) {
+        exit.chain = [server(.wireguard)]
+        await expectError(.unsupported("WireGuard")) {
             _ = try await Dialer.connect(exit, to: target, timeout: 2)
         }
     }
@@ -76,6 +76,21 @@ final class DialerTests: XCTestCase {
         await expectError(.invalidConfiguration("Vision requires outer TLS or REALITY transport")) {
             _ = try await Dialer.connect(configuration, to: target, timeout: 2)
         }
+    }
+
+    func testAnyTlsWithoutTlsSettingsIsRefusedBeforeDialling() async {
+        var configuration = server(.anytls)
+        configuration.password = "pw"
+        await expectError(.invalidConfiguration("AnyTLS requires TLS configuration")) {
+            _ = try await Dialer.connect(configuration, to: target, timeout: 2)
+        }
+    }
+
+    func testReleasingPooledSessionsOfAnUnpooledServerIsHarmless() {
+        let anytls = server(.anytls)
+        Dialer.releasePooledSessions(anytls)
+        Dialer.releasePooledSessions(server(.naiveHttp2))
+        XCTAssertFalse(AnyTlsPool.isPooled(anytls.id))
     }
 
     func testUdpIsRefusedWhereTheProtocolHasNone() async {

@@ -45,6 +45,10 @@ public enum LatencyTester {
         defer {
             watchdog.cancel()
             bag.closeAll()
+            // A test across a large subscription must not leave every pooled
+            // session it opened (AnyTLS, HTTP/2 naive, QUIC) behind; ones
+            // still carrying flows, like the tunnel's own, are kept.
+            Dialer.releasePooledSessions(configuration)
         }
         do {
             switch kind {

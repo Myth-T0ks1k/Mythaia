@@ -54,8 +54,10 @@ public enum Dialer {
         case .vless:
             try checkVlessEncryption(hop)
             try checkVision(hop)
-        case .trojan, .vmess, .shadowsocks, .socks5, .naiveHttp11:
+        case .trojan, .vmess, .shadowsocks, .socks5, .naiveHttp11, .naiveHttp2:
             return
+        case .anytls:
+            _ = try anyTlsSecurity(hop)
         default:
             throw MythaiaError.unsupported(hop.outboundProtocol.displayName)
         }
@@ -136,6 +138,10 @@ public enum Dialer {
             return try await dialSocks(hop, below: below, target: target, initialData: initialData, resources: resources)
         case .naiveHttp11:
             return try await dialHttp11(hop, below: below, target: target, initialData: initialData, resources: resources)
+        case .naiveHttp2:
+            return try await dialHttp2(hop, below: below, target: target, initialData: initialData, resources: resources)
+        case .anytls:
+            return try await dialAnyTls(hop, below: below, target: target, initialData: initialData, resources: resources)
         default:
             throw MythaiaError.unsupported(hop.outboundProtocol.displayName)
         }

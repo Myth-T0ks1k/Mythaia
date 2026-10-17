@@ -43,6 +43,8 @@ extension Dialer {
             }
         case .trojan, .vmess, .socks5, .shadowsocks:
             return
+        case .anytls:
+            _ = try anyTlsSecurity(config)
         case .naiveHttp11, .naiveHttp2:
             throw MythaiaError.unsupported("UDP through \(config.outboundProtocol.displayName)")
         default:
@@ -79,6 +81,8 @@ extension Dialer {
             return try await dialVmessUdp(config, below: below, prefix: chain, target: target, resources: resources)
         case .socks5:
             return try await dialSocksUdp(config, below: below, target: target, resources: resources)
+        case .anytls:
+            return try await dialAnyTlsUdp(config, below: below, target: target, resources: resources)
         default:
             throw MythaiaError.unsupported(config.outboundProtocol.displayName)
         }

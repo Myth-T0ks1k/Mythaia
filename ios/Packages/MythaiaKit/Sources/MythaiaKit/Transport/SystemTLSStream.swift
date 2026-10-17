@@ -119,15 +119,28 @@ public final class SystemTLSStream: ByteStream, @unchecked Sendable {
             Log.warning("TLS: no certificate of the server matches the pinned SHA-256")
             return false
         }
-        if allowInsecure {
+        // The server's own setting or the global one, as on Android: the
+        // global "allow insecure" applies to every TLS connection.
+        if allowInsecure || CertificatePolicy.allowInsecure {
             return true
         }
         var error: CFError?
-        let trusted = SecTrustEvaluateWithError(trust, &error)
-        if !trusted {
-            let reason = error.map { String(describing: $0) } ?? "unknown reason"
-            Log.warning("TLS: certificate not trusted: \(reason)")
+        if SecTrustEvaluateWithError(trust, &error) {
+            return true
         }
-        return trusted
+        // A certificate the user trusted by its fingerprint stands in for
+        // the system's vouching.
+        let trustedFingerprints = CertificatePolicy.trustedFingerprints
+        if !trustedFingerprints.isEmpty,
+           let leaf = ((SecTrustCopyCertificateChain(trust) as? [SecCertificate]) ?? []).first {
+            let der = SecCertificateCopyData(leaf) as Data
+            let hex = SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
+            if trustedFingerprints.contains(hex) {
+                return true
+            }
+        }
+        let reason = error.map { String(describing: $0) } ?? "unknown reason"
+        Log.warning("TLS: certificate not trusted: \(reason)")
+        return false
     }
 }
