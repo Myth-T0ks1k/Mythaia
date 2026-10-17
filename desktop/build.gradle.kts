@@ -72,6 +72,17 @@ tasks.withType<Test>().configureEach {
     testLogging { showStandardStreams = false }
 }
 
+// The test classpath in a file, so scripts/mac-tun-smoke.sh can run one test
+// class as root without running Gradle, and filling its caches, as root.
+val writeTestClasspath by tasks.registering {
+    dependsOn("testClasses")
+    val classpath = sourceSets["test"].runtimeClasspath
+    val out = layout.buildDirectory.file("test-classpath.txt")
+    inputs.files(classpath)
+    outputs.file(out)
+    doLast { out.get().asFile.writeText(classpath.files.joinToString(File.pathSeparator)) }
+}
+
 compose.desktop {
     application {
         mainClass = "com.mythaia.desktop.MainKt"
