@@ -1,6 +1,7 @@
 package com.mythaia.desktop.service
 
 import com.mythaia.desktop.AppPaths
+import com.mythaia.desktop.Platform
 import com.mythaia.desktop.engine.TrafficStats
 import com.mythaia.desktop.tun.TunEngine
 import com.mythaia.vpn.NativeBridge
@@ -11,6 +12,10 @@ import com.sun.jna.platform.win32.Advapi32
 import com.sun.jna.platform.win32.Winsvc
 import java.io.File
 import java.io.PrintWriter
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.concurrent.thread
@@ -21,6 +26,10 @@ import kotlin.system.exitProcess
  * owns the TUN tunnel so the window never needs administrator rights. It
  * keeps no settings of its own — the window sends everything with each
  * start — and logs to ProgramData.
+ *
+ * On macOS the same process runs as a LaunchDaemon ([MacDaemon]), as root,
+ * on a Unix socket instead of the pipe, and keeps its files in
+ * /Library/Application Support/Mythaia.
  */
 object MythaiaService {
     private val logger = MythaiaLogger("ServiceMain")
@@ -43,6 +52,20 @@ object MythaiaService {
         exitProcess(0)
     }
 
+    /**
+     * Entry for `--service` on macOS, where launchd starts it as root. A
+     * `launchctl bootout` or a shutdown sends SIGTERM, and the hook puts the
+     * routes and DNS back before the JVM exits.
+     */
+    fun runAsDaemon(): Nothing {
+        prepare()
+        if (!TunEngine.isElevated()) logger.warning("Not running as root: TUN mode will be refused")
+        val service = createCore()
+        Runtime.getRuntime().addShutdownHook(Thread { service.stop() })
+        service.serve()
+        exitProcess(0)
+    }
+
     /** Entry for `--service-console`: the same loop in a plain process, for testing. */
     fun runInConsole(): Nothing {
         prepare()
@@ -53,14 +76,14 @@ object MythaiaService {
     }
 
     private fun prepare() {
-        val dataDir = AppPaths.programData.apply { mkdirs() }
+        val dataDir = AppPaths.serviceDataDir.apply { mkdirs() }
         AppPaths.overrideDataDir = dataDir
         MythaiaLogger.backend = FileLog(File(dataDir, "service.log"))
-        lockDown(dataDir)
+        if (Platform.isMac) lockDownMac(dataDir) else lockDown(dataDir)
         AppPaths.nativeLibrary()?.let { System.setProperty("mythaia.native.library", it.absolutePath) }
         runCatching { NativeBridge.nativeQuicVersion() }
         runCatching { TunEngine.cleanupLeftovers() }
-        logger.info("Service starting (elevated=${TunEngine.isElevated()}, wintun=${TunEngine.isAvailable()})")
+        logger.info("Service starting (elevated=${TunEngine.isElevated()}, tun=${if (TunEngine.isAvailable()) "available" else "missing ${TunEngine.missingComponent()}"})")
     }
 
     /**
@@ -85,6 +108,29 @@ object MythaiaService {
                 logger.error("Could not secure $path (${argv[2]}): ${result.output.lineSequence().firstOrNull { it.isNotBlank() } ?: "exit ${result.exitCode}"}")
                 return
             }
+        }
+    }
+
+    /**
+     * The macOS counterpart of [lockDown]: the daemon acts as root on what
+     * this directory holds, so it is root's, writable by no one else. The
+     * installer leaves it so; this repairs it if anything changed it since.
+     * A link in its place is not followed.
+     */
+    private fun lockDownMac(dir: File) {
+        try {
+            val path = dir.toPath()
+            if (Files.isSymbolicLink(path)) {
+                logger.error("$dir is a link; refusing to secure it")
+                return
+            }
+            val lookup = path.fileSystem.userPrincipalLookupService
+            val view = Files.getFileAttributeView(path, PosixFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS)
+            view.setOwner(lookup.lookupPrincipalByName("root"))
+            view.setGroup(lookup.lookupPrincipalByGroupName("wheel"))
+            view.setPermissions(PosixFilePermissions.fromString("rwxr-xr-x"))
+        } catch (e: Exception) {
+            logger.error("Could not secure $dir: ${e.message}")
         }
     }
 

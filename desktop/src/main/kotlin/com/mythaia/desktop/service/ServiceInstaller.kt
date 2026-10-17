@@ -1,6 +1,8 @@
 package com.mythaia.desktop.service
 
 import com.mythaia.desktop.AppPaths
+import com.mythaia.desktop.Platform
+import com.mythaia.desktop.tr
 import com.mythaia.desktop.tun.Elevation
 import com.mythaia.vpn.util.MythaiaLogger
 import com.sun.jna.Native
@@ -31,6 +33,8 @@ import java.io.File
  *
  * The service runs from its own copy of the app in Program Files
  * ([ServiceImage]), never from the folder the user started the app from.
+ * On macOS the same three calls install, update and remove the LaunchDaemon
+ * ([MacDaemon]).
  */
 object ServiceInstaller {
     const val INSTALL_ARG = "--install-service"
@@ -49,8 +53,8 @@ object ServiceInstaller {
     private const val HELPER_TIMEOUT_MS = 300_000
     private const val STOP_TIMEOUT_MS = 15_000L
 
-    /** Whether the service is registered with the service control manager. */
-    fun isInstalled(): Boolean = runCatching {
+    /** Whether the service is registered with the service control manager (on macOS: the daemon's plist is in place). */
+    fun isInstalled(): Boolean = if (Platform.isMac) MacDaemon.isInstalled() else runCatching {
         val manager = W32ServiceManager()
         manager.open(Winsvc.SC_MANAGER_CONNECT)
         try {
@@ -71,6 +75,7 @@ object ServiceInstaller {
      * the administrator prompt has been accepted.
      */
     fun install(onStarted: () -> Unit = {}): Outcome {
+        if (Platform.isMac) return MacDaemon.install(tr("service_admin_prompt"), onStarted)
         launcher() ?: return Outcome.NO_LAUNCHER
         val outcome = runElevated(INSTALL_ARG, onStarted)
         if (outcome != Outcome.DONE) return outcome
@@ -79,6 +84,7 @@ object ServiceInstaller {
 
     /** Stops and deletes the service and its copy of the app, from an elevated copy of the app. */
     fun uninstall(): Outcome {
+        if (Platform.isMac) return MacDaemon.uninstall(tr("service_admin_prompt"))
         val outcome = runElevated(UNINSTALL_ARG)
         if (outcome != Outcome.DONE) return outcome
         return if (isInstalled()) Outcome.FAILED else Outcome.DONE

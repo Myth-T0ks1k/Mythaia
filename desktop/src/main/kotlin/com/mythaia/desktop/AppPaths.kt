@@ -25,6 +25,10 @@ object AppPaths {
     val programData: File
         get() = File(System.getenv("ProgramData") ?: "C:/ProgramData", "Mythaia")
 
+    /** The service's own directory: ProgramData on Windows, root's `/Library/Application Support/Mythaia` on macOS. */
+    val serviceDataDir: File
+        get() = if (Platform.isMac) File(com.mythaia.desktop.service.MacDaemon.BASE_DIR) else programData
+
     val configs: File get() = File(dataDir, "configs.json")
     val subscriptions: File get() = File(dataDir, "subscriptions.json")
     val settings: File get() = File(dataDir, "settings.json")
