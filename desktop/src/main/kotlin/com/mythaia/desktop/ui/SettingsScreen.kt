@@ -104,7 +104,7 @@ fun SettingsScreen(state: AppState) {
                         confirmButton = {
                             Button(onClick = {
                                 state.needsElevation.value = false
-                                if (state.relaunchElevated()) kotlin.system.exitProcess(0)
+                                state.relaunchElevated()
                             }) { Text(tr("tun_relaunch")) }
                         },
                         dismissButton = { TextButton(onClick = { state.needsElevation.value = false }) { Text(tr("cancel")) } }

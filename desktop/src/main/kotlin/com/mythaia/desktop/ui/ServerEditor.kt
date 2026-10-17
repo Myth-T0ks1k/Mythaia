@@ -98,7 +98,6 @@ private val EditorEDITABLE_PROTOCOLS = listOf(
  * a setting the form does not show (ECH, a FinalMask fragment, early data,
  * headers, Sudoku padding tables) survives a save instead of being dropped.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ServerEditor(
     configuration: ProxyConfiguration?,
@@ -106,6 +105,15 @@ fun ServerEditor(
     onDismiss: () -> Unit,
     /** For a new server: the protocol picked on the protocol picker. */
     initialProtocol: OutboundProtocol? = null
+) = WithSafeClipboard { ServerEditorForm(configuration, onSave, onDismiss, initialProtocol) }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServerEditorForm(
+    configuration: ProxyConfiguration?,
+    onSave: (ProxyConfiguration) -> Unit,
+    onDismiss: () -> Unit,
+    initialProtocol: OutboundProtocol?
 ) {
     // Every field starts from the configuration being edited, so the sheet
     // opens on the right values instead of flashing defaults for a frame.

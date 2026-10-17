@@ -67,7 +67,7 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
             confirmButton = {
                 androidx.compose.material3.Button(onClick = {
                     state.needsElevation.value = false
-                    if (state.relaunchElevated()) kotlin.system.exitProcess(0)
+                    state.relaunchElevated()
                 }) { androidx.compose.material3.Text(tr("tun_relaunch")) }
             },
             dismissButton = { androidx.compose.material3.TextButton(onClick = { state.needsElevation.value = false }) { androidx.compose.material3.Text(tr("cancel")) } }

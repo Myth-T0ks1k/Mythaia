@@ -57,13 +57,39 @@ class DesktopStore {
     fun saveRules(rules: List<RouteRule>) =
         write(AppPaths.rules, json.encodeToString(ListSerializer(RouteRule.serializer()), rules))
 
+    /**
+     * Files that exist but could not be read this session. Writing one would
+     * replace the user's servers or settings with the empty defaults the app
+     * started from, so their saves go to a side file instead; see [write].
+     */
+    private val unreadable: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     private fun <T> read(file: File, serializer: kotlinx.serialization.KSerializer<T>): T? {
         if (!file.isFile) return null
+        // Something else may have the file open for a moment — an antivirus
+        // scan, a backup or sync client — so a read that fails gets retried
+        // before anything is concluded from it.
+        var text: String? = null
+        var lastError: Exception? = null
+        for (attempt in 0 until READ_ATTEMPTS) {
+            try {
+                text = file.readText(Charsets.UTF_8)
+                break
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt < READ_ATTEMPTS - 1) Thread.sleep(READ_RETRY_MS)
+            }
+        }
+        if (text == null) {
+            logger.error("${file.name} could not be opened: ${lastError?.message}. It is left as it is, and changes are saved beside it")
+            unreadable += file.absolutePath
+            return null
+        }
         return try {
-            json.decodeFromString(serializer, file.readText(Charsets.UTF_8))
+            json.decodeFromString(serializer, text)
         } catch (e: Exception) {
             logger.error("${file.name} could not be read: ${e.message}")
-            // Keep the broken file for the user; start from defaults.
+            // The text itself is broken: keep it for the user and start from defaults.
             runCatching { file.renameTo(File(file.parentFile, "${file.name}.corrupt-${System.currentTimeMillis()}")) }
             null
         }
@@ -71,6 +97,10 @@ class DesktopStore {
 
     @Synchronized
     internal fun write(file: File, text: String) {
+        if (file.absolutePath in unreadable) {
+            runCatching { File(file.parentFile, "${file.name}.unsaved").writeText(text, Charsets.UTF_8) }
+            return
+        }
         val temp = File(file.parentFile, "${file.name}.tmp")
         try {
             temp.writeText(text, Charsets.UTF_8)
@@ -104,5 +134,7 @@ class DesktopStore {
     companion object {
         private const val MOVE_ATTEMPTS = 5
         private const val MOVE_RETRY_MS = 50L
+        private const val READ_ATTEMPTS = 10
+        private const val READ_RETRY_MS = 200L
     }
 }

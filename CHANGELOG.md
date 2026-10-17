@@ -4,6 +4,53 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Hysteria2, TUIC and Nowhere could crash the app.** ngtcp2 keeps the stream data it sends and
+  reads it again to retransmit a lost packet, but the native bridge freed it as soon as the packet
+  was built. On a path that loses packets the next retransmission read freed memory: the app
+  closed at once with an access violation in `mythaia_native.dll` (reproduced in seconds with
+  uploads over a link dropping 5 % of packets), or, when it did not, sent leftover heap bytes to
+  the server inside the stream. The data now stays until the server acknowledges it. Android has
+  the same fix.
+- A Hysteria2 or TUIC server that stops answering no longer fills the local proxy: dials no longer
+  wait in line for one 10-second handshake each, a failed attempt is retried after 3–15 seconds
+  instead of by every waiting connection, and every dial through the proxy gives up after 30
+  seconds. Sessions are no longer left open behind a server switch or a cancelled test, and UDP
+  stops queuing a coroutine per packet while the server is unreachable.
+- QUIC sessions credit their shared receive window as data is read, not in each stream's batch,
+  so connections that go quiet partway through a download can no longer hold the window shut
+  for every other stream on the session.
+- **Windows:** copy or paste in a text field while another program held the clipboard (Punto
+  Switcher, clipboard managers, remote desktop) closed the window. Any other error inside the
+  window is now logged and the window rebuilt instead of closed.
+- **Windows:** the app did not start on PCs with Java Access Bridge turned on (screen readers turn
+  it on).
+- **Windows:** turning TUN on could leave no copy of the app running; the elevated copy now waits
+  for the old one to let go, and the UAC prompt no longer freezes the window.
+- **Windows:** ending a TUN session could crash the app when the packet reader was preempted at
+  the wrong moment; command-line tools that hang no longer block connecting; a blocked
+  `jnidispatch.dll` or `wintun.dll` is reported instead of closing the window or leaving TUN stuck
+  in "Connecting"; a busy service pipe no longer drops a working service tunnel.
+- **Windows:** the local proxy survives a failed `accept()`; direct connections no longer take the
+  threads that dials and tests need; Exit no longer freezes the window while disconnecting.
+- **Windows:** an Auto round or ping stopped by a reconnect, pin or Disconnect no longer marks
+  unmeasured servers Failed, which "Remove failed" then deleted, nor switches away from a server
+  just pinned.
+- **Windows:** a settings or server file that another program had open at start is no longer
+  replaced with empty defaults.
+- **Windows:** NIO no longer depends on AF_UNIX sockets, which fail on some PCs.
+
+### Added
+
+- **Windows: crash reports.** Uncaught errors go to `%APPDATA%\Mythaia\logs\mythaia.log` with their
+  stack, and the report the JVM writes when it dies in native code is copied there on the next
+  start, with the line that names the cause. The first log line now carries the Windows and Java
+  versions, the CPU count and the heap size. After a crash in the graphics driver, the app draws
+  with the CPU (`render-api` in the data folder; delete it to go back).
+
 ## [1.3.0] — 2026-10-16
 
 ### Added

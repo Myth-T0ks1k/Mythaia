@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -65,6 +66,9 @@ class TunEngine(val stats: TrafficStats) {
 
     private var stack: TunStack? = null
     private var adapter: WintunAdapter? = null
+
+    // Read by the lwIP thread in [host].
+    @Volatile
     private var session: WintunAdapter.Session? = null
     private var reader: Thread? = null
     private val routes = WindowsRoutes(AppPaths.tunRouteSnapshot)
@@ -98,12 +102,16 @@ class TunEngine(val stats: TrafficStats) {
             try {
                 startLocked(settings, configuration)
                 _status.value = Status.RUNNING
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: a JNA link error (jnidispatch.dll
+                // blocked by antivirus) is an Error, and letting it past here
+                // left the engine in STARTING, "busy" until the app restarted.
                 val message = e.message ?: e.toString()
                 logger.error("TUN start failed: $message")
                 _lastError.value = message
                 runCatching { teardownLocked() }
                 _status.value = Status.STOPPED
+                if (e is VirtualMachineError) throw e
                 throw (e as? IOException) ?: IOException(message, e)
             }
         }
@@ -193,13 +201,22 @@ class TunEngine(val stats: TrafficStats) {
         session = newSession
         readerRunning = true
         reader = Thread({
-            newSession.readLoop(keepRunning = { readerRunning }) { batch ->
-                var bytes = 0L
-                for (p in batch) bytes += p.size
-                stats.up.addAndGet(bytes)
-                newStack.input(batch)
+            try {
+                newSession.readLoop(keepRunning = { readerRunning }) { batch ->
+                    var bytes = 0L
+                    for (p in batch) bytes += p.size
+                    stats.up.addAndGet(bytes)
+                    try {
+                        newStack.input(batch)
+                    } catch (e: RejectedExecutionException) {
+                        // The stack's executor shut down between teardown's
+                        // stop() and this batch; the reader is about to quit.
+                    }
+                }
+                logger.debug("Reader finished")
+            } catch (t: Throwable) {
+                logger.error("Reader failed: ${t.message ?: t}")
             }
-            logger.debug("Reader finished")
         }, "wintun-reader").apply { isDaemon = true }
         reader?.start()
         logger.info("TUN up: ${config.name} (${config.outboundProtocol.displayName}), mode=${if (settings.isGlobal) "global" else "rule"}")
@@ -210,14 +227,33 @@ class TunEngine(val stats: TrafficStats) {
         // Flows first, while the session can still carry their RSTs.
         stack?.let { s ->
             val done = CountDownLatch(1)
-            s.stop { done.countDown() }
-            if (!done.await(5, TimeUnit.SECONDS)) logger.warning("lwIP shutdown did not finish in time")
+            try {
+                s.stop { done.countDown() }
+                if (!done.await(5, TimeUnit.SECONDS)) logger.warning("lwIP shutdown did not finish in time")
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (t: Throwable) {
+                logger.warning("lwIP shutdown: ${t.message ?: t}")
+            }
         }
         stack = null
+        // The reader sees readerRunning within one read wait (250 ms) and
+        // leaves; join it before the session goes, since WintunEndSession
+        // frees the ring it reads. A reader still busy after the wait (stuck
+        // handing a batch to the stack) is not inside the session: end()
+        // waits for it to be out of the ring, and it then finds the session
+        // ended and quits.
+        reader?.let { r ->
+            try {
+                r.join(READER_JOIN_MS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            if (r.isAlive) logger.warning("Reader did not finish in ${READER_JOIN_MS} ms; ending the session under it")
+        }
+        reader = null
         session?.end()
         session = null
-        reader?.let { runCatching { it.join(2000) } }
-        reader = null
         adapter?.close()
         adapter = null
         runCatching { routes.restore() }.onFailure { logger.warning("Route restore: ${it.message}") }
@@ -284,6 +320,7 @@ class TunEngine(val stats: TrafficStats) {
         /** Fixed so Windows keeps one network profile for the adapter across runs. */
         private const val ADAPTER_GUID = "{9E2F1A8C-4B6D-4C3E-9F0A-2D7B5C1E8A4F}"
         private val FALLBACK_DNS = listOf("1.1.1.1", "8.8.8.8")
+        private const val READER_JOIN_MS = 2_000L
 
         /** Whether this process may create the adapter. */
         fun isElevated(): Boolean = Elevation.isElevated()

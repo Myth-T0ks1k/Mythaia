@@ -23,12 +23,15 @@ import com.mythaia.vpn.util.DnsUpstream
 import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.GeoIpDatabase
 import com.mythaia.vpn.util.MythaiaLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -203,13 +206,24 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /** Keeps [serviceAvailable]/[serviceInstalled] fresh and, while the service runs our tunnel, mirrors its counters and log. */
     private suspend fun serviceWatchLoop() {
+        // Status polls in a row that got no answer. The service answers one
+        // request at a time, and a server switch (DNS, routes) keeps the pipe
+        // busy for seconds, so a single silence is not a dead service: taking
+        // it for one disconnected a working tunnel during Auto rounds.
+        var unanswered = 0
         while (scope.isActive) {
             val installed = runCatching { com.mythaia.desktop.service.ServiceInstaller.isInstalled() }.getOrDefault(false)
             serviceInstalled.value = installed
             val remote = remoteTun
             if (remote != null) {
                 val status = com.mythaia.desktop.service.ServiceClient.status(remoteLogSeq)
+                if (status == null && ++unanswered < SERVICE_SILENCE_LIMIT) {
+                    delay(1_000)
+                    continue
+                }
+                if (status != null) unanswered = 0
                 if (status == null || !status.running) {
+                    unanswered = 0
                     // The service dropped the tunnel (stopped, crashed, or restarted).
                     logger.warning("Service tunnel is gone; disconnecting")
                     remoteTun = null
@@ -451,11 +465,20 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         scope.launch { startConnection() }
     }
 
-    /** Hands the app to an elevated copy of itself for TUN mode. */
-    fun relaunchElevated(): Boolean {
-        val ok = com.mythaia.desktop.tun.TunEngine.relaunchElevated(listOf("--tun"))
-        if (!ok) notify(tr("tun_unavailable", com.mythaia.desktop.tun.Elevation.lastError ?: "?"))
-        return ok
+    /**
+     * Hands the app to an elevated copy of itself for TUN mode and exits once
+     * that copy has started. Off the UI thread: the UAC prompt can stay up for
+     * as long as the user leaves it, and the window froze into "Not
+     * responding" behind it.
+     */
+    fun relaunchElevated() {
+        scope.launch(Dispatchers.IO) {
+            if (com.mythaia.desktop.tun.TunEngine.relaunchElevated(listOf("--tun"))) {
+                logger.info("Elevated instance launched; this one exits")
+                kotlin.system.exitProcess(0)
+            }
+            notify(tr("tun_unavailable", com.mythaia.desktop.tun.Elevation.lastError ?: "?"))
+        }
     }
 
     private fun pruneSelection() {
@@ -656,6 +679,15 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                     }
                 }
             } catch (e: Throwable) {
+                if (e is CancellationException && !currentCoroutineContext().isActive) {
+                    // A reconnect, a pin, a group change or Disconnect stopped
+                    // the round. Carrying on used to mark every unmeasured
+                    // server Failed (which "Remove failed" then deleted), report
+                    // that no server answered, and switch away from the server
+                    // just pinned. What was not measured goes back to unmeasured.
+                    _latencies.update { m -> m - configs.filter { m[it.id] is LatencyResult.Testing }.map { it.id }.toSet() }
+                    throw e
+                }
                 logger.warning("Auto round failed: ${e.message ?: e}")
                 _latencies.update { m -> m + configs.filter { m[it.id] is LatencyResult.Testing }.associate { it.id to LatencyResult.Failed } }
             }
@@ -720,12 +752,17 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
     }
 
-    /** A test that cannot throw: a missing native library reports Failed, not an Error. */
+    /**
+     * A test that cannot throw: a missing native library reports Failed, not
+     * an Error. Cancellation of the caller is the exception — a probe stopped
+     * by a reconnect or Disconnect did not find the server down.
+     */
     private suspend fun safeTest(config: ProxyConfiguration, kind: LatencyKind): LatencyResult =
         try {
             if (!nativeAvailable && config.outboundProtocol.needsNative()) LatencyResult.Failed
             else LatencyTester.test(config, kind)
         } catch (e: Throwable) {
+            if (e is CancellationException) currentCoroutineContext().ensureActive()
             logger.warning("Test of ${config.name} failed: ${e.message ?: e}")
             LatencyResult.Failed
         }
@@ -747,6 +784,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                     if (kind == LatencyKind.HTTP) httpLatencies.update { it + (id to result) }
                 }
             } catch (e: Throwable) {
+                // A newer round replaced this one and has marked the servers
+                // Testing itself; overwriting them with Failed would undo that.
+                if (e is CancellationException) currentCoroutineContext().ensureActive()
                 logger.warning("Ping round failed: ${e.message ?: e}")
                 _latencies.update { m -> m + testable.filter { m[it.id] is LatencyResult.Testing }.associate { it.id to LatencyResult.Failed } }
             }
@@ -1260,6 +1300,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         private const val AUTO_SWITCH_MARGIN_MS = 50
         private const val PROBE_FIRST_DELAY_MS = 2_500L
         private const val PROBE_INTERVAL_MS = 60_000L
+
+        /** Unanswered service polls (one a second) before its tunnel counts as gone. */
+        private const val SERVICE_SILENCE_LIMIT = 3
     }
 }
 

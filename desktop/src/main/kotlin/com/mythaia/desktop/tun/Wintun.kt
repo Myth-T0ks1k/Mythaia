@@ -13,6 +13,7 @@ import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.LongByReference
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * `wintun.dll` as JNA sees it (Wintun 0.14 API). Every function is
@@ -111,30 +112,37 @@ class WintunAdapter private constructor(
     /**
      * A running session. Reads happen on whichever thread calls [readLoop];
      * [send] may be called from one thread at a time (the lwIP thread).
+     * [end] may be called from any thread at any time: it waits until
+     * neither of them is inside the session before freeing it.
      */
     inner class Session internal constructor(private var session: Pointer?) {
         private val readEvent: WinNT.HANDLE? = session?.let { lib.WintunGetReadWaitEvent(it) }?.let { WinNT.HANDLE(it) }
-        @Volatile
-        private var open = true
+        private val open = AtomicBoolean(true)
         private val sendLock = Any()
 
-        val isOpen: Boolean get() = open
+        /**
+         * Held by the reader for every receive and every wait on [readEvent].
+         * WintunEndSession frees the ring the packets point into and closes
+         * the event, so a reader preempted between its loop check and the
+         * receive call would otherwise touch freed memory and take the JVM
+         * down with an access violation.
+         */
+        private val receiveLock = Any()
+
+        val isOpen: Boolean get() = open.get()
 
         /**
          * Receives packets until [keepRunning] returns false or the session
          * ends. Packets are handed over in batches of up to [batchSize],
-         * each array holding exactly one IP packet.
+         * each array holding exactly one IP packet. [onBatch] runs outside
+         * the session's locks, so a slow consumer never holds up [end].
          */
         fun readLoop(keepRunning: () -> Boolean, batchSize: Int = 64, onBatch: (List<ByteArray>) -> Unit) {
             val size = IntByReference()
             val batch = ArrayList<ByteArray>(batchSize)
-            while (keepRunning() && open) {
-                val s = session ?: break
-                val packet = lib.WintunReceivePacket(s, size)
-                if (packet != null) {
-                    val n = size.value
-                    if (n in 1..MAX_PACKET_SIZE) batch.add(packet.getByteArray(0, n))
-                    lib.WintunReleaseReceivePacket(s, packet)
+            while (keepRunning() && open.get()) {
+                val step = receiveOne(size, batch)
+                if (step == RECEIVED) {
                     if (batch.size >= batchSize) {
                         onBatch(ArrayList(batch))
                         batch.clear()
@@ -145,24 +153,51 @@ class WintunAdapter private constructor(
                     onBatch(ArrayList(batch))
                     batch.clear()
                 }
-                when (val error = Native.getLastError()) {
-                    ERROR_NO_MORE_ITEMS -> {
-                        val event = readEvent ?: break
-                        Kernel32.INSTANCE.WaitForSingleObject(event, READ_WAIT_MS)
-                    }
-                    ERROR_HANDLE_EOF -> break
-                    else -> {
-                        logger.warning("WintunReceivePacket failed: error $error")
-                        break
-                    }
-                }
+                if (step != RING_EMPTY || !awaitPackets()) break
             }
             if (batch.isNotEmpty()) onBatch(ArrayList(batch))
         }
 
+        /** Moves one packet from the ring into [batch]; [RECEIVED], [RING_EMPTY] or [ENDED]. */
+        private fun receiveOne(size: IntByReference, batch: MutableList<ByteArray>): Int {
+            synchronized(receiveLock) {
+                val s = session ?: return ENDED
+                val packet = lib.WintunReceivePacket(s, size)
+                if (packet != null) {
+                    val n = size.value
+                    if (n in 1..MAX_PACKET_SIZE) batch.add(packet.getByteArray(0, n))
+                    lib.WintunReleaseReceivePacket(s, packet)
+                    return RECEIVED
+                }
+                return when (val error = Native.getLastError()) {
+                    ERROR_NO_MORE_ITEMS -> RING_EMPTY
+                    ERROR_HANDLE_EOF -> ENDED
+                    else -> {
+                        logger.warning("WintunReceivePacket failed: error $error")
+                        ENDED
+                    }
+                }
+            }
+        }
+
+        /**
+         * Waits for the driver to signal new packets, at most [READ_WAIT_MS].
+         * False once the session is ending. The wait holds [receiveLock] so
+         * the event cannot be closed under it; [end] signals the event first
+         * to cut the wait short.
+         */
+        private fun awaitPackets(): Boolean {
+            synchronized(receiveLock) {
+                if (!open.get() || session == null) return false
+                val event = readEvent ?: return false
+                Kernel32.INSTANCE.WaitForSingleObject(event, READ_WAIT_MS)
+                return true
+            }
+        }
+
         /** Queues one packet for the OS; a full ring drops it, as a NIC would. Returns false when dropped. */
         fun send(packet: ByteArray, length: Int): Boolean {
-            if (!open || length <= 0 || length > MAX_PACKET_SIZE) return false
+            if (!open.get() || length <= 0 || length > MAX_PACKET_SIZE) return false
             synchronized(sendLock) {
                 val s = session ?: return false
                 val buffer = lib.WintunAllocateSendPacket(s, length) ?: return false
@@ -172,14 +207,22 @@ class WintunAdapter private constructor(
             }
         }
 
+        /**
+         * Frees the session once no thread is inside it. Blocks for at most
+         * one in-flight send and one receive; a reader parked on the event is
+         * woken rather than waited out. Idempotent.
+         */
         fun end() {
-            if (!open) return
-            open = false
-            synchronized(sendLock) {
-                val s = session ?: return
-                session = null
-                runCatching { lib.WintunEndSession(s) }
-                    .onFailure { logger.warning("WintunEndSession: ${it.message}") }
+            if (!open.compareAndSet(true, false)) return
+            // Still valid here: only WintunEndSession below closes it.
+            readEvent?.let { event -> runCatching { Kernel32.INSTANCE.SetEvent(event) } }
+            synchronized(receiveLock) {
+                synchronized(sendLock) {
+                    val s = session ?: return
+                    session = null
+                    runCatching { lib.WintunEndSession(s) }
+                        .onFailure { logger.warning("WintunEndSession: ${it.message}") }
+                }
             }
         }
     }
@@ -191,6 +234,11 @@ class WintunAdapter private constructor(
         private const val READ_WAIT_MS = 250
         private const val ERROR_NO_MORE_ITEMS = 259
         private const val ERROR_HANDLE_EOF = 38
+
+        // What one receive under the session's lock found.
+        private const val RECEIVED = 0
+        private const val RING_EMPTY = 1
+        private const val ENDED = 2
 
         @Volatile
         private var loaded: WintunLib? = null
@@ -204,7 +252,14 @@ class WintunAdapter private constructor(
         internal fun load(dll: File): WintunLib {
             loaded?.let { if (loadedFrom == dll) return it }
             if (!dll.isFile) throw IOException("wintun.dll not found at $dll")
-            val lib = Native.load(dll.absolutePath, WintunLib::class.java)
+            val lib = try {
+                Native.load(dll.absolutePath, WintunLib::class.java)
+            } catch (e: LinkageError) {
+                // An Error, not an Exception: JNA's own jnidispatch.dll blocked
+                // in %TEMP% (antivirus, AppLocker), or wintun.dll refused. It
+                // must reach the caller as a start failure like any other.
+                throw IOException("Cannot load wintun.dll: ${e.message ?: e}", e)
+            }
             val callback = object : WintunLib.LoggerCallback {
                 override fun invoke(level: Int, timestamp: Long, message: Pointer?) {
                     val text = message?.getWideString(0) ?: return

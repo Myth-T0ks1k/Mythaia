@@ -27,6 +27,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,12 +41,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.Clipboard
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.NativeClipboard
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.mythaia.data.network.LatencyResult
 import com.mythaia.desktop.tr
+import kotlinx.coroutines.CancellationException
 
 /** The Mythaia mark: three feather strokes. */
 @Composable
@@ -194,6 +200,52 @@ object UiFocus {
     val textField = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
+/**
+ * The system clipboard, minus the exception AWT throws when another program
+ * has it open.
+ *
+ * Windows lets one process hold the clipboard at a time, and AWT does not
+ * retry: while a clipboard manager, Punto Switcher, an RDP or AnyDesk session
+ * or Office has it open, reading or writing it throws
+ * `IllegalStateException: cannot open system clipboard`. A text field reads
+ * it on Ctrl+V and on a right click and writes it on Ctrl+C and Ctrl+X, from
+ * a coroutine nothing guards, so the exception reached the window's
+ * exception handler and the window closed. Here the paste finds nothing and
+ * the copy does nothing, as if the key had been missed.
+ */
+private class SafeClipboard(private val inner: Clipboard) : Clipboard {
+    override suspend fun getClipEntry(): ClipEntry? = try {
+        inner.getClipEntry()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    override suspend fun setClipEntry(clipEntry: ClipEntry?) {
+        try {
+            inner.setClipEntry(clipEntry)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    override val nativeClipboard: NativeClipboard get() = inner.nativeClipboard
+}
+
+/**
+ * Text fields below use [SafeClipboard]. Provided at each field rather than
+ * once for the window: a dialog or popup layer provides the platform
+ * clipboard afresh for its own content.
+ */
+@Composable
+fun WithSafeClipboard(content: @Composable () -> Unit) {
+    val current = LocalClipboard.current
+    val safe = remember(current) { current as? SafeClipboard ?: SafeClipboard(current) }
+    CompositionLocalProvider(LocalClipboard provides safe, content = content)
+}
+
 /** A single-line field in the Wing shape. */
 @Composable
 fun WingField(
@@ -205,7 +257,7 @@ fun WingField(
     singleLine: Boolean = true,
     minLines: Int = 1,
     enabled: Boolean = true
-) {
+) = WithSafeClipboard {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -228,7 +280,7 @@ fun DropdownField(
     options: List<Pair<String, String>>,
     modifier: Modifier = Modifier.fillMaxWidth(),
     onSelect: (String) -> Unit
-) {
+) = WithSafeClipboard {
     var expanded by remember { mutableStateOf(false) }
     val displayText = options.firstOrNull { it.first == selectedValue }?.second ?: selectedValue
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {

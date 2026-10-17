@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -152,8 +153,15 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
             val client = try {
                 withContext(io) { server.accept() }
             } catch (e: IOException) {
-                if (running.get()) logger.debug("accept: ${e.message}")
-                break
+                if (!running.get() || server.isClosed) break
+                // A failed accept is not a dead listener: Windows fails one
+                // under load (no buffer space, too many sockets) or when a
+                // filter driver resets the connection being accepted. Leaving
+                // the loop here left the port bound with nobody accepting, the
+                // app showing Connected, and the system proxy pointing at it.
+                logger.warning("accept on port ${server.localPort}: ${e.message}")
+                delay(ACCEPT_RETRY_MS)
+                continue
             }
             val remote = client.inetAddress
             if (!admit(client, remote)) {
@@ -161,22 +169,60 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 continue
             }
             clients += client
-            current.launch {
-                stats.connections.incrementAndGet()
-                try {
-                    client.tcpNoDelay = true
-                    handle(client)
-                } catch (_: CancellationException) {
-                } catch (e: Exception) {
-                    logger.debug("connection: ${e.message ?: e}")
-                } finally {
-                    stats.connections.decrementAndGet()
-                    clients -= client
-                    release(remote)
-                    runCatching { client.close() }
+            try {
+                current.launch {
+                    stats.connections.incrementAndGet()
+                    try {
+                        client.tcpNoDelay = true
+                        handle(client)
+                    } catch (_: CancellationException) {
+                    } catch (e: Exception) {
+                        logger.debug("connection: ${e.message ?: e}")
+                    } finally {
+                        stats.connections.decrementAndGet()
+                        clients -= client
+                        release(remote)
+                        runCatching { client.close() }
+                    }
                 }
+            } catch (e: Throwable) {
+                // No thread for it (the system is out of them, or the pool was
+                // shut down by stop): the slot it took must not stay taken.
+                clients -= client
+                release(remote)
+                runCatching { client.close() }
+                if (e is CancellationException) throw e
+                logger.warning("Cannot serve a connection: $e")
+                delay(ACCEPT_RETRY_MS)
             }
         }
+    }
+
+    /**
+     * [Dialer.dial] with a deadline. Nothing reads the client while a dial
+     * runs, so a dial that never finished — a server that went silent, a
+     * queue of reconnects behind one — held its connection slot for good,
+     * until the 1024 slots were gone and the proxy refused everything.
+     */
+    private suspend fun dial(host: String, port: Int, initialData: ByteArray?): Upstream? =
+        withDeadline { dialer.dial(host, port, initialData) }
+
+    private suspend fun dialUdp(host: String, port: Int): Upstream? =
+        withDeadline { dialer.dialUdp(host, port) }
+
+    private suspend fun withDeadline(open: suspend () -> Upstream?): Upstream? {
+        // The result lands outside the timeout block: one that arrives just as
+        // the deadline passes is closed here instead of leaking.
+        var opened: Upstream? = null
+        val finished = withTimeoutOrNull(DIAL_TIMEOUT_MS) {
+            opened = open()
+            true
+        }
+        if (finished == null) {
+            opened?.close()
+            throw IOException("no connection within ${DIAL_TIMEOUT_MS / 1000} s")
+        }
+        return opened
     }
 
     /**
@@ -260,7 +306,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                     write(output, socksReply(REP_SUCCESS))
                     val first = readFirstData(client, input)
                     val upstream = try {
-                        dialer.dial(host, port, first)
+                        dial(host, port, first)
                     } catch (e: Exception) {
                         logger.debug("dial $host:$port failed: ${e.message ?: e}")
                         null
@@ -271,7 +317,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                     return
                 }
                 val upstream = try {
-                    dialer.dial(host, port, null)
+                    dial(host, port, null)
                 } catch (e: Exception) {
                     logger.debug("dial $host:$port failed: ${e.message ?: e}")
                     write(output, socksReply(REP_HOST_UNREACHABLE))
@@ -362,7 +408,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 val payload = data.copyOfRange(headerLength, data.size)
                 val upstream = upstreams[key] ?: run {
                     val created = try {
-                        dialer.dialUdp(host, port)
+                        dialUdp(host, port)
                     } catch (e: Exception) {
                         logger.debug("udp dial $key: ${e.message ?: e}")
                         null
@@ -479,7 +525,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 write(output, "$version 200 Connection established\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
                 val first = readFirstData(client, input, head.remainder)
                 val upstream = try {
-                    dialer.dial(host, port, first)
+                    dial(host, port, first)
                 } catch (e: Exception) {
                     logger.debug("dial $host:$port failed: ${e.message ?: e}")
                     null
@@ -490,7 +536,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                 return
             }
             val upstream = try {
-                dialer.dial(host, port, null)
+                dial(host, port, null)
             } catch (e: Exception) {
                 logger.debug("dial $host:$port failed: ${e.message ?: e}")
                 write(output, httpError(502, "Bad Gateway"))
@@ -559,7 +605,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         val initial = forwarded.toString().toByteArray(Charsets.ISO_8859_1) + head.remainder
 
         val upstream = try {
-            dialer.dial(host, port, initial)
+            dial(host, port, initial)
         } catch (e: Exception) {
             logger.debug("dial $host:$port failed: ${e.message ?: e}")
             write(output, httpError(502, "Bad Gateway"))
@@ -761,6 +807,9 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         private const val IDLE_TIMEOUT_MS = 10 * 60_000L
         private const val IDLE_CHECK_MS = 30_000L
         private const val MAX_CONNECTIONS = 1024
+        /** A dial past this is given up, so its slot is not held for good; see [dial]. */
+        private const val DIAL_TIMEOUT_MS = 30_000L
+        private const val ACCEPT_RETRY_MS = 500L
         private const val MAX_PER_CLIENT = 256
         private const val REFUSAL_LOG_INTERVAL_MS = 10_000L
         private const val MAX_HEAD = 64 * 1024

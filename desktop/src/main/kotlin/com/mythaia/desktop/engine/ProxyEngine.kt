@@ -162,6 +162,16 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
     }
 }
 
+/**
+ * Where the direct sockets block. Each direct connection holds a thread in
+ * a blocking read for as long as it lives, and on Dispatchers.IO, which
+ * stops at 64 threads, 64 of them starved everything else that waits there
+ * — dials through the server, latency tests, subscription updates — so the
+ * proxy stalled behind a rule that sends traffic direct. A view of IO with
+ * its own, higher ceiling shares IO's threads without that limit.
+ */
+private val DirectIo = Dispatchers.IO.limitedParallelism(1024)
+
 /** A server connection as the relay sees it. */
 class ProxyUpstream(private val connection: ProxyConnection) : Upstream {
     override suspend fun send(data: ByteArray) = connection.send(data)
@@ -175,12 +185,12 @@ class DirectUpstream private constructor(private val socket: Socket) : Upstream 
     private val output = socket.getOutputStream()
     private val buffer = ByteArray(32 * 1024)
 
-    override suspend fun send(data: ByteArray) = withContext(Dispatchers.IO) {
+    override suspend fun send(data: ByteArray) = withContext(DirectIo) {
         output.write(data)
         output.flush()
     }
 
-    override suspend fun receive(): ByteArray? = withContext(Dispatchers.IO) {
+    override suspend fun receive(): ByteArray? = withContext(DirectIo) {
         val n = input.read(buffer)
         if (n < 0) null else buffer.copyOf(n)
     }
@@ -192,7 +202,7 @@ class DirectUpstream private constructor(private val socket: Socket) : Upstream 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 10_000
 
-        suspend fun connect(host: String, port: Int, initialData: ByteArray?): DirectUpstream = withContext(Dispatchers.IO) {
+        suspend fun connect(host: String, port: Int, initialData: ByteArray?): DirectUpstream = withContext(DirectIo) {
             val address = if (DnsCache.isIpAddress(host)) host
             else DnsCache.resolveHost(host) ?: throw IOException("cannot resolve $host")
             val socket = Socket()
@@ -217,11 +227,11 @@ class DirectUpstream private constructor(private val socket: Socket) : Upstream 
 class DirectUdpUpstream private constructor(private val socket: DatagramSocket, private val target: InetSocketAddress) : Upstream {
     private val buffer = ByteArray(65_535)
 
-    override suspend fun send(data: ByteArray) = withContext(Dispatchers.IO) {
+    override suspend fun send(data: ByteArray) = withContext(DirectIo) {
         socket.send(DatagramPacket(data, data.size, target))
     }
 
-    override suspend fun receive(): ByteArray? = withContext(Dispatchers.IO) {
+    override suspend fun receive(): ByteArray? = withContext(DirectIo) {
         val packet = DatagramPacket(buffer, buffer.size)
         socket.receive(packet)
         packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
@@ -232,7 +242,7 @@ class DirectUdpUpstream private constructor(private val socket: DatagramSocket, 
     }
 
     companion object {
-        suspend fun connect(host: String, port: Int): DirectUdpUpstream = withContext(Dispatchers.IO) {
+        suspend fun connect(host: String, port: Int): DirectUdpUpstream = withContext(DirectIo) {
             val address = if (DnsCache.isIpAddress(host)) host
             else DnsCache.resolveHost(host) ?: throw IOException("cannot resolve $host")
             val socket = DatagramSocket(null)

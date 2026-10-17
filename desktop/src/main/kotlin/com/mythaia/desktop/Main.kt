@@ -1,17 +1,26 @@
 package com.mythaia.desktop
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DefaultWindowExceptionHandlerFactory
+import androidx.compose.ui.window.LocalWindowExceptionHandlerFactory
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowExceptionHandler
+import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.mythaia.desktop.engine.SystemProxy
@@ -36,12 +45,15 @@ private object InstanceLock {
     var lock: FileLock? = null
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
-    ensureAsciiSocketTempDir()
+    keepNioOffAfUnix()
     // The service process: no window, no user data, just the tunnel behind a pipe.
     if (args.contains("--service")) com.mythaia.desktop.service.MythaiaService.runUnderScm()
     if (args.contains("--service-console")) com.mythaia.desktop.service.MythaiaService.runInConsole()
     val logger = installLogging()
+    val graphicsCrashed = CrashReporting.install()
+    chooseRenderer(logger, graphicsCrashed)
     // The elevated helper the running app starts to register or remove the service: no window, no lock.
     if (args.contains(com.mythaia.desktop.service.ServiceInstaller.INSTALL_ARG)) {
         exitProcess(com.mythaia.desktop.service.ServiceInstaller.installHere())
@@ -49,8 +61,10 @@ fun main(args: Array<String>) {
     if (args.contains(com.mythaia.desktop.service.ServiceInstaller.UNINSTALL_ARG)) {
         exitProcess(com.mythaia.desktop.service.ServiceInstaller.uninstallHere())
     }
-    InstanceLock.lock = acquireInstanceLock()
-    if (InstanceLock.lock == null) {
+    // The elevated copy started for TUN mode replaces a window that is still
+    // shutting down and holds the lock for a few seconds more; giving up at
+    // once left neither of them running.
+    if (!acquireInstanceLock(logger, waitMillis = if (args.contains("--tun")) 15_000 else 0)) {
         // Ask the running instance to show itself (and import a link we were given), then leave.
         args.firstOrNull { DeepLinks.isLink(it) }?.let { runCatching { AppPaths.importRequest.writeText(DeepLinks.extract(it)) } }
         runCatching { AppPaths.showRequest.writeText(System.currentTimeMillis().toString()) }
@@ -94,10 +108,21 @@ fun main(args: Array<String>) {
         val trayOff = painterResource("icon/mythaia_tray_off.png")
         val trayIcon = if (connection is ConnectionState.Connected) trayOn else trayOff
         val front by state.bringToFront.collectAsState()
+        // Bumped to build the window afresh after an exception in it.
+        var windowGeneration by remember { mutableStateOf(0) }
+        val windowErrors = remember { WindowErrors() }
 
+        // Disconnecting can wait on a TUN or service connect for seconds; on
+        // the UI thread that froze the window into "Not responding", which
+        // people end from Task Manager — and that leaves the system proxy set.
         val exit = {
-            state.shutdown()
-            exitApplication()
+            if (Exiting.started.compareAndSet(false, true)) {
+                state.windowVisible.value = false
+                Thread({
+                    runCatching { state.shutdown() }
+                    javax.swing.SwingUtilities.invokeLater { exitApplication() }
+                }, "exit").start()
+            }
         }
 
         Tray(
@@ -115,64 +140,128 @@ fun main(args: Array<String>) {
             }
         )
 
-        Window(
-            onCloseRequest = {
-                state.rememberWindowSize(windowState.size.width.value.toInt(), windowState.size.height.value.toInt())
-                if (settings.closeToTray) state.windowVisible.value = false else exit()
-            },
-            visible = visible,
-            title = tr("app_name"),
-            icon = appIcon,
-            state = windowState,
-            onKeyEvent = { event ->
-                if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@Window false
-                when {
-                    event.isCtrlPressed && event.key == androidx.compose.ui.input.key.Key.V && !com.mythaia.desktop.ui.UiFocus.textField.value -> { state.importFromClipboard(); true }
-                    event.key == androidx.compose.ui.input.key.Key.F5 -> { state.pingGroup(state.activeGroupId, com.mythaia.data.network.LatencyKind.HTTP); true }
-                    else -> false
+        // An exception in the window — composing, drawing, a click — used to
+        // close it with Compose's default handler, which to the user is the app
+        // vanishing. It is logged and the window built again instead; only an
+        // error that keeps coming back gets the default treatment.
+        val exceptionHandlerFactory = remember {
+            WindowExceptionHandlerFactory { window ->
+                WindowExceptionHandler { error ->
+                    CrashReporting.logUncaught("the window", error)
+                    if (windowErrors.tooMany()) {
+                        DefaultWindowExceptionHandlerFactory.exceptionHandler(window).onException(error)
+                    } else {
+                        javax.swing.SwingUtilities.invokeLater { windowGeneration++ }
+                    }
                 }
             }
-        ) {
-            androidx.compose.runtime.LaunchedEffect(front, visible) {
-                if (visible && front != 0L) {
-                    window.toFront()
-                    window.requestFocus()
+        }
+
+        CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides exceptionHandlerFactory) {
+            key(windowGeneration) {
+                Window(
+                    onCloseRequest = {
+                        state.rememberWindowSize(windowState.size.width.value.toInt(), windowState.size.height.value.toInt())
+                        if (settings.closeToTray) state.windowVisible.value = false else exit()
+                    },
+                    visible = visible,
+                    title = tr("app_name"),
+                    icon = appIcon,
+                    state = windowState,
+                    onKeyEvent = { event ->
+                        if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@Window false
+                        when {
+                            event.isCtrlPressed && event.key == androidx.compose.ui.input.key.Key.V && !com.mythaia.desktop.ui.UiFocus.textField.value -> { state.importFromClipboard(); true }
+                            event.key == androidx.compose.ui.input.key.Key.F5 -> { state.pingGroup(state.activeGroupId, com.mythaia.data.network.LatencyKind.HTTP); true }
+                            else -> false
+                        }
+                    }
+                ) {
+                    androidx.compose.runtime.LaunchedEffect(front, visible) {
+                        if (visible && front != 0L) {
+                            window.toFront()
+                            window.requestFocus()
+                        }
+                    }
+                    MythaiaTheme(dark = dark) {
+                        App(state)
+                    }
                 }
-            }
-            MythaiaTheme(dark = dark) {
-                App(state)
             }
         }
     }
 }
 
+/** Set once Exit has begun, so a second click does not start a second shutdown. */
+private object Exiting {
+    val started = java.util.concurrent.atomic.AtomicBoolean(false)
+}
+
+/** Window exceptions in the last minute; past three the window is not rebuilt again. */
+private class WindowErrors {
+    private val times = ArrayDeque<Long>()
+
+    @Synchronized
+    fun tooMany(): Boolean {
+        val now = System.currentTimeMillis()
+        times.addLast(now)
+        while (times.isNotEmpty() && now - times.first() > 60_000) times.removeFirst()
+        return times.size > 3
+    }
+}
+
 /**
- * JDK 21 on Windows builds every NIO selector's wake-up pipe from an AF_UNIX
- * socket whose path lives under the temp directory, and that fails when the
- * path has non-ASCII characters (a Cyrillic user name, say). The socket
- * layer opens a selector, so the path is pointed at an ASCII directory
- * before anything touches NIO.
+ * Keeps every NIO selector on a TCP loopback wake-up pipe.
+ *
+ * JDK 21 on Windows builds each selector's wake-up pipe from an AF_UNIX
+ * socket in %TEMP% (`sun.nio.ch.PipeImpl`). If binding it fails, the JDK
+ * falls back to TCP loopback; if binding works and connecting does not, the
+ * selector cannot open at all — and that happens on real machines: a
+ * Cyrillic user name in the path, Windows builds without a working AF_UNIX,
+ * security software that filters it. The socket layer then fails for the
+ * rest of the session. Pointing the AF_UNIX directory at one that does not
+ * exist makes every bind fail, so the fallback the JDK used until 16 is
+ * taken everywhere, the same way on every machine.
  */
-private fun ensureAsciiSocketTempDir() {
+private fun keepNioOffAfUnix() {
     if (System.getProperty("jdk.net.unixdomain.tmpdir") != null) return
-    val temp = System.getProperty("java.io.tmpdir").orEmpty()
-    if (temp.all { it.code < 128 }) return
-    val candidates = listOf(
-        File(System.getenv("ProgramData") ?: "C:/ProgramData", "Mythaia/tmp"),
-        File(System.getenv("SystemRoot") ?: "C:/Windows", "Temp"),
-        File("C:/gtmp")
-    )
-    val dir = candidates.firstOrNull { d ->
-        d.absolutePath.all { it.code < 128 } && (d.isDirectory || d.mkdirs()) && d.canWrite()
-    } ?: return
-    System.setProperty("jdk.net.unixdomain.tmpdir", dir.absolutePath)
+    val drive = System.getenv("SystemDrive")?.takeIf { it.isNotBlank() } ?: "C:"
+    System.setProperty("jdk.net.unixdomain.tmpdir", "$drive\\mythaia-no-af-unix-${java.util.UUID.randomUUID()}")
+}
+
+/**
+ * Draws with the CPU when the GPU path killed a previous run.
+ *
+ * Skia draws through Direct3D, and a faulty graphics driver (old Intel
+ * ones, some hybrid laptops, remote desktops and virtual machines) crashes
+ * inside it, which takes the whole app with it. Once a crash report names
+ * the graphics stack, `render-api` in the data folder records SOFTWARE and
+ * every later start uses it; deleting the file goes back to the GPU. Skia
+ * also honours SKIKO_RENDER_API from the environment, which wins over this.
+ */
+private fun chooseRenderer(logger: MythaiaLogger, graphicsCrashed: Boolean) {
+    val marker = File(AppPaths.dataDir, "render-api")
+    if (graphicsCrashed) runCatching { marker.writeText("SOFTWARE") }
+    val api = runCatching { marker.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
+    if (!api.isNullOrEmpty() && System.getProperty("skiko.renderApi") == null) {
+        System.setProperty("skiko.renderApi", api)
+        logger.info("Rendering with $api (${marker.name} in the data folder)")
+    }
 }
 
 /** Logs to `%APPDATA%\Mythaia\logs\mythaia.log`, rotating at two megabytes. */
 private fun installLogging(): MythaiaLogger {
     MythaiaLogger.backend = FileLogBackend(File(AppPaths.logDir, "mythaia.log"))
     MythaiaLogger.debugEnabled = System.getProperty("mythaia.debug") == "true"
-    return MythaiaLogger("Main").also { it.info("Mythaia Pro $APP_VERSION starting") }
+    return MythaiaLogger("Main").also {
+        // What a crash report from someone else's machine needs first.
+        val runtime = Runtime.getRuntime()
+        it.info(
+            "Mythaia Pro $APP_VERSION starting on ${System.getProperty("os.name")} ${System.getProperty("os.version")}" +
+                " (${System.getProperty("os.arch")}, ${runtime.availableProcessors()} CPUs)," +
+                " Java ${System.getProperty("java.runtime.version")}, heap up to ${runtime.maxMemory() / (1024 * 1024)} MB"
+        )
+    }
 }
 
 private class FileLogBackend(private val file: File) : LogBackend {
@@ -283,9 +372,40 @@ private object DeepLinks {
     }
 }
 
-private fun acquireInstanceLock(): FileLock? = try {
-    val channel = RandomAccessFile(AppPaths.instanceLock, "rw").channel
-    channel.tryLock()
-} catch (_: Exception) {
-    null
+/**
+ * Takes the lock that makes this the one running instance, waiting up to
+ * [waitMillis] for another instance to let go; false when one holds it.
+ *
+ * A lock file that cannot be opened or locked at all (a redirected data
+ * folder that is offline, a read-only file) is not another instance: that
+ * case used to exit quietly on every start. It is logged, and this instance
+ * runs without the lock.
+ */
+private fun acquireInstanceLock(logger: MythaiaLogger, waitMillis: Long): Boolean {
+    val channel = try {
+        RandomAccessFile(AppPaths.instanceLock, "rw").channel
+    } catch (e: Exception) {
+        logger.warning("Cannot open ${AppPaths.instanceLock}: ${e.message}; running without the single-instance lock")
+        return true
+    }
+    val deadline = System.currentTimeMillis() + waitMillis
+    while (true) {
+        val lock = try {
+            channel.tryLock()
+        } catch (e: java.nio.channels.OverlappingFileLockException) {
+            null
+        } catch (e: Exception) {
+            logger.warning("Cannot lock ${AppPaths.instanceLock}: ${e.message}; running without the single-instance lock")
+            return true
+        }
+        if (lock != null) {
+            InstanceLock.lock = lock
+            return true
+        }
+        if (System.currentTimeMillis() >= deadline) {
+            runCatching { channel.close() }
+            return false
+        }
+        Thread.sleep(250)
+    }
 }

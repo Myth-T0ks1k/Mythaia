@@ -1,8 +1,14 @@
 package com.mythaia.desktop.tun
 
 import com.mythaia.desktop.AppPaths
+import com.mythaia.desktop.service.ServiceInstaller
 import com.mythaia.vpn.util.MythaiaLogger
 import com.sun.jna.Native
+import com.sun.jna.platform.win32.Kernel32Util
+import com.sun.jna.platform.win32.Shell32
+import com.sun.jna.platform.win32.ShellAPI
+import com.sun.jna.platform.win32.WinError
+import com.sun.jna.platform.win32.WinUser
 import com.sun.jna.win32.StdCallLibrary
 import java.io.File
 import java.lang.management.ManagementFactory
@@ -32,10 +38,14 @@ object Elevation {
 
     /**
      * Starts this application again with [args], elevated, through
-     * `Start-Process -Verb RunAs`. Returns true once the new process has
-     * been launched (the UAC prompt was accepted); the caller decides
-     * whether to exit this one. False when the prompt was declined or the
-     * launch failed — [lastError] says which.
+     * ShellExecuteEx "runas" — the UAC prompt, as `ServiceInstaller` raises
+     * it. No PowerShell in between: the path and arguments reach Windows as
+     * they are, spaces and non-Latin letters included, and nothing waits on
+     * a script host. Blocks while the prompt is up, so not on the UI thread.
+     *
+     * Returns true once the new process has been launched (the prompt was
+     * accepted); the caller decides whether to exit this one. False when the
+     * prompt was declined or the launch failed — [lastError] says which.
      */
     fun relaunchElevated(args: List<String> = listOf("--tun")): Boolean {
         lastError = null
@@ -46,21 +56,23 @@ object Elevation {
             logger.error("Cannot build the relaunch command: $lastError")
             return false
         }
-        val script = buildString {
-            append("Start-Process -FilePath ").append(psQuote(file))
-            if (arguments.isNotEmpty()) {
-                append(" -ArgumentList @(").append(arguments.joinToString(",") { psQuote(it) }).append(")")
-            }
-            append(" -WorkingDirectory ").append(psQuote(File(System.getProperty("user.dir")).absolutePath))
-            append(" -Verb RunAs")
+        val error = try {
+            shellExecuteRunAs(file, arguments, File(System.getProperty("user.dir")).absolutePath)
+        } catch (e: LinkageError) {
+            // JNA's native part could not be loaded (blocked in %TEMP%).
+            lastError = e.message ?: e.toString()
+            logger.error("Cannot reach ShellExecuteEx: $lastError")
+            argFile.delete()
+            return false
         }
-        val result = WindowsNet.run(
-            listOf("powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", script),
-            timeoutSec = 120
-        )
-        if (!result.ok) {
-            lastError = result.output.lineSequence().firstOrNull { it.isNotBlank() } ?: "exit ${result.exitCode}"
-            logger.warning("Elevated relaunch did not start: $lastError")
+        if (error != 0) {
+            lastError = if (error == WinError.ERROR_CANCELLED) {
+                logger.info("The administrator prompt was declined")
+                systemMessage(error) ?: "The administrator prompt was declined"
+            } else {
+                logger.warning("Elevated relaunch did not start (error $error)")
+                systemMessage(error)?.let { "error $error: $it" } ?: "error $error"
+            }
             // Nobody will read it now; a launched instance reads its own at startup.
             argFile.delete()
             return false
@@ -68,6 +80,37 @@ object Elevation {
         logger.info("Elevated instance launched: $file ${arguments.joinToString(" ")}")
         return true
     }
+
+    /**
+     * ShellExecuteEx with the "runas" verb, shown normally, started in
+     * [directory]. Returns 0 once the process exists, else the Win32 error
+     * (ERROR_CANCELLED when the prompt was declined). SEE_MASK_NOASYNC makes
+     * the call return only after the launch has finished either way.
+     */
+    private fun shellExecuteRunAs(file: String, arguments: List<String>, directory: String): Int {
+        val info = ShellAPI.SHELLEXECUTEINFO().apply {
+            cbSize = size()
+            fMask = SEE_MASK_NOASYNC
+            lpVerb = "runas"
+            lpFile = file
+            lpParameters = commandLine(arguments)
+            lpDirectory = directory
+            nShow = WinUser.SW_SHOWNORMAL
+        }
+        if (Shell32.INSTANCE.ShellExecuteEx(info)) return 0
+        return Native.getLastError().takeIf { it != 0 } ?: WinError.ERROR_GEN_FAILURE
+    }
+
+    /**
+     * [arguments] as one Windows command line, each quoted the way
+     * CommandLineToArgvW (and the launcher) reads it back.
+     */
+    internal fun commandLine(arguments: List<String>): String =
+        arguments.joinToString(" ") { ServiceInstaller.commandLineArg(it) }
+
+    /** The system's own text for [error], in the language of this Windows. */
+    private fun systemMessage(error: Int): String? =
+        runCatching { Kernel32Util.formatMessage(error).trim() }.getOrNull()?.takeIf { it.isNotEmpty() }
 
     @Volatile
     var lastError: String? = null
@@ -86,6 +129,7 @@ object Elevation {
 
     private val argFile: File get() = File(AppPaths.dataDir, "relaunch.args")
     private const val ARG_FILE_MAX_AGE_MS = 60_000L
+    private const val SEE_MASK_NOASYNC = 0x100
 
     /**
      * The executable and its arguments: the installed launcher when there
@@ -113,9 +157,6 @@ object Elevation {
         argFile.writeText(lines.joinToString("\n"))
         return java.absolutePath to listOf("@" + argFile.absolutePath)
     }
-
-    /** PowerShell single-quoted literal. */
-    internal fun psQuote(text: String): String = "'" + text.replace("'", "''") + "'"
 
     /** Java `@argfile` token: double-quoted with backslashes doubled. */
     internal fun argQuote(text: String): String = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

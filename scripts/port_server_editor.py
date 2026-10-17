@@ -24,7 +24,23 @@ def port(src: str) -> str:
                r'tr(if (\1) "\2" else "\3")', s)
     for name in RENAMES:
         s = re.sub(r"(?<![A-Za-z0-9_.])" + name + r"\b", "Editor" + name, s)
-    s = s.replace("fun ProxyEditorScreen(", "fun ServerEditor(")
+    # The public editor wraps the form in WithSafeClipboard (Components.kt):
+    # AWT throws when another program holds the clipboard, and a text field's
+    # paste or copy then closed the window.
+    head = ("@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun ProxyEditorScreen(\n"
+            "    configuration: ProxyConfiguration?,\n    onSave: (ProxyConfiguration) -> Unit,\n"
+            "    onDismiss: () -> Unit,\n    /** For a new server: the protocol picked on [ProtocolPickerScreen]. */\n"
+            "    initialProtocol: OutboundProtocol? = null\n) {")
+    assert head in s, "ProxyEditorScreen's signature changed; update the wrapper in port_server_editor.py"
+    s = s.replace(head, (
+        "@Composable\nfun ServerEditor(\n"
+        "    configuration: ProxyConfiguration?,\n    onSave: (ProxyConfiguration) -> Unit,\n"
+        "    onDismiss: () -> Unit,\n    /** For a new server: the protocol picked on the protocol picker. */\n"
+        "    initialProtocol: OutboundProtocol? = null\n"
+        ") = WithSafeClipboard { ServerEditorForm(configuration, onSave, onDismiss, initialProtocol) }\n\n"
+        "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nprivate fun ServerEditorForm(\n"
+        "    configuration: ProxyConfiguration?,\n    onSave: (ProxyConfiguration) -> Unit,\n"
+        "    onDismiss: () -> Unit,\n    initialProtocol: OutboundProtocol?\n) {"))
     s = re.sub(r"^internal (fun|val) Editor", r"private \1 Editor", s, flags=re.M)
     s = s.replace("[ProtocolPickerScreen]", "the protocol picker")
     assert "R.string" not in s, [l for l in s.split("\n") if "R.string" in l][:5]

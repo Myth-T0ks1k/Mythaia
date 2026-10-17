@@ -72,7 +72,15 @@ compose.desktop {
         packagingJdk?.let { javaHome = it }
 
         // Compose scales for HiDPI itself; forcing Java2D scaling on top doubled it.
-        jvmArgs("-Dfile.encoding=UTF-8")
+        jvmArgs(
+            "-Dfile.encoding=UTF-8",
+            // A crash in native code leaves its report next to the app, where
+            // the next start collects it into the log (CrashReporting); the JVM
+            // falls back to the working directory and %TEMP% where it cannot write.
+            "-XX:ErrorFile=\$APPDIR/hs_err_pid%p.log",
+            // Skia's Direct3D errors go to %USERPROFILE%\.skiko instead of nowhere.
+            "-Dskiko.win.exception.logger.enabled=true"
+        )
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
@@ -82,7 +90,9 @@ compose.desktop {
             vendor = "Mythaia"
             copyright = "Mythaia"
             // What jdeps finds plus the JSSE curves for DoH/DoT and JNA's needs.
-            modules("java.instrument", "java.naming", "java.sql", "jdk.unsupported", "jdk.crypto.ec", "java.management")
+            // jdk.accessibility: where Java Access Bridge is on (screen readers
+            // turn it on), AWT loads it at start and, missing, refuses to start.
+            modules("java.instrument", "java.naming", "java.sql", "jdk.unsupported", "jdk.crypto.ec", "java.management", "jdk.accessibility")
             appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
 
             windows {

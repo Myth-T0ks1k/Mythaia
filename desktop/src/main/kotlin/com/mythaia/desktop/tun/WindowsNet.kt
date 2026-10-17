@@ -6,6 +6,7 @@ import com.sun.jna.Memory
 import com.sun.jna.platform.win32.Advapi32Util
 import com.sun.jna.platform.win32.WinReg
 import com.sun.jna.ptr.LongByReference
+import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -124,20 +125,51 @@ object WindowsNet {
         val ok: Boolean get() = exitCode == 0
     }
 
-    /** Runs [argv] hidden, waiting at most [timeoutSec]; the output is for the log. */
+    /**
+     * Runs [argv] hidden, waiting at most [timeoutSec]; the output is for the
+     * log. A tool still running at the deadline is killed and the result is
+     * a failure.
+     *
+     * The output is drained on a thread of its own: reading it here blocked
+     * until the tool closed its end, so a hung `netsh` never got as far as
+     * the timeout and held TUN start (and its locks) for good.
+     */
     fun run(argv: List<String>, timeoutSec: Long = 20): Result {
-        return try {
-            val process = ProcessBuilder(argv).redirectErrorStream(true).start()
-            runCatching { process.outputStream.close() }
-            val output = process.inputStream.use { String(it.readBytes(), consoleCharset) }
-            if (!process.waitFor(timeoutSec, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                Result(-1, "timed out: ${argv.joinToString(" ")}")
-            } else Result(process.exitValue(), output.trim())
+        val process = try {
+            ProcessBuilder(argv).redirectErrorStream(true).start()
         } catch (e: Exception) {
-            Result(-1, e.message ?: e.toString())
+            return Result(-1, e.message ?: e.toString())
         }
+        runCatching { process.outputStream.close() }
+        val output = ByteArrayOutputStream()
+        val drain = Thread({
+            runCatching { process.inputStream.use { it.copyTo(output) } }
+        }, "command-output").apply {
+            isDaemon = true
+            start()
+        }
+        val finished = try {
+            process.waitFor(timeoutSec, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!finished) {
+            process.destroyForcibly()
+            logger.warning("Timed out after $timeoutSec s: ${argv.joinToString(" ")}")
+            return Result(-1, "timed out: ${argv.joinToString(" ")}")
+        }
+        // The pipe only ends once everything holding it has let go; a child
+        // the tool left running in the background must not hold this up.
+        try {
+            drain.join(OUTPUT_DRAIN_MS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        return Result(process.exitValue(), String(output.toByteArray(), consoleCharset).trim())
     }
+
+    private const val OUTPUT_DRAIN_MS = 2_000L
 
     @Suppress("FunctionName")
     private interface Kernel32Ex : com.sun.jna.win32.StdCallLibrary {

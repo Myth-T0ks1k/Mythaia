@@ -120,8 +120,6 @@ class RoutePlanTest {
 
     @Test
     fun `relaunch quoting`() {
-        assertEquals("'C:\\Program Files\\Mythaia Pro\\Mythaia Pro.exe'", Elevation.psQuote("C:\\Program Files\\Mythaia Pro\\Mythaia Pro.exe"))
-        assertEquals("'it''s'", Elevation.psQuote("it's"))
         assertEquals("\"C:\\\\a\\\\b.jar\"", Elevation.argQuote("C:\\a\\b.jar"))
     }
 }

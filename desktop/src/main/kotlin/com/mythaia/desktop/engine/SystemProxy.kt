@@ -71,6 +71,11 @@ object SystemProxy {
             logger.info("System proxy set to $server")
         } catch (e: Exception) {
             logger.error("Could not set the system proxy: ${e.message}")
+        } catch (e: LinkageError) {
+            // JNA extracts jnidispatch.dll to %TEMP% on first use; where
+            // antivirus or AppLocker blocks it, every registry call throws an
+            // Error, which would otherwise reach the UI thread and close the window.
+            logger.error("Could not set the system proxy (JNA unavailable): ${e.message ?: e}")
         }
     }
 
@@ -96,6 +101,8 @@ object SystemProxy {
             logger.info("System proxy restored")
         } catch (e: Exception) {
             logger.error("Could not restore the system proxy: ${e.message}")
+        } catch (e: LinkageError) {
+            logger.error("Could not restore the system proxy (JNA unavailable): ${e.message ?: e}")
         }
     }
 
@@ -144,6 +151,10 @@ object LaunchAtLogin {
             true
         } catch (e: Exception) {
             logger.error("Run key: ${e.message}")
+            false
+        } catch (e: LinkageError) {
+            // JNA could not load its native part; see SystemProxy.enable.
+            logger.error("Run key (JNA unavailable): ${e.message ?: e}")
             false
         }
     }
