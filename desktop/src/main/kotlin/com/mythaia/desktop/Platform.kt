@@ -3,8 +3,9 @@ package com.mythaia.desktop
 /**
  * Which desktop system this run is on. The app is one code base for Windows
  * and macOS; the differences are the system proxy, launch at login, URL
- * scheme registration, the native library's file name, and TUN mode, which
- * exists only on Windows (Wintun and the service).
+ * scheme registration, the native library's file name, and how TUN mode
+ * gets its interface and its rights: Wintun and a Windows service there,
+ * utun and a LaunchDaemon here.
  */
 object Platform {
     private val osName: String = System.getProperty("os.name").orEmpty()
@@ -12,8 +13,8 @@ object Platform {
     val isWindows: Boolean = osName.startsWith("Windows")
     val isMac: Boolean = osName.startsWith("Mac") || osName.startsWith("Darwin")
 
-    /** TUN mode needs Wintun and the Windows service; elsewhere only proxy mode exists. */
-    val supportsTun: Boolean get() = isWindows
+    /** TUN mode: Wintun and the service on Windows, utun and the daemon on macOS; elsewhere only proxy mode exists. */
+    val supportsTun: Boolean get() = isWindows || isMac
 
     /** `arm64` or `x64`, as the packaged app names its resource folders. */
     val arch: String

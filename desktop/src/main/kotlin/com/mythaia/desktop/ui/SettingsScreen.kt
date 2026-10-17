@@ -58,7 +58,7 @@ fun SettingsScreen(state: AppState) {
 
             Section(tr("settings_connection")) {
                 val needsElevation by state.needsElevation.collectAsState()
-                // TUN mode and its service are Windows-only (Wintun); macOS runs as a system proxy.
+                // TUN mode and its service: Wintun and a Windows service, or utun and a LaunchDaemon.
                 if (com.mythaia.desktop.Platform.supportsTun) {
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     DropdownField(
@@ -75,7 +75,7 @@ fun SettingsScreen(state: AppState) {
                 val serviceInstalled by state.serviceInstalled.collectAsState()
                 val serviceAvailable by state.serviceAvailable.collectAsState()
                 val serviceVersion by state.serviceVersion.collectAsState()
-                // The service runs its own copy in Program Files, which an app update does not touch.
+                // The service runs its own copy (Program Files, /Library/Application Support), which an app update does not touch.
                 val serviceOutdated = serviceAvailable && serviceVersion != APP_VERSION
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -106,7 +106,7 @@ fun SettingsScreen(state: AppState) {
                         confirmButton = {
                             Button(onClick = {
                                 state.needsElevation.value = false
-                                if (state.relaunchElevated()) kotlin.system.exitProcess(0)
+                                if (state.answerTunPrompt()) kotlin.system.exitProcess(0)
                             }) { Text(tr("tun_relaunch")) }
                         },
                         dismissButton = { TextButton(onClick = { state.needsElevation.value = false }) { Text(tr("cancel")) } }

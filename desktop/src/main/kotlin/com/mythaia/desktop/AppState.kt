@@ -90,7 +90,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     val engine = ProxyEngine(stats)
     val tun = com.mythaia.desktop.tun.TunEngine(stats)
 
-    /** True when TUN mode was asked for without administrator rights; the UI offers a relaunch. */
+    /**
+     * True when TUN mode was asked for without the rights to run it; the UI
+     * offers a way out ([answerTunPrompt]): an elevated relaunch on Windows,
+     * installing the service on macOS.
+     */
     val needsElevation = MutableStateFlow(false)
 
     /** The service is registered and answering, so TUN runs there without elevation. */
@@ -203,7 +207,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /** Keeps [serviceAvailable]/[serviceInstalled] fresh and, while the service runs our tunnel, mirrors its counters and log. */
     private suspend fun serviceWatchLoop() {
-        // The service is the Windows TUN helper; there is nothing to watch elsewhere.
+        // The service is the TUN helper (a Windows service, a macOS daemon); there is nothing to watch elsewhere.
         if (!Platform.supportsTun) return
         while (scope.isActive) {
             val installed = runCatching { com.mythaia.desktop.service.ServiceInstaller.isInstalled() }.getOrDefault(false)
@@ -242,9 +246,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     /**
      * Copies the app to Program Files and registers the service there (one
      * administrator prompt), or updates an installed one, then waits for it
-     * to answer.
+     * to answer. On macOS the same goes for the LaunchDaemon and its copy in
+     * /Library/Application Support. With [connectAfter] the tunnel comes up
+     * through it as soon as it answers.
      */
-    fun installService() {
+    fun installService(connectAfter: Boolean = false) {
         scope.launch {
             // Updating stops the service, and with it a tunnel it runs for us.
             if (remoteTun != null) disconnect()
@@ -263,6 +269,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                     serviceAvailable.value = true
                     serviceVersion.value = reply.appVersion
                     notify(tr("service_installed"))
+                    if (connectAfter) startConnection()
                     return@launch
                 }
                 delay(500)
@@ -453,6 +460,20 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         scope.launch { startConnection() }
     }
 
+    /**
+     * The way out of [needsElevation]: on Windows an elevated copy of the app
+     * takes over (true: this one should exit); on macOS, where nothing runs
+     * elevated but the daemon, the daemon is installed and the tunnel
+     * started through it (false: this one carries on).
+     */
+    fun answerTunPrompt(): Boolean {
+        if (Platform.isMac) {
+            installService(connectAfter = true)
+            return false
+        }
+        return relaunchElevated()
+    }
+
     /** Hands the app to an elevated copy of itself for TUN mode. */
     fun relaunchElevated(): Boolean {
         val ok = com.mythaia.desktop.tun.TunEngine.relaunchElevated(listOf("--tun"))
@@ -509,11 +530,12 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         val settings = _settings.value
         val useTun = settings.tunnelMode == "tun" && Platform.supportsTun
         // The service runs the TUN tunnel when it is there; otherwise this
-        // process must be elevated to do it itself.
+        // process must be elevated to do it itself. On macOS that means
+        // root, which only the daemon is, so the prompt offers to install it.
         val viaService = useTun && (serviceAvailable.value || com.mythaia.desktop.service.ServiceClient.isAvailable())
         if (useTun && !viaService) {
             if (!com.mythaia.desktop.tun.TunEngine.isAvailable()) {
-                _connection.value = ConnectionState.Failed(tr("tun_unavailable", "wintun.dll"))
+                _connection.value = ConnectionState.Failed(tr("tun_unavailable", com.mythaia.desktop.tun.TunEngine.missingComponent()))
                 return@withLock
             }
             if (!com.mythaia.desktop.tun.TunEngine.isElevated()) {

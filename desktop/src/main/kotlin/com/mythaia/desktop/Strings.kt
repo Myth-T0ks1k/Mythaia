@@ -27,10 +27,21 @@ object S {
         lang = if (code == "auto") Lang.system() else Lang.of(code)
     }
 
+    /**
+     * The text for [key] in the current language. On macOS a `key@mac`
+     * entry, where there is one, comes first: the few texts that name
+     * Windows' parts (Wintun, Program Files, the UAC prompt) have a Mac
+     * wording beside them.
+     */
     operator fun get(key: String): String {
         val table = if (lang == Lang.RU) RU else EN
-        return table[key] ?: EN[key] ?: key
+        val keys = if (Platform.isMac) listOf("$key@mac", key) else listOf(key)
+        for (t in listOf(table, EN)) for (k in keys) t[k]?.let { return it }
+        return key
     }
+
+    /** Every key of [lang]'s table, for the tests that keep the two languages in step. */
+    internal fun keys(lang: Lang): Set<String> = (if (lang == Lang.RU) RU else EN).keys
 
     fun format(key: String, vararg args: Any?): String = String.format(this[key], *args)
 
@@ -176,6 +187,7 @@ object S {
         "chain" to "Цепочка",
         "auto_row_hint" to "Проверяет все серверы и держит подключение через лучший",
         "native_missing" to "Не найдена mythaia_native.dll: QUIC-протоколы и Clash-подписки недоступны",
+        "native_missing@mac" to "Не найдена libmythaia_native.dylib: QUIC-протоколы и Clash-подписки недоступны",
         "copied" to "Скопировано",
         "ok" to "ОК",
         "yes" to "Да",
@@ -211,12 +223,16 @@ object S {
         "mode_proxy" to "Системный прокси",
         "mode_tun" to "TUN (весь трафик)",
         "tun_needs_admin" to "Для TUN-режима нужны права администратора. Перезапустить с повышением?",
+        "tun_needs_admin@mac" to "На macOS режим TUN работает через службу Mythaia. Установить её сейчас? macOS один раз спросит пароль администратора.",
         "tun_relaunch" to "Перезапустить",
+        "tun_relaunch@mac" to "Установить",
         "tun_unavailable" to "TUN недоступен: %s",
         "shortcuts_hint" to "Ctrl+V — импорт из буфера, F5 — пинг группы, Delete — удалить выбранные",
         "tun_needs_admin_short" to "TUN: нужны права администратора",
+        "tun_needs_admin_short@mac" to "TUN: нужна служба Mythaia",
         "service" to "Служба Mythaia",
         "service_hint" to "с ней TUN включается без запроса прав администратора; работает из своей копии в Program Files",
+        "service_hint@mac" to "с ней TUN включается без пароля; работает от root из своей копии в /Library/Application Support/Mythaia",
         "service_running" to "работает",
         "service_outdated" to "работает версия %s — обновите",
         "service_version_old" to "старше 1.1.2",
@@ -226,17 +242,21 @@ object S {
         "service_update" to "Обновить",
         "service_remove" to "Удалить",
         "service_installing" to "Копирую службу в Program Files…",
+        "service_installing@mac" to "macOS спросит пароль администратора, затем служба установится…",
         "service_installed" to "Служба установлена и запущена",
         "service_removed" to "Служба удалена",
         "service_install_failed" to "Не удалось установить службу. Подробности — в журнале",
         "service_remove_failed" to "Не удалось удалить службу. Подробности — в журнале",
         "service_prompt_declined" to "Запрос прав администратора отклонён",
         "service_not_answering" to "Служба установлена, но не отвечает. Её журнал: C:\\ProgramData\\Mythaia\\service.log",
+        "service_not_answering@mac" to "Служба установлена, но не отвечает. Её журнал: /Library/Application Support/Mythaia/service.log",
         "service_needs_install" to "Служба ставится только из установленной версии, не из папки сборки",
         "service_admin_prompt" to "Mythaia Pro устанавливает или удаляет свою службу для режима TUN.",
         "tun_hint" to "Весь трафик компьютера идёт через виртуальный адаптер (Wintun). Нужны права администратора; при первом включении Windows спросит разрешение.",
+        "tun_hint@mac" to "Весь трафик компьютера идёт через виртуальный интерфейс (utun). Работает через службу Mythaia; при её установке macOS один раз спросит пароль администратора.",
         "proxy_mode_hint" to "Локальный SOCKS5/HTTP-прокси и системный прокси. Программы, которые не читают системный прокси, идут мимо.",
         "no_native_for" to "%s недоступен: нет mythaia_native.dll",
+        "no_native_for@mac" to "%s недоступен: нет libmythaia_native.dylib",
         "connected_kept" to "Подключение сохранено: %s",
         "add_configuration" to "Добавить конфигурацию",
         "address" to "Адрес",
@@ -497,6 +517,7 @@ object S {
         "chain" to "Chain",
         "auto_row_hint" to "Tests every server and keeps the connection on the best one",
         "native_missing" to "mythaia_native.dll not found: QUIC protocols and Clash subscriptions are unavailable",
+        "native_missing@mac" to "libmythaia_native.dylib not found: QUIC protocols and Clash subscriptions are unavailable",
         "copied" to "Copied",
         "ok" to "OK",
         "yes" to "Yes",
@@ -532,12 +553,16 @@ object S {
         "mode_proxy" to "System proxy",
         "mode_tun" to "TUN (all traffic)",
         "tun_needs_admin" to "TUN mode needs administrator rights. Relaunch elevated?",
+        "tun_needs_admin@mac" to "On macOS, TUN mode runs through the Mythaia service. Install it now? macOS asks for an administrator password once.",
         "tun_relaunch" to "Relaunch",
+        "tun_relaunch@mac" to "Install",
         "tun_unavailable" to "TUN unavailable: %s",
         "shortcuts_hint" to "Ctrl+V imports from the clipboard, F5 pings the group, Delete removes the selection",
         "tun_needs_admin_short" to "TUN needs administrator rights",
+        "tun_needs_admin_short@mac" to "TUN needs the Mythaia service",
         "service" to "Mythaia service",
         "service_hint" to "with it, TUN mode needs no administrator prompt; it runs from its own copy in Program Files",
+        "service_hint@mac" to "with it, TUN mode needs no password; it runs as root from its own copy in /Library/Application Support/Mythaia",
         "service_running" to "running",
         "service_outdated" to "version %s is running — update it",
         "service_version_old" to "older than 1.1.2",
@@ -547,17 +572,21 @@ object S {
         "service_update" to "Update",
         "service_remove" to "Remove",
         "service_installing" to "Copying the service to Program Files…",
+        "service_installing@mac" to "macOS asks for an administrator password, then the service is installed…",
         "service_installed" to "Service installed and running",
         "service_removed" to "Service removed",
         "service_install_failed" to "Could not install the service. See the log for details",
         "service_remove_failed" to "Could not remove the service. See the log for details",
         "service_prompt_declined" to "The administrator prompt was declined",
         "service_not_answering" to "The service is installed but not answering. Its log: C:\\ProgramData\\Mythaia\\service.log",
+        "service_not_answering@mac" to "The service is installed but not answering. Its log: /Library/Application Support/Mythaia/service.log",
         "service_needs_install" to "The service can only be installed from an installed copy, not the build folder",
         "service_admin_prompt" to "Mythaia Pro is installing or removing its service for TUN mode.",
         "tun_hint" to "All of the computer's traffic goes through a virtual adapter (Wintun). Needs administrator rights; Windows asks once.",
+        "tun_hint@mac" to "All of the computer's traffic goes through a virtual interface (utun). It runs through the Mythaia service; macOS asks for an administrator password once to install it.",
         "proxy_mode_hint" to "A local SOCKS5/HTTP proxy plus the system proxy. Programs that ignore the system proxy go around it.",
         "no_native_for" to "%s unavailable: mythaia_native.dll missing",
+        "no_native_for@mac" to "%s unavailable: libmythaia_native.dylib missing",
         "connected_kept" to "Connection kept: %s",
         "add_configuration" to "Add Configuration",
         "address" to "Address",
