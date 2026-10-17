@@ -551,14 +551,17 @@ public enum Dialer {
 
     /// The connection to the hop's server with its security layer. A first
     /// hop with plain TLS uses the system's TLS; a hop through another hop,
-    /// REALITY, and Vision (which needs the bytes under the TLS records) use
-    /// this app's own TLS 1.3 client.
+    /// REALITY, Vision (which needs the bytes under the TLS records) and a
+    /// first hop whose ClientHello goes out in fragments (the server's
+    /// `fragment=`/`fm=`, or the tunnel-wide `FragmentPolicy`) use this app's
+    /// own TLS 1.3 client.
     static func openSecured(_ hop: ProxyConfiguration, below: ByteStream?, security: DialSecurity, alpn: [String],
                             needsSession: Bool, resources: DialResources) async throws -> Secured {
         let host = hop.connectAddress
         let port = hop.serverPort
 
-        if below == nil && !needsSession, case .tls(let tls) = security {
+        if below == nil && !needsSession, case .tls(let tls) = security,
+           FragmentPolicy.effective(for: tls.fragment) == nil {
             let stream = try await SystemTLSStream.connect(host: host, port: port,
                                                            options: tlsOptions(tls, alpn: alpn), timeout: connectTimeout)
             resources.track(stream)
@@ -578,7 +581,23 @@ public enum Dialer {
         case .none:
             return Secured(stream: base, session: nil, negotiatedALPN: nil)
         case .tls(let tls):
-            let session = try await TLSClient.handshake(over: base, options: tlsOptions(tls, alpn: alpn), fingerprint: tls.fingerprint)
+            // Only a direct dial is cut: inside another hop there is no path
+            // for a filter to read the hello on.
+            let fragment = below == nil ? FragmentPolicy.effective(for: tls.fragment) : nil
+            let session: TLSSessionStream
+            do {
+                session = try await TLSClient.handshake(over: base, options: tlsOptions(tls, alpn: alpn),
+                                                        fingerprint: tls.fingerprint, fragment: fragment)
+            } catch MythaiaError.tls(let reason) where below == nil && !needsSession && reason.contains("TLS 1.2") {
+                // Our client speaks TLS 1.3 only. A direct dial to a server
+                // that answers with 1.2 still connects, through the system's
+                // TLS, at the price of an unsplit hello for that one server.
+                Log.info("\(hop.name) answers with TLS 1.2; connecting through the system TLS without fragmentation")
+                let stream = try await SystemTLSStream.connect(host: host, port: port,
+                                                               options: tlsOptions(tls, alpn: alpn), timeout: connectTimeout)
+                resources.track(stream)
+                return Secured(stream: stream, session: nil, negotiatedALPN: stream.negotiatedALPN)
+            }
             resources.track(session)
             return Secured(stream: session, session: session, negotiatedALPN: session.negotiatedALPN)
         case .reality(let reality):

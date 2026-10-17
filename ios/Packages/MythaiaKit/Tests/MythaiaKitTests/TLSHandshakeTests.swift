@@ -160,6 +160,7 @@ final class TLSTestStream: ByteStream, @unchecked Sendable {
     private let chunkSize: Int
     private let lock = NSLock()
     private var sent: [UInt8] = []
+    private var writes: [(bytes: [UInt8], at: Date)] = []
 
     init(inbound: TLSTestQueue, outbound: TLSTestQueue, chunkSize: Int) {
         self.inbound = inbound
@@ -174,9 +175,17 @@ final class TLSTestStream: ByteStream, @unchecked Sendable {
         return sent
     }
 
+    /// Every `send` call so far, each with the moment it was made.
+    var sentWrites: [(bytes: [UInt8], at: Date)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return writes
+    }
+
     private func remember(_ bytes: [UInt8]) {
         lock.lock()
         sent.append(contentsOf: bytes)
+        writes.append((bytes: bytes, at: Date()))
         lock.unlock()
     }
 

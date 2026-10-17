@@ -140,6 +140,7 @@ final class TLSHandshakeDriver {
     private let minVersion: TlsVersion?
     private let maxVersion: TlsVersion?
     private let allowsHelloRetry: Bool
+    private let fragment: FragmentSettings?
     private let offeredALPN: [String]
 
     private var transcript: [UInt8] = []
@@ -158,7 +159,8 @@ final class TLSHandshakeDriver {
         authentication: TLSServerAuthentication,
         minVersion: TlsVersion?,
         maxVersion: TlsVersion?,
-        allowsHelloRetry: Bool
+        allowsHelloRetry: Bool,
+        fragment: FragmentSettings? = nil
     ) {
         self.stream = stream
         self.reader = StreamReader(stream)
@@ -168,11 +170,19 @@ final class TLSHandshakeDriver {
         self.minVersion = minVersion
         self.maxVersion = maxVersion
         self.allowsHelloRetry = allowsHelloRetry
+        self.fragment = fragment
         self.offeredALPN = TLSHandshakeDriver.alpnProtocols(in: clientHello)
     }
 
     func run() async throws -> TLSSessionStream {
-        try await stream.send(Data(TlsClientHelloBuilder.wrapInTLSRecord(clientHello)))
+        let helloRecord = TlsClientHelloBuilder.wrapInTLSRecord(clientHello)
+        if let settings = fragment, settings.isEnabled {
+            // Only the first hello is cut: it is the one carrying the name a
+            // filter looks for, and the one Xray's tlshello mode cuts.
+            try await TlsHelloFragmenter.send(helloRecord, over: stream, settings: settings)
+        } else {
+            try await stream.send(Data(helloRecord))
+        }
         transcript = clientHello
 
         let (serverHello, serverHelloBytes, retrySuite) = try await awaitServerHello()

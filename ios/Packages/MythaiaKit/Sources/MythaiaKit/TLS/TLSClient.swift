@@ -15,15 +15,33 @@ public enum TLSClient {
     static let handshakeTimeout: Double = 20
 
     /// Runs a handshake over `stream`, which the returned session then owns.
-    /// On failure the stream is closed.
+    /// On failure the stream is closed. The ClientHello goes out whole.
     public static func handshake(
         over stream: ByteStream,
         options: TLSClientOptions,
         fingerprint: TlsFingerprint
     ) async throws -> TLSSessionStream {
+        return try await handshake(over: stream, options: options, fingerprint: fingerprint, fragment: nil)
+    }
+
+    /// The same, with the ClientHello record cut into several records sent
+    /// with pauses between them, as `fragment` says (nil or switched off: in
+    /// one piece).
+    ///
+    /// Only a direct dial is worth fragmenting: that is the connection a
+    /// filter on the path can read. Inside another proxy there is no path to
+    /// hide it from. `FragmentPolicy.effective(for:)` gives the setting that
+    /// applies to a server.
+    public static func handshake(
+        over stream: ByteStream,
+        options: TLSClientOptions,
+        fingerprint: TlsFingerprint,
+        fragment: FragmentSettings?
+    ) async throws -> TLSSessionStream {
+        let applied: FragmentSettings? = (fragment?.isEnabled ?? false) ? fragment : nil
         do {
             return try await TLSHandshakeDeadline.run(on: stream, seconds: handshakeTimeout, what: "TLS handshake") {
-                try await performHandshake(over: stream, options: options, fingerprint: fingerprint)
+                try await performHandshake(over: stream, options: options, fingerprint: fingerprint, fragment: applied)
             }
         } catch {
             stream.close()
@@ -34,7 +52,8 @@ public enum TLSClient {
     private static func performHandshake(
         over stream: ByteStream,
         options: TLSClientOptions,
-        fingerprint: TlsFingerprint
+        fingerprint: TlsFingerprint,
+        fragment: FragmentSettings?
     ) async throws -> TLSSessionStream {
         if let maximum = options.maxVersion, maximum != .tls13 {
             throw MythaiaError.unsupported("a TLS 1.2 maximum here; this TLS client speaks TLS 1.3 only")
@@ -79,7 +98,8 @@ public enum TLSClient {
             ),
             minVersion: options.minVersion,
             maxVersion: options.maxVersion,
-            allowsHelloRetry: true
+            allowsHelloRetry: true,
+            fragment: fragment
         )
         return try await driver.run()
     }
