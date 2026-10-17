@@ -20,6 +20,12 @@ on:
 permissions:
   contents: read
 
+# Explicit bash, so every step runs with -eo pipefail and a failing command
+# piped into tee still fails the step.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: apple-${{ github.ref }}
   cancel-in-progress: true
@@ -54,7 +60,9 @@ jobs:
         run: sh desktop/native/macos/build.sh
 
       - name: Unit tests
-        run: ./gradlew :desktop:test --tests 'com.mythaia.desktop.engine.*' --tests 'com.mythaia.desktop.store.*' --stacktrace
+        run: |
+          ./gradlew :desktop:test --tests 'com.mythaia.desktop.engine.*' --tests 'com.mythaia.desktop.store.*' --stacktrace
+          grep -ho '<testsuite name="[^"]*" tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' desktop/build/test-results/test/*.xml
 
       - name: App bundle
         run: ./gradlew :desktop:createDistributable --stacktrace
@@ -83,6 +91,41 @@ jobs:
         with:
           name: macos-test-report-${{ matrix.arch }}
           path: desktop/build/reports/tests/
+
+  lab:
+    name: Interop lab on macOS
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Desktop modules only
+        run: sed -i '' -e '/include(":app")/d' -e '/include(":wear")/d' settings.gradle.kts
+      - name: Native library
+        run: sh desktop/native/macos/build.sh
+      - name: Reference servers
+        run: bash scripts/lab/ci-macos.sh
+      # The desktop core against every lab server, through the macOS dylib for QUIC.
+      - name: Desktop matrix
+        env:
+          MYTHAIA_MATRIX: scripts/lab/out/lab-links.txt;scripts/lab/out/lab-naive11.txt
+          MYTHAIA_MATRIX_HOST: 127.0.0.1
+          MYTHAIA_MATRIX_OUT: ${{ github.workspace }}/desktop-matrix.tsv
+        run: |
+          ./gradlew :desktop:test --tests 'com.mythaia.desktop.engine.LabMatrixSmoke' --rerun --stacktrace
+          cat desktop-matrix.tsv
+      - name: Lab logs and results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-results
+          path: |
+            desktop-matrix.tsv
+            scripts/lab/out/*.log
 
   ios:
     name: iOS app

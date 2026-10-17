@@ -71,7 +71,7 @@ fun main(args: Array<String>) {
         state.connect()
     }
     // macOS hands links (mythaia://, vless:// ...) to the app as an Apple event, not as arguments.
-    if (Platform.isMac) installMacUrlHandler(state)
+    if (Platform.isMac) installMacHandlers(state)
     Runtime.getRuntime().addShutdownHook(Thread { runCatching { state.shutdown() } })
     watchShowRequests(state)
     val startHidden = args.contains("--minimized") || state.settings.value.startMinimized
@@ -222,20 +222,28 @@ private fun loadNativeLibrary(logger: MythaiaLogger): Boolean {
 
 /**
  * Links opened from a browser or Finder while the app runs, or that launched
- * it. LaunchServices delivers them through the AWT desktop handler, which
+ * it: LaunchServices delivers them through the AWT desktop handler, which
  * must be installed before the first event loop turn to see the launch link.
+ * And a click on the Dock icon brings back a window closed to the menu bar.
  */
-private fun installMacUrlHandler(state: AppState) {
+private fun installMacHandlers(state: AppState) {
     runCatching {
         val desktop = java.awt.Desktop.getDesktop()
-        if (!desktop.isSupported(java.awt.Desktop.Action.APP_OPEN_URI)) return
-        desktop.setOpenURIHandler { event ->
-            val link = event.uri.toString()
-            if (DeepLinks.isLink(link)) {
+        if (desktop.isSupported(java.awt.Desktop.Action.APP_OPEN_URI)) {
+            desktop.setOpenURIHandler { event ->
+                val link = event.uri.toString()
+                if (DeepLinks.isLink(link)) {
+                    state.windowVisible.value = true
+                    state.bringToFront.value = System.currentTimeMillis()
+                    state.requestImport(DeepLinks.extract(link))
+                }
+            }
+        }
+        if (desktop.isSupported(java.awt.Desktop.Action.APP_EVENT_REOPENED)) {
+            desktop.addAppEventListener(java.awt.desktop.AppReopenedListener {
                 state.windowVisible.value = true
                 state.bringToFront.value = System.currentTimeMillis()
-                state.requestImport(DeepLinks.extract(link))
-            }
+            })
         }
     }
 }

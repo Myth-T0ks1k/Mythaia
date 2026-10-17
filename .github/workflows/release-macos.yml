@@ -1,0 +1,91 @@
+name: macOS release
+
+# Builds the macOS disk images (Apple silicon and Intel) on clean runners and
+# attaches them to the GitHub release of the pushed tag (draft or published),
+# then rewrites SHA256SUMS.txt so it covers every asset of the release. The
+# app is signed ad hoc: without a Developer ID it opens through
+# System Settings > Privacy & Security > Open Anyway on first launch.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v1.4.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  package:
+    name: Package (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Desktop modules only
+        run: sed -i '' -e '/include(":app")/d' -e '/include(":wear")/d' settings.gradle.kts
+
+      - name: Native library
+        run: sh desktop/native/macos/build.sh
+
+      - name: App bundle
+        run: ./gradlew :desktop:createDistributable --stacktrace
+
+      - name: Sign ad hoc and make the disk image
+        run: |
+          v="${TAG#v}"
+          app="desktop/build/compose/binaries/main/app/Mythaia Pro.app"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          mkdir -p dmgroot dist
+          cp -R "$app" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "Mythaia Pro" -srcfolder dmgroot -ov -format UDZO "dist/Mythaia-Pro-$v-macos-${{ matrix.arch }}.dmg"
+          ls -l dist
+
+      - name: Attach to the release
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  checksums:
+    name: Checksums for every asset
+    needs: package
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Rewrite SHA256SUMS.txt
+        run: |
+          mkdir all
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir all --pattern 'Mythaia-*' --clobber
+          (cd all && sha256sum Mythaia-* | sort -k2 | sed 's/  / */') > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
