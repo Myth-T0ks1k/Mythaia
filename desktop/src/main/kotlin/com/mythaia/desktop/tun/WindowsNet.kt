@@ -1,6 +1,5 @@
 package com.mythaia.desktop.tun
 
-import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.MythaiaLogger
 import com.sun.jna.Memory
 import com.sun.jna.platform.win32.Advapi32Util
@@ -10,40 +9,6 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.util.concurrent.TimeUnit
-
-/**
- * What the TUN engine needs to know about the physical network before it
- * takes the default route over: which interface carries it, through which
- * gateway, with which address, and which DNS servers it was using.
- */
-data class PhysicalPath(
-    val interfaceIndex: Int,
-    /** Null when the best route is on-link (no gateway). */
-    val gateway: String?,
-    /** The interface's IPv4 address, for binding sockets to it. */
-    val address: InetAddress,
-    /** The interface's IPv4 networks, as `address/prefix`, so on-link hosts are not given host routes. */
-    val networks: List<Pair<InetAddress, Int>>,
-    /** IPv4 DNS servers configured on that interface (static or DHCP). */
-    val dnsServers: List<String>
-) {
-    /** Whether [ip] is already reachable on-link through this interface. */
-    fun isOnLink(ip: InetAddress): Boolean {
-        val bytes = ip.address
-        return networks.any { (net, prefix) ->
-            val n = net.address
-            if (n.size != bytes.size) return@any false
-            var bits = prefix
-            for (i in n.indices) {
-                if (bits <= 0) return@any true
-                val mask = if (bits >= 8) 0xFF else (0xFF shl (8 - bits)) and 0xFF
-                if ((n[i].toInt() and mask) != (bytes[i].toInt() and mask)) return@any false
-                bits -= 8
-            }
-            true
-        }
-    }
-}
 
 /** Reading the Windows network state and running its configuration tools. */
 object WindowsNet {
@@ -174,10 +139,7 @@ object WindowsNet {
     }
 
     /** Resolves [host] to IPv4 literals, through the app's own cache (which is on the physical network once set). */
-    fun resolveV4(host: String): List<String> {
-        if (DnsCache.isIpAddress(host)) return if (host.contains(':')) emptyList() else listOf(host)
-        return runCatching { DnsCache.resolveAll(host) }.getOrDefault(emptyList()).filterNot { it.contains(':') }
-    }
+    fun resolveV4(host: String): List<String> = PhysicalNet.resolveV4(host)
 
     /** `in_addr` as `GetBestRoute` wants it: the four bytes in memory order. */
     internal fun packAddress(bytes: ByteArray): Int =
