@@ -31,6 +31,7 @@ struct ProxiesView: View {
     @State private var configuring: Subscription?
     @State private var share: SharePayload?
     @State private var toast: String?
+    @State private var showingChains = false
 
     var body: some View {
         NavigationStack {
@@ -45,6 +46,9 @@ struct ProxiesView: View {
                     }
                 }
                 .overlay(alignment: .bottom) { toastView }
+                .navigationDestination(isPresented: $showingChains) {
+                    ChainsView()
+                }
         }
         .sheet(item: $configuring) { subscription in
             SubscriptionSettingsView(subscription: subscription)
@@ -200,11 +204,17 @@ struct ProxiesView: View {
                 Label("Delete", systemImage: "trash")
             }
             Button {
+                model.openEditor(for: config)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .tint(Palette.azure)
+            Button {
                 shareLink(config)
             } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
-            .tint(Palette.azure)
+            .tint(Palette.slate)
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
@@ -235,6 +245,17 @@ struct ProxiesView: View {
                 shareLink(config)
             } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
+            }
+            Divider()
+            Button {
+                model.openEditor(for: config)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            Button {
+                model.openDuplicate(of: config)
+            } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
             }
             Button(role: .destructive) {
                 confirmation = .deleteServer(config)
@@ -278,6 +299,12 @@ struct ProxiesView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .navigationBarTrailing) {
+            Button {
+                showingChains = true
+            } label: {
+                Image(systemName: "link")
+            }
+            .accessibilityLabel(Text("Chains"))
             if let group = group, !model.configurations.isEmpty || !model.subscriptions.isEmpty {
                 groupMenu(group)
             }

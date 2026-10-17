@@ -63,6 +63,35 @@ struct AddRequest: Identifiable {
     var initialText: String
 }
 
+/// A request to open the server editor.
+struct EditorRequest: Identifiable {
+    enum Mode {
+        /// A new server, typed in by hand.
+        case new
+        /// Changes to an existing server, saved under its id.
+        case edit
+        /// A new server that starts as a copy of another.
+        case duplicate
+    }
+
+    let id = UUID()
+    var mode: Mode
+    var configuration: ProxyConfiguration?
+}
+
+/// The one sheet the root of the app shows at a time.
+enum RootSheet: Identifiable {
+    case add(AddRequest)
+    case editor(EditorRequest)
+
+    var id: UUID {
+        switch self {
+        case .add(let request): return request.id
+        case .editor(let request): return request.id
+        }
+    }
+}
+
 enum AppTab: Hashable {
     case home
     case proxies

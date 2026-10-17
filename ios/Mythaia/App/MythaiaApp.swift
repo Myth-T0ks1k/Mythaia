@@ -4,13 +4,24 @@ import MythaiaKit
 @main
 @MainActor
 struct MythaiaApp: App {
-    @StateObject private var model = AppModel()
+    @StateObject private var model: AppModel
+
+    init() {
+        // Made here rather than on first use: a background refresh starts
+        // the app without a window, and needs the model all the same.
+        let model = AppModel()
+        _model = StateObject(wrappedValue: model)
+        BackgroundRefresh.model = model
+    }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
                 .environmentObject(model.vpn)
+        }
+        .backgroundTask(.appRefresh(BackgroundRefresh.identifier)) {
+            await BackgroundRefresh.run()
         }
     }
 }
@@ -41,9 +52,15 @@ struct RootView: View {
                 .padding(.bottom, 58)
         }
         .preferredColorScheme(colorScheme)
-        .sheet(item: $model.addRequest) { request in
-            AddSheet(initialText: request.initialText)
-                .environmentObject(model)
+        .sheet(item: $model.rootSheet) { sheet in
+            switch sheet {
+            case .add(let request):
+                AddSheet(initialText: request.initialText)
+                    .environmentObject(model)
+            case .editor(let request):
+                ServerEditorView(request: request)
+                    .environmentObject(model)
+            }
         }
         .alert(model.alert?.title ?? "", isPresented: alertShown, presenting: model.alert) { _ in
             Button(role: .cancel) {} label: { Text("OK") }

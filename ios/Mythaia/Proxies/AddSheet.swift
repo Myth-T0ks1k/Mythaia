@@ -90,10 +90,19 @@ struct AddSheet: View {
                 Button {
                     showingScanner = true
                 } label: {
-                    Label("Scan QR code", systemImage: "qrcode.viewfinder")
+                    Image(systemName: "qrcode.viewfinder")
                 }
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
+                .accessibilityLabel(Text("Scan QR code"))
+                Button {
+                    model.openNewServer()
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .accessibilityLabel(Text("Manual"))
             }
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))

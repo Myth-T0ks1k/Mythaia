@@ -28,7 +28,12 @@ final class AppModel: ObservableObject {
     @Published var importingSubscription = false
     @Published var notice: SubscriptionNotice?
     @Published var alert: AppAlert?
-    @Published var addRequest: AddRequest?
+    /// The sheet over the whole app: Add, or the server editor.
+    @Published var rootSheet: RootSheet?
+    /// Chains' last latency checks.
+    @Published var chainLatency: [UUID: LatencyResult] = [:]
+    /// Certificate policy and routing rules, read by the tunnel too.
+    @Published var advanced: AdvancedSettings
     @Published var selectedTab: AppTab = .home
     /// The group shown on the Proxies screen.
     @Published var browsingGroupId: String = ProxyGroup.defaultId
@@ -62,6 +67,9 @@ final class AppModel: ObservableObject {
         self.configurations = store.loadConfigurations()
         self.subscriptions = store.loadSubscriptions()
         self.chains = store.loadChains()
+        let advanced = AdvancedSettingsStore.load()
+        self.advanced = advanced
+        advanced.applyCertificatePolicy()
         rebuildIndex()
         autoSelector = AutoSelector(
             recheckInterval: Double(max(settings.autoRecheckMinutes, 1) * 60),
@@ -384,8 +392,10 @@ final class AppModel: ObservableObject {
             if liveConfigId == nil {
                 liveConfigId = store.loadTunnelStart()?.configuration.id
             }
+            WidgetBridge.publish(connected: true, server: selectedConfiguration?.name)
         case .disconnected:
             liveConfigId = nil
+            WidgetBridge.publish(connected: false, server: selectedConfiguration?.name)
         default:
             break
         }
@@ -452,12 +462,12 @@ final class AppModel: ObservableObject {
         case .importText(let text):
             // Nothing is added until the user confirms in the Add sheet.
             selectedTab = .proxies
-            addRequest = AddRequest(initialText: text)
+            rootSheet = .add(AddRequest(initialText: text))
         }
     }
 
     func openAddSheet() {
-        addRequest = AddRequest(initialText: "")
+        rootSheet = .add(AddRequest(initialText: ""))
     }
 
     func sceneBecameActive() {
@@ -475,6 +485,7 @@ final class AppModel: ObservableObject {
         vpn.setForeground(false)
         autoLoop?.cancel()
         autoLoop = nil
+        scheduleBackgroundRefresh()
     }
 
     /// Auto in the tunnel may have moved to another server while the app was

@@ -137,6 +137,11 @@ struct SettingsView: View {
             } label: {
                 Label("Logs", systemImage: "doc.text.magnifyingglass")
             }
+            NavigationLink {
+                AdvancedSettingsView()
+            } label: {
+                Label("Advanced Settings", systemImage: "slider.horizontal.3")
+            }
         } header: {
             Text("General")
         } footer: {

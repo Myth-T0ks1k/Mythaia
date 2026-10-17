@@ -285,11 +285,7 @@ extension AppModel {
     /// On every open when the panel asks for it; otherwise once the update
     /// interval (the panel's, or a day) has passed.
     private func shouldRefreshOnOpen(_ subscription: Subscription) -> Bool {
-        if subscription.updateOnOpen { return true }
-        guard subscription.autoUpdate else { return false }
-        guard let last = subscription.lastUpdate else { return true }
-        let hours = Int64(max(subscription.updateIntervalHours ?? 24, 1))
-        return CoreBridge.nowMillis() - last >= hours * 60 * 60 * 1000
+        subscription.updateOnOpen || isAutoUpdateDue(subscription)
     }
 }
 

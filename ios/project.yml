@@ -41,6 +41,7 @@ targets:
     dependencies:
       - package: MythaiaKit
       - target: MythaiaTunnel
+      - target: MythaiaWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(MYTHAIA_BUNDLE_ID)
@@ -100,5 +101,30 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         INFOPLIST_KEY_CFBundleDisplayName: Mythaia Tunnel
         CODE_SIGN_ENTITLEMENTS: MythaiaTunnel/MythaiaTunnel.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: "YES"
+
+  # The home-screen widget (status and a connect button) and, on iOS 18, the
+  # Control Center toggle. It reads the state the app keeps in the App Group
+  # and starts or stops the app's VPN configuration.
+  MythaiaWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MythaiaWidget
+        excludes: ["**/*.md"]
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: AppIntents.framework
+      - sdk: NetworkExtension.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MYTHAIA_BUNDLE_ID).Widget
+        PRODUCT_NAME: MythaiaWidget
+        INFOPLIST_FILE: MythaiaWidget/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Mythaia Pro
+        CODE_SIGN_ENTITLEMENTS: MythaiaWidget/MythaiaWidget.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
         SKIP_INSTALL: "YES"
