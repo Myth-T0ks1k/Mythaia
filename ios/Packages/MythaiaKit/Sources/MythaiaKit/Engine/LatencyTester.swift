@@ -32,8 +32,11 @@ public enum LatencyTester {
         kind: LatencyKind,
         timeout: Double = 5
     ) async -> Int? {
-        // A layer-3 interface has no per-flow dial to time.
-        if configuration.outboundProtocol == .wireguard { return nil }
+        // A layer-3 interface has no per-flow dial to time; a WireGuard peer
+        // gets its real handshake instead, whatever the kind.
+        if configuration.outboundProtocol == .wireguard {
+            return await WireGuardProbe.measure(configuration, timeout: timeout)
+        }
         let bag = StreamBag()
         let nanoseconds = UInt64(max(0.1, timeout) * 1_000_000_000)
         // Closing the streams at the deadline is what ends a read that would

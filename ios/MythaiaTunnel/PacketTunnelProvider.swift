@@ -47,6 +47,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         start.groupConfigurations = AutoSelector.groupForTunnel(start.groupConfigurations, liveId: start.configuration.id)
+        // Certificate checks and ClientHello fragmentation as the user set
+        // them: the app keeps them in the App Group for this process.
+        AdvancedSettingsStore.load().applyCertificatePolicy()
+
+        // WireGuard is a layer-3 interface: it replaces the packet stack and
+        // the local proxy alike, whatever the tunnel mode says.
+        if start.configuration.outboundProtocol.isLayer3 {
+            startWireGuard(start, completionHandler: completionHandler)
+            return
+        }
 
         switch start.settings.tunnelMode {
         case .tun:
@@ -126,6 +136,111 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    // MARK: - WireGuard
+
+    /// WireGuard and AmneziaWG: the device's IP packets go straight into the
+    /// interface, which runs instead of the packet stack or the local proxy
+    /// whatever `tunnelMode` says. The profile's own addresses, DNS and MTU
+    /// shape the interface and its `AllowedIPs` are the routes. Domain routing
+    /// rules do not apply to a layer-3 profile — there are no flows to route,
+    /// only packets — and neither does Auto, which picks among stream servers
+    /// this interface cannot carry.
+    private func startWireGuard(_ start: TunnelStartOptions, completionHandler: @escaping (Error?) -> Void) {
+        var withoutAuto = start
+        withoutAuto.groupConfigurations = []
+        let wireGuardStart = withoutAuto
+        let configuration = start.configuration
+        Task { [weak self] in
+            guard let self else { return }
+            let plan: WireGuardEngine.Plan
+            do {
+                // The endpoint is resolved while the system's DNS is still its own.
+                plan = try await WireGuardEngine.plan(for: configuration)
+            } catch {
+                Log.error("WireGuard profile \(configuration.name) is not usable: \(error.localizedDescription)")
+                completionHandler(error)
+                return
+            }
+            self.setTunnelNetworkSettings(plan.networkSettings) { error in
+                if let error {
+                    Log.error("Tunnel settings were refused: \(error.localizedDescription)")
+                    completionHandler(error)
+                    return
+                }
+                let wireGuard: WireGuardEngine
+                do {
+                    wireGuard = try WireGuardEngine(packetFlow: self.packetFlow, plan: plan)
+                } catch {
+                    Log.error("WireGuard could not start: \(error.localizedDescription)")
+                    completionHandler(error)
+                    return
+                }
+                // Left running, a tunnel whose peer never answers keeps the
+                // routes while carrying nothing; stopping hands them back and
+                // tells the user what happened.
+                wireGuard.onFailure = { [weak self, weak wireGuard] reason in
+                    guard let self, let wireGuard, self.currentEngine() === wireGuard else { return }
+                    self.cancelTunnelWithError(MythaiaError.connectFailed("the WireGuard peer did not answer (\(reason))"))
+                }
+                wireGuard.onRestartNeeded = { [weak self] next in
+                    self?.restartEngine(with: next)
+                }
+                wireGuard.start()
+                self.withState {
+                    self.engine = wireGuard
+                    self.options = wireGuardStart
+                }
+                // Stops an Auto left from a previous server; with no group,
+                // none starts.
+                self.startAuto()
+                Log.info("Connected through \(configuration.name) (WireGuard), routes from its AllowedIPs")
+                completionHandler(nil)
+            }
+        }
+    }
+
+    /// Moves the running tunnel to `configuration` when either side of the
+    /// switch is WireGuard. A layer-3 interface and the packet stack (or the
+    /// proxy) need different network settings, and two WireGuard profiles
+    /// different addresses and routes, so the engine and its settings are
+    /// rebuilt rather than adjusted, as the Android service rebuilds its VPN.
+    private func restartEngine(with configuration: ProxyConfiguration) {
+        let (previous, saved) = withState { () -> (TunnelEngine?, TunnelStartOptions?) in
+            let old = engine
+            engine = nil
+            options?.configuration = configuration
+            return (old, options)
+        }
+        guard let start = saved else { return }
+        Log.info("Rebuilding the tunnel for \(configuration.name)")
+        reasserting = true
+        let finish: (Error?) -> Void = { [weak self] error in
+            self?.reasserting = false
+            if let error {
+                Log.error("The tunnel could not move to \(configuration.name): \(error.localizedDescription)")
+                self?.cancelTunnelWithError(error)
+            }
+        }
+        let begin: () -> Void = { [weak self] in
+            guard let self else { return }
+            if configuration.outboundProtocol.isLayer3 {
+                self.startWireGuard(start, completionHandler: finish)
+                return
+            }
+            switch start.settings.tunnelMode {
+            case .tun:
+                self.startTunMode(start, completionHandler: finish)
+            case .proxy:
+                self.startProxyMode(start, completionHandler: finish)
+            }
+        }
+        if let previous {
+            previous.shutdown(begin)
+        } else {
+            begin()
+        }
+    }
+
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         Log.info("Disconnecting (reason \(reason.rawValue))")
         var current: TunnelEngine?
@@ -139,11 +254,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         task?.cancel()
         guard let current else {
+            QuicClientPool.closeAll()
             completionHandler()
             return
         }
-        // TUN mode resets its connections on lwIP's queue before it finishes.
-        current.shutdown { completionHandler() }
+        // TUN mode resets its connections on lwIP's queue before it finishes;
+        // the QUIC sessions go after the flows that used them.
+        current.shutdown {
+            QuicClientPool.closeAll()
+            completionHandler()
+        }
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
@@ -191,6 +311,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         switch message {
         case .switchConfiguration(let configuration):
             guard let current = currentEngine() else { return TunnelReply.failure("The tunnel is not running") }
+            // To WireGuard from the packet stack or the proxy, the interface
+            // itself changes; WireGuardEngine asks for the same rebuild when
+            // it is handed a stream server.
+            if configuration.outboundProtocol.isLayer3 && !(current is WireGuardEngine) {
+                restartEngine(with: configuration)
+                return TunnelReply(configurationId: configuration.id, configurationName: configuration.name)
+            }
             current.use(configuration)
             withState { options?.configuration = configuration }
             Log.info("Switched to \(configuration.name)")
@@ -229,11 +356,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return TunnelReply.failure("No saved server to switch to")
         }
         start.groupConfigurations = AutoSelector.groupForTunnel(start.groupConfigurations, liveId: start.configuration.id)
+        AdvancedSettingsStore.load().applyCertificatePolicy()
+        if start.configuration.outboundProtocol.isLayer3 && !(current is WireGuardEngine) {
+            withState { options = start }
+            restartEngine(with: start.configuration)
+            return TunnelReply(configurationId: start.configuration.id, configurationName: start.configuration.name)
+        }
         current.route(with: makeRouter(start.settings))
         current.use(start.configuration)
         withState { options = start }
         Log.info("Settings reloaded; server \(start.configuration.name), \(start.settings.routingMode.rawValue) mode")
-        startAuto()
+        // A WireGuard profile is one interface, not a group: Auto would move
+        // the user off it.
+        if !start.configuration.outboundProtocol.isLayer3 {
+            startAuto()
+        }
         return statusReply(current)
     }
 
@@ -247,7 +384,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 return rulesDatabase
             }
         }
-        let router = Router(settings: settings, database: database)
+        // The user's own rules (Advanced settings) come first; they apply in
+        // rule mode, as the router decides.
+        let router = Router(settings: settings, database: database, rules: AdvancedSettingsStore.load().routeRules)
         if let code = settings.normalizedBypassCountryCode, settings.routingMode == .rule {
             Log.info("Bypass for \(code): \(router.bypassEntryCount) entries")
         }
