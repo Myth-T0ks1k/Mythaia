@@ -262,26 +262,36 @@ class QuicStream(
         outbound.close()
     }
 
-    /** Called from inside a native callback, so it must never ask ngtcp2 to write. */
+    /**
+     * Called from inside a native callback, so it must never ask ngtcp2 to
+     * write. Bytes read but not yet credited to the stream have had their
+     * connection credit already (see [creditConsumed]); bytes never read
+     * have had neither.
+     */
     private fun returnOutstandingCredit(wake: Boolean) {
-        val leftover = owedCredit.getAndSet(0) + buffered.getAndSet(0)
-        if (leftover > 0) connection.extendOffsets(streamId, leftover, wake)
+        val read = owedCredit.getAndSet(0)
+        val unread = buffered.getAndSet(0)
+        connection.extendOffsets(streamId, read + unread, unread, wake)
     }
 
+    /** Bytes that arrived and will never be read: both windows get them back. */
     private fun returnCredit(count: Long, wake: Boolean) {
-        if (count > 0) connection.extendOffsets(streamId, count, wake)
+        if (count > 0) connection.extendOffsets(streamId, count, count, wake)
     }
 
     /**
-     * Credits consumed bytes, but in batches: a MAX_STREAM_DATA per chunk would
-     * be a frame per read. The peer is told once half its window has been read,
-     * which is also when ngtcp2 decides the frame is worth sending.
+     * Credits consumed bytes: to the connection's shared tally at once, and
+     * to this stream in batches, since a MAX_STREAM_DATA per chunk would be a
+     * frame per read. The stream's peer is told once a quarter of its window
+     * has been read, which is also when ngtcp2 decides the frame is worth
+     * sending.
      */
     private fun creditConsumed(count: Long) {
+        connection.creditConnection(count)
         val owed = owedCredit.addAndGet(count)
         if (owed >= connection.streamCreditThreshold) {
             val flush = owedCredit.getAndSet(0)
-            if (flush > 0) connection.extendOffsets(streamId, flush, wake = true)
+            if (flush > 0) connection.extendOffsets(streamId, flush, 0, wake = true)
         }
     }
 

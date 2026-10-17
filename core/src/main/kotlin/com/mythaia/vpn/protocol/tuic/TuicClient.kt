@@ -4,8 +4,10 @@ import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.ProxyError
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.quic.QuicConnection
+import com.mythaia.vpn.protocol.quic.QuicRedialBackoff
 import com.mythaia.vpn.protocol.quic.QuicTuning
 import com.mythaia.vpn.util.MythaiaLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import com.mythaia.vpn.protocol.quic.QuicUdpFlow
 import com.mythaia.vpn.protocol.quic.UdpReassembler
 import java.util.concurrent.ConcurrentHashMap
@@ -40,7 +43,28 @@ private val logger = MythaiaLogger("Tuic")
 class TuicClient(private val configuration: ProxyConfiguration) {
 
     private val lock = Mutex()
+
+    /**
+     * The live session. Volatile because the UDP path and [dissociate] read
+     * it without [lock], and because [close] runs without it too: a session
+     * stored while [close] is running has to be seen by one side or the
+     * other, see [openSession].
+     */
+    @Volatile
     private var quic: QuicConnection? = null
+
+    /**
+     * Set by [close] and never cleared. The pool has already let go of a
+     * closed client, so a session brought up on it afterwards would belong to
+     * nobody: its keep-alive (15 s) beats the idle timeout (30 s), and it
+     * would hold a socket, two threads and a native connection for good.
+     */
+    @Volatile
+    private var closed = false
+
+    /** When the next attempt may dial after a failed one; see [QuicRedialBackoff]. */
+    private val backoff = QuicRedialBackoff()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
     private val udpFlows = ConcurrentHashMap<Int, QuicUdpFlow>()
     private val nextAssociation = AtomicInteger((System.nanoTime() and 0xFFFF).toInt())
@@ -91,7 +115,10 @@ class TuicClient(private val configuration: ProxyConfiguration) {
     }
 
     private suspend fun sendUdp(association: Int, host: String, port: Int, payload: ByteArray) {
-        val session = ensureSession()
+        val session = udpSession() ?: run {
+            logger.debug("[TUIC] UDP datagram dropped, no session (${payload.size} bytes to $host:$port)")
+            return
+        }
         val overhead = TuicProtocol.HEADER_SIZE + TuicProtocol.PACKET_HEADER_SIZE +
             TuicProtocol.encodeAddress(host, port).size
         // Split only above what one packet carries now, as tuic-rs does.
@@ -137,6 +164,9 @@ class TuicClient(private val configuration: ProxyConfiguration) {
 
     /** Ends everything: the session, the heartbeat, every UDP flow. */
     fun close() {
+        // First, so a dial queued on the lock or halfway through a handshake
+        // sees it and closes what it built instead of storing it.
+        closed = true
         resetSession()
         udpFlows.values.toList().forEach { it.cancel() }
         udpFlows.clear()
@@ -145,13 +175,75 @@ class TuicClient(private val configuration: ProxyConfiguration) {
 
     // MARK: - Session
 
-    private suspend fun ensureSession(): QuicConnection = lock.withLock {
+    /** The live session, or a new one; every dial waits here while one comes up. */
+    private suspend fun ensureSession(): QuicConnection {
+        if (closed) throw clientClosed()
+        return lock.withLock { sessionLocked() }
+    }
+
+    /**
+     * The session a UDP datagram can leave on now, or null to drop it.
+     *
+     * Never waits for [lock]: a datagram parked there for every packet of a
+     * call held its payload for as long as the server stayed unreachable. One
+     * that finds no session is dropped, as UDP may be. When nobody else is
+     * bringing a session up and the backoff has run out, this datagram's
+     * sender brings one up itself, so a UDP-only flow still recovers.
+     */
+    private suspend fun udpSession(): QuicConnection? {
         quic?.takeIf { it.isConnected }?.let { return it }
+        if (closed || backoff.remainingNanos() > 0 || !lock.tryLock()) return null
+        return try {
+            sessionLocked()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.debug("[TUIC] No session for UDP: ${e.message}")
+            null
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
+     * [ensureSession] for a caller that already holds [lock].
+     *
+     * A failed attempt is put on record, and until [backoff] allows another,
+     * every dial that reaches here fails at once with its reason instead of
+     * dialling again. A cancelled attempt says nothing about the server and is
+     * not recorded.
+     */
+    private suspend fun sessionLocked(): QuicConnection {
+        if (closed) throw clientClosed()
+        quic?.takeIf { it.isConnected }?.let { return it }
+        backoff.check("TUIC")
 
         // Not close(): that cancels the scope the heartbeat runs in, so after
         // the first reconnect the session went silent and the server dropped it.
         resetSession()
 
+        val connection = try {
+            openSession()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!closed) backoff.failed(e)
+            throw e
+        }
+        backoff.succeeded()
+        return connection
+    }
+
+    /**
+     * Dials, authenticates, starts the heartbeat, and stores the session.
+     *
+     * Whatever ends this early — a failure, the caller being cancelled, or
+     * [close] — closes the connection before it propagates. It is a socket,
+     * two threads and an ngtcp2 handle; left behind, it lives until the idle
+     * timeout, or for good once its handshake has completed and the
+     * keep-alive holds it open.
+     */
+    private suspend fun openSession(): QuicConnection {
         val tls = configuration.tls
         val connection = QuicConnection(
             serverName = configuration.serverAddress,
@@ -165,25 +257,39 @@ class TuicClient(private val configuration: ProxyConfiguration) {
             verifyName = tls?.verifyName
         )
         connection.onDatagramReceived = ::onDatagram
-        if (!connection.connect()) {
-            connection.close()
-            throw ProxyError.ProtocolError("TUIC: QUIC handshake failed")
-        }
 
         try {
-            authenticate(connection)
+            if (!connection.connect()) {
+                throw ProxyError.ProtocolError("TUIC: QUIC handshake failed")
+            }
+            if (closed) throw clientClosed()
+
+            // Bounded, because this runs under the lock: the command waits for
+            // congestion window like any stream write, and a server that went
+            // silent straight after the handshake would otherwise hold every
+            // queued dial until the 30 s idle timer.
+            withTimeoutOrNull(AUTH_TIMEOUT_MS) { authenticate(connection); true }
+                ?: throw ProxyError.ProtocolError("TUIC: authentication could not be sent")
         } catch (e: Throwable) {
-            // Otherwise the freshly built connection — socket, read/timer
-            // threads, ngtcp2 handle — leaks until idle timeout, and every
-            // later dial builds and leaks another.
             connection.close()
             throw e
         }
         startHeartbeat(connection)
 
         quic = connection
+        // close() may have run between the check above and this store. It
+        // sets its flag before it reads the field, and this stores before it
+        // reads the flag, so one side or the other always sees the session.
+        // This side closes its own connection rather than whatever the field
+        // holds now, which close() may already have cleared.
+        if (closed) {
+            connection.close()
+            throw clientClosed()
+        }
         return connection
     }
+
+    private fun clientClosed() = ProxyError.ConnectionFailed("TUIC: client closed")
 
     /**
      * Sends the `Authenticate` command on a unidirectional stream.
@@ -248,5 +354,8 @@ class TuicClient(private val configuration: ProxyConfiguration) {
 
         /** The TUIC packet size assumed while QUIC cannot say yet; see Hysteria's. */
         const val MAX_UDP_DATAGRAM = 1100
+
+        /** How long the `Authenticate` command may take to leave once QUIC is up. */
+        const val AUTH_TIMEOUT_MS = 10_000L
     }
 }

@@ -162,10 +162,21 @@ class QuicConnection(
         // The first flight goes out as soon as something asks ngtcp2 to write.
         flush()
 
-        return withTimeoutOrNull(timeoutMillis) { handshake.await() } ?: run {
-            logger.warning("[QUIC] Handshake to $serverName timed out")
+        // A caller cancelled during the handshake (a latency test's timeout,
+        // say) leaves by exception rather than through the timeout branch, so
+        // the connection is closed here too. Otherwise the socket, both threads
+        // and the ngtcp2 handle stay up with nobody holding them, and a
+        // handshake that completes afterwards is kept open for good by the
+        // keep-alive.
+        return try {
+            withTimeoutOrNull(timeoutMillis) { handshake.await() } ?: run {
+                logger.warning("[QUIC] Handshake to $serverName timed out")
+                close()
+                false
+            }
+        } catch (e: Throwable) {
             close()
-            false
+            throw e
         }
     }
 
@@ -284,14 +295,28 @@ class QuicConnection(
     }
 
     /**
-     * Half the stream receive window: how much a stream lets the app consume
-     * before it hands the credit back. Large enough that ngtcp2 sends a
-     * MAX_STREAM_DATA for each batch (it does so once a quarter of the window
-     * is owed), small enough that the peer never waits for the whole window
-     * to drain.
+     * A quarter of the stream receive window: how much a stream lets the app
+     * consume before it hands that stream's credit back. Large enough that
+     * ngtcp2 sends a MAX_STREAM_DATA for each batch (it does so once a quarter
+     * of the window is owed), small enough that the peer never waits for the
+     * whole window to drain.
      */
     internal val streamCreditThreshold: Long =
-        (tuning.initialMaxStreamDataBidiLocal / 2).coerceAtLeast(1)
+        (tuning.initialMaxStreamDataBidiLocal / 4).coerceAtLeast(1)
+
+    /**
+     * Connection credit consumed and not yet handed back, across all streams.
+     *
+     * The connection window is shared, so it is credited from one tally
+     * rather than with each stream's batch: per stream, every stream that
+     * went quiet partway through a batch held its unreturned bytes back from
+     * the connection window, and a browser's dozen idle keep-alive
+     * connections could shut the window for every stream on the session.
+     */
+    private val owedConnectionCredit = java.util.concurrent.atomic.AtomicLong(0)
+
+    /** An eighth of the connection window, so the peer always has most of it. */
+    private val connectionCreditThreshold: Long = (tuning.initialMaxData / 8).coerceAtLeast(1)
 
     /**
      * Sends one unreliable datagram, now or as soon as the congestion window
@@ -369,22 +394,34 @@ class QuicConnection(
      * peer is simply not allowed to send more. Crediting too early is the
      * opposite failure: the peer fills the heap faster than the app reads.
      *
-     * [wake] asks for the MAX_STREAM_DATA / MAX_DATA frames to leave now
-     * rather than on the next read or timer; it must be false from inside a
-     * native callback, where ngtcp2 may not be asked to write.
+     * [streamCount] reopens stream [streamId]'s window (a negative id: none),
+     * [connectionCount] the connection's. [wake] asks for the MAX_STREAM_DATA
+     * / MAX_DATA frames to leave now rather than on the next read or timer; it
+     * must be false from inside a native callback, where ngtcp2 may not be
+     * asked to write.
      */
-    internal fun extendOffsets(streamId: Long, count: Long, wake: Boolean) {
-        if (count <= 0) return
+    internal fun extendOffsets(streamId: Long, streamCount: Long, connectionCount: Long, wake: Boolean) {
+        if (streamCount <= 0 && connectionCount <= 0) return
         synchronized(engineLock) {
             if (handle == 0L) return
-            var left = count
-            while (left > 0) {
-                val piece = minOf(left, Int.MAX_VALUE.toLong()).toInt()
-                NativeBridge.nativeQuicExtendOffsets(handle, streamId, piece)
-                left -= piece
+            var stream = maxOf(streamCount, 0)
+            var connection = maxOf(connectionCount, 0)
+            while (stream > 0 || connection > 0) {
+                val s = minOf(stream, Int.MAX_VALUE.toLong()).toInt()
+                val c = minOf(connection, Int.MAX_VALUE.toLong()).toInt()
+                NativeBridge.nativeQuicExtendOffsets(handle, streamId, s, c)
+                stream -= s
+                connection -= c
             }
         }
         if (wake) flush()
+    }
+
+    /** Bytes the app has read, for the connection window; see [owedConnectionCredit]. */
+    internal fun creditConnection(count: Long) {
+        if (count <= 0 || owedConnectionCredit.addAndGet(count) < connectionCreditThreshold) return
+        val flush = owedConnectionCredit.getAndSet(0)
+        if (flush > 0) extendOffsets(-1, 0, flush, wake = true)
     }
 
     // MARK: - Event loop
@@ -527,7 +564,7 @@ class QuicConnection(
             // stream, say). Nobody reads it, so the credit it consumed is
             // handed straight back; otherwise every byte on it shrinks the
             // connection window for good.
-            extendOffsets(streamId, data.size.toLong(), wake = false)
+            extendOffsets(streamId, data.size.toLong(), data.size.toLong(), wake = false)
             return
         }
         // The credit comes back when the app reads the bytes, not here: see

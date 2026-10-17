@@ -53,6 +53,36 @@
 #define TUNING_LEN 12
 #define TUNING_KEEP_ALIVE_INDEX 11
 
+/*
+ * Stream data ngtcp2 has taken but the peer has not acknowledged yet.
+ *
+ * ngtcp2 does not copy stream data: the STREAM frames it builds point into
+ * the caller's bytes, and every retransmission of a lost packet reads them
+ * again. They must stay intact until acked_stream_data_offset reports them
+ * acknowledged or stream_close says the stream is gone (ngtcp2.h,
+ * ngtcp2_conn_writev_stream). Handing ngtcp2 the JVM's temporary copy and
+ * releasing it on return made every retransmission read freed memory — an
+ * access violation that took the whole app down once a packet was lost, or
+ * freed heap bytes sent to the server when it did not.
+ *
+ * So each write copies what it offers into a chunk of its own, and a chunk
+ * whose bytes went into a packet is kept on its stream's list, oldest first,
+ * until the acknowledgement passes its end.
+ */
+typedef struct sent_chunk {
+  struct sent_chunk *next;
+  uint64_t end; /* the stream offset just past this chunk's bytes */
+  uint8_t data[];
+} sent_chunk;
+
+typedef struct sent_stream {
+  struct sent_stream *prev;
+  struct sent_stream *next;
+  uint64_t offset; /* stream bytes ngtcp2 has accepted so far */
+  sent_chunk *head;
+  sent_chunk *tail;
+} sent_stream;
+
 typedef struct {
   ngtcp2_crypto_conn_ref conn_ref; /* must stay first: ngtcp2 casts to it */
   ngtcp2_conn *conn;
@@ -70,6 +100,10 @@ typedef struct {
   struct sockaddr_storage remote_addr;
   ngtcp2_socklen local_len;
   ngtcp2_socklen remote_len;
+
+  /* Every stream with data in flight, so freeing the connection frees them
+     too: ngtcp2_conn_del calls no stream_close. */
+  sent_stream *sent;
 
   uint8_t out[MAX_DATAGRAM];
 } quic_conn;
@@ -116,6 +150,73 @@ static jbyteArray to_java_bytes(JNIEnv *env, const uint8_t *data, size_t len) {
   }
   (*env)->SetByteArrayRegion(env, array, 0, (jsize)len, (const jbyte *)data);
   return array;
+}
+
+/* The in-flight list of |stream_id|, made on its first write; NULL when the
+   stream does not exist or memory ran out. */
+static sent_stream *sent_stream_for(quic_conn *qc, int64_t stream_id) {
+  sent_stream *s =
+    (sent_stream *)ngtcp2_conn_get_stream_user_data2(qc->conn, stream_id);
+  if (s != NULL) {
+    return s;
+  }
+  s = calloc(1, sizeof(sent_stream));
+  if (s == NULL) {
+    return NULL;
+  }
+  if (ngtcp2_conn_set_stream_user_data(qc->conn, stream_id, s) != 0) {
+    free(s);
+    return NULL;
+  }
+  s->next = qc->sent;
+  if (qc->sent != NULL) {
+    qc->sent->prev = s;
+  }
+  qc->sent = s;
+  return s;
+}
+
+static void sent_stream_free(quic_conn *qc, sent_stream *s) {
+  sent_chunk *c = s->head;
+  while (c != NULL) {
+    sent_chunk *next = c->next;
+    free(c);
+    c = next;
+  }
+  if (s->prev != NULL) {
+    s->prev->next = s->next;
+  } else {
+    qc->sent = s->next;
+  }
+  if (s->next != NULL) {
+    s->next->prev = s->prev;
+  }
+  free(s);
+}
+
+/* The peer has every byte below offset + datalen: those chunks can go. Called
+   per stream in increasing offset order, without gaps or overlap. */
+static int on_acked_stream_data_offset(ngtcp2_conn *conn, int64_t stream_id,
+                                       uint64_t offset, uint64_t datalen,
+                                       void *user_data,
+                                       void *stream_user_data) {
+  (void)conn;
+  (void)stream_id;
+  (void)user_data;
+  sent_stream *s = (sent_stream *)stream_user_data;
+  if (s == NULL) {
+    return 0;
+  }
+  uint64_t acked = offset + datalen;
+  while (s->head != NULL && s->head->end <= acked) {
+    sent_chunk *c = s->head;
+    s->head = c->next;
+    free(c);
+  }
+  if (s->head == NULL) {
+    s->tail = NULL;
+  }
+  return 0;
 }
 
 /* -------------------------------------------------------------------------
@@ -285,9 +386,13 @@ static int on_stream_close(ngtcp2_conn *conn, uint32_t flags,
                            int64_t stream_id, uint64_t app_error_code,
                            void *user_data, void *stream_user_data) {
   quic_conn *qc = (quic_conn *)user_data;
-  (void)conn;
   (void)flags;
-  (void)stream_user_data;
+
+  /* ngtcp2 never reads this stream's data again, acknowledged or not. */
+  if (stream_user_data != NULL) {
+    ngtcp2_conn_set_stream_user_data(conn, stream_id, NULL);
+    sent_stream_free(qc, (sent_stream *)stream_user_data);
+  }
 
   int attached = 0;
   JNIEnv *env = attach(qc, &attached);
@@ -528,6 +633,7 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnCreate(
   callbacks.version_negotiation = ngtcp2_crypto_version_negotiation_cb;
   callbacks.recv_stream_data = on_recv_stream_data;
   callbacks.stream_close = on_stream_close;
+  callbacks.acked_stream_data_offset = on_acked_stream_data_offset;
   callbacks.stream_reset = on_stream_reset;
   callbacks.handshake_completed = on_handshake_completed;
   callbacks.rand = on_rand;
@@ -690,6 +796,10 @@ JNIEXPORT void JNICALL Java_com_mythaia_vpn_NativeBridge_nativeQuicConnFree(
   if (qc->conn != NULL) {
     ngtcp2_conn_del(qc->conn);
   }
+  /* Only after the connection: until then its frames point into these. */
+  while (qc->sent != NULL) {
+    sent_stream_free(qc, qc->sent);
+  }
   if (qc->callback != NULL) {
     (*env)->DeleteGlobalRef(env, qc->callback);
   }
@@ -828,17 +938,37 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
     return NULL;
   }
 
-  jsize len = data == NULL ? 0 : (*env)->GetArrayLength(env, data);
-  jbyte *bytes = NULL;
+  jsize total = data == NULL ? 0 : (*env)->GetArrayLength(env, data);
+  /* One packet never carries more than this, so offering more only copied
+     bytes that went back unread; the caller offers the rest again. The FIN
+     belongs after the last byte, so it waits for the call that offers it. */
+  jsize len = total > MAX_DATAGRAM ? MAX_DATAGRAM : total;
+  if (len < total) {
+    fin = JNI_FALSE;
+  }
+
+  /* See sent_chunk: the bytes must outlive this call. */
+  sent_stream *stream = NULL;
+  sent_chunk *chunk = NULL;
   if (len > 0) {
-    bytes = (*env)->GetByteArrayElements(env, data, NULL);
-    if (bytes == NULL) {
+    stream = sent_stream_for(qc, (int64_t)stream_id);
+    chunk = stream == NULL ? NULL : malloc(sizeof(sent_chunk) + (size_t)len);
+    if (chunk == NULL) {
+      /* The stream is gone (closed, reset) or memory ran out: terminal
+         either way, and never a 0 the caller would offer again at once. */
+      if (accepted_out != NULL) {
+        jlong reported =
+          stream == NULL ? NGTCP2_ERR_STREAM_NOT_FOUND : NGTCP2_ERR_NOMEM;
+        (*env)->SetLongArrayRegion(env, accepted_out, 0, 1, &reported);
+      }
       return NULL;
     }
+    chunk->next = NULL;
+    (*env)->GetByteArrayRegion(env, data, 0, len, (jbyte *)chunk->data);
   }
 
   ngtcp2_vec vec;
-  vec.base = (uint8_t *)bytes;
+  vec.base = chunk == NULL ? NULL : chunk->data;
   vec.len = (size_t)len;
 
   ngtcp2_path_storage ps;
@@ -856,8 +986,24 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
     (int64_t)stream_id, len > 0 ? &vec : NULL, len > 0 ? 1 : 0,
     timestamp_ns());
 
-  if (bytes != NULL) {
-    (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
+  if (chunk != NULL) {
+    /* A stream the call itself closed has had its list freed in
+       on_stream_close, and ngtcp2 no longer reads its data. */
+    int alive = ngtcp2_conn_get_stream_user_data2(
+                  qc->conn, (int64_t)stream_id) == (void *)stream;
+    if (accepted > 0 && alive) {
+      /* In a packet now, and in every retransmission of it. */
+      stream->offset += (uint64_t)accepted;
+      chunk->end = stream->offset;
+      if (stream->tail != NULL) {
+        stream->tail->next = chunk;
+      } else {
+        stream->head = chunk;
+      }
+      stream->tail = chunk;
+    } else {
+      free(chunk);
+    }
   }
 
   if (accepted_out != NULL) {
@@ -1253,21 +1399,31 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicShutdownStream(
 }
 
 /*
- * Tells the peer we have consumed [count] bytes of a stream.
+ * Tells the peer we have consumed bytes: [stream_count] of one stream's
+ * window and [connection_count] of the connection's.
  *
  * Without this the peer's flow-control window closes and the transfer stalls
- * partway through with no error anywhere.
+ * partway through with no error anywhere. The two are separate because the
+ * caller credits them on different schedules: a stream in batches, the
+ * connection as a whole — crediting the connection per stream let streams
+ * that went quiet each hold back a batch, and enough of them shut the window
+ * for every stream on the connection.
  */
 JNIEXPORT void JNICALL
 Java_com_mythaia_vpn_NativeBridge_nativeQuicExtendOffsets(
-  JNIEnv *env, jclass clazz, jlong handle, jlong stream_id, jint count) {
+  JNIEnv *env, jclass clazz, jlong handle, jlong stream_id, jint stream_count,
+  jint connection_count) {
   (void)env;
   (void)clazz;
   quic_conn *qc = (quic_conn *)(intptr_t)handle;
   if (qc == NULL || qc->conn == NULL) {
     return;
   }
-  ngtcp2_conn_extend_max_stream_offset(qc->conn, (int64_t)stream_id,
-                                       (uint64_t)count);
-  ngtcp2_conn_extend_max_offset(qc->conn, (uint64_t)count);
+  if (stream_id >= 0 && stream_count > 0) {
+    ngtcp2_conn_extend_max_stream_offset(qc->conn, (int64_t)stream_id,
+                                         (uint64_t)stream_count);
+  }
+  if (connection_count > 0) {
+    ngtcp2_conn_extend_max_offset(qc->conn, (uint64_t)connection_count);
+  }
 }

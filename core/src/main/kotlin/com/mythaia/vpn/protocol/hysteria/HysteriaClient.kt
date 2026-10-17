@@ -8,6 +8,7 @@ import com.mythaia.vpn.protocol.http3.Http3FrameType
 import com.mythaia.vpn.protocol.http3.Http3Framer
 import com.mythaia.vpn.protocol.http3.QpackEncoder
 import com.mythaia.vpn.protocol.quic.QuicConnection
+import com.mythaia.vpn.protocol.quic.QuicRedialBackoff
 import com.mythaia.vpn.protocol.quic.QuicStream
 import com.mythaia.vpn.protocol.quic.QuicTuning
 import com.mythaia.vpn.util.MythaiaLogger
@@ -15,10 +16,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.mythaia.vpn.protocol.quic.QuicUdpFlow
 import com.mythaia.vpn.protocol.quic.UdpReassembler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -43,8 +46,30 @@ private val logger = MythaiaLogger("Hysteria")
 class HysteriaClient(private val configuration: ProxyConfiguration) {
 
     private val lock = Mutex()
+
+    /**
+     * The live session and its HTTP/3 layer. Volatile because the UDP path
+     * reads [quic] without [lock], and because [close] runs without it too:
+     * a session stored while [close] is running has to be seen by one side or
+     * the other, see [openSession].
+     */
+    @Volatile
     private var quic: QuicConnection? = null
+
+    @Volatile
     private var http3: Http3Connection? = null
+
+    /**
+     * Set by [close] and never cleared. The pool has already let go of a
+     * closed client, so a session brought up on it afterwards would belong to
+     * nobody: its keep-alive (15 s) beats the idle timeout (30 s), and it
+     * would hold a socket, two threads and a native connection for good.
+     */
+    @Volatile
+    private var closed = false
+
+    /** When the next attempt may dial after a failed one; see [QuicRedialBackoff]. */
+    private val backoff = QuicRedialBackoff()
 
     /** The rate the server told us to send at, from `Hysteria-CC-RX`. */
     @Volatile
@@ -129,7 +154,10 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
      * not fit — QUIC Initial packets from an app are 1200+ bytes on their own.
      */
     private suspend fun sendUdp(sessionId: Long, address: String, payload: ByteArray) {
-        val session = ensureSession()
+        val session = udpSession() ?: run {
+            logger.debug("[Hysteria] UDP datagram dropped, no session (${payload.size} bytes to $address)")
+            return
+        }
         val room = datagramLimit(session) - HysteriaProtocol.udpHeaderSize(address)
         val packetId = nextPacketId.getAndIncrement() and 0xFFFF
         if (payload.size <= room) {
@@ -170,6 +198,9 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
 
     /** Ends everything: the session, every UDP flow, and the flows' scope. */
     fun close() {
+        // First, so a dial queued on the lock or halfway through a handshake
+        // sees it and closes what it built instead of storing it.
+        closed = true
         resetSession()
         udpFlows.values.toList().forEach { it.cancel() }
         udpFlows.clear()
@@ -178,14 +209,76 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
 
     // MARK: - Session
 
-    private suspend fun ensureSession(): QuicConnection = lock.withLock {
+    /** The live session, or a new one; every dial waits here while one comes up. */
+    private suspend fun ensureSession(): QuicConnection {
+        if (closed) throw clientClosed()
+        return lock.withLock { sessionLocked() }
+    }
+
+    /**
+     * The session a UDP datagram can leave on now, or null to drop it.
+     *
+     * Never waits for [lock]. Every datagram used to call [ensureSession], so
+     * while the server was unreachable each packet of a call or a game became
+     * a coroutine parked on the lock with its payload, behind one handshake
+     * per waiter, and memory grew for as long as the outage lasted. UDP may
+     * lose packets, so one that finds no session is dropped. When nobody else
+     * is bringing a session up and the backoff has run out, this datagram's
+     * sender brings one up itself, so a flow that only ever sends UDP still
+     * recovers on its own.
+     */
+    private suspend fun udpSession(): QuicConnection? {
         quic?.takeIf { it.isConnected }?.let { return it }
+        if (closed || backoff.remainingNanos() > 0 || !lock.tryLock()) return null
+        return try {
+            sessionLocked()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.debug("[Hysteria] No session for UDP: ${e.message}")
+            null
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
+     * [ensureSession] for a caller that already holds [lock].
+     *
+     * A failed attempt is put on record, and until [backoff] allows another,
+     * every dial that reaches here fails at once with its reason instead of
+     * dialling again. A cancelled attempt says nothing about the server and is
+     * not recorded.
+     */
+    private suspend fun sessionLocked(): QuicConnection {
+        if (closed) throw clientClosed()
+        quic?.takeIf { it.isConnected }?.let { return it }
+        backoff.check("Hysteria")
 
         resetSession()
 
-        // NAIVE grants the unidirectional stream credit HTTP/3 needs for the
-        // server's control stream, which is what the authentication rides on.
-        val tuning = QuicTuning.NAIVE
+        val connection = try {
+            openSession()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!closed) backoff.failed(e)
+            throw e
+        }
+        backoff.succeeded()
+        return connection
+    }
+
+    /**
+     * Dials, starts HTTP/3, authenticates, and stores the session.
+     *
+     * Whatever ends this early — a failure, the caller being cancelled, or
+     * [close] — closes what was built so far before it propagates. The QUIC
+     * connection is a socket, two threads and an ngtcp2 handle; left behind,
+     * it lives until the idle timeout, or for good once its handshake has
+     * completed and the keep-alive holds it open.
+     */
+    private suspend fun openSession(): QuicConnection {
         // The link's obfs/obfs-password; a type this build does not speak is
         // refused here rather than dialled in the clear.
         val obfuscation = HysteriaObfuscation.make(configuration.obfuscation, configuration.obfuscationPassword)
@@ -197,7 +290,9 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             serverName = configuration.serverAddress,
             serverPort = configuration.serverPort.toInt(),
             alpn = listOf(ALPN),
-            tuning = tuning,
+            // NAIVE grants the unidirectional stream credit HTTP/3 needs for the
+            // server's control stream, which is what the authentication rides on.
+            tuning = QuicTuning.NAIVE,
             fingerprint = tls?.fingerprint ?: com.mythaia.data.model.TlsFingerprint.CHROME_133,
             tlsServerName = tls?.serverName?.takeIf { it.isNotBlank() } ?: configuration.serverAddress,
             allowInsecure = tls?.allowInsecure == true,
@@ -208,34 +303,49 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         // Registered before the handshake so no reply to a UDP flow is lost
         // to a session that is still coming up.
         connection.onDatagramReceived = ::onDatagram
-        if (!connection.connect()) {
-            connection.close()
-            throw ProxyError.ProtocolError("Hysteria: QUIC handshake failed")
-        }
 
-        // Plain SETTINGS: with H3_DATAGRAM announced, the server's HTTP/3 layer
-        // takes every QUIC datagram for itself and UDP relaying goes silent.
-        val h3 = Http3Connection(connection, com.mythaia.vpn.protocol.http3.Http3Framer.PLAIN_CLIENT_SETTINGS)
-        if (!h3.start()) {
-            connection.close()
-            throw ProxyError.ProtocolError("Hysteria: could not start HTTP/3")
-        }
-
+        var h3: Http3Connection? = null
         try {
-            authenticate(h3)
+            if (!connection.connect()) {
+                throw ProxyError.ProtocolError("Hysteria: QUIC handshake failed")
+            }
+            if (closed) throw clientClosed()
+
+            // Plain SETTINGS: with H3_DATAGRAM announced, the server's HTTP/3 layer
+            // takes every QUIC datagram for itself and UDP relaying goes silent.
+            val started = Http3Connection(connection, Http3Framer.PLAIN_CLIENT_SETTINGS)
+            h3 = started
+            if (!started.start()) {
+                throw ProxyError.ProtocolError("Hysteria: could not start HTTP/3")
+            }
+
+            // Bounded, because this runs under the lock: a server that
+            // completes QUIC but never answers the request would otherwise
+            // hold every queued dial until the 30 s idle timer.
+            withTimeoutOrNull(AUTH_TIMEOUT_MS) { authenticate(started); true }
+                ?: throw ProxyError.ProtocolError("Hysteria: no answer to authentication")
         } catch (e: Throwable) {
-            // The QUIC connection (socket, read/timer threads, ngtcp2 handle)
-            // and the HTTP/3 layer would otherwise leak until idle timeout, and
-            // every later dial would build and leak another.
-            h3.close()
+            h3?.close()
             connection.close()
             throw e
         }
 
         quic = connection
         http3 = h3
+        // close() may have run between the check above and these stores. It
+        // sets its flag before it reads the fields, and this stores before it
+        // reads the flag, so one side or the other always sees the session.
+        // This side closes its own objects rather than whatever the fields
+        // hold now, which close() may already have cleared.
+        if (closed) {
+            h3?.close()
+            connection.close()
+            throw clientClosed()
+        }
         return connection
     }
+
+    private fun clientClosed() = ProxyError.ConnectionFailed("Hysteria: client closed")
 
     /**
      * The masquerading authentication request.
@@ -261,8 +371,11 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
         val stream = h3.request(headers, fin = true)
             ?: throw ProxyError.ProtocolError("Hysteria: no stream for authentication")
 
-        val fields = readResponseHeaders(stream)
-        stream.cancel()
+        val fields = try {
+            readResponseHeaders(stream)
+        } finally {
+            stream.cancel()
+        }
 
         val status = fields[HysteriaProtocol.HEADER_STATUS]?.toIntOrNull()
         if (status != HysteriaProtocol.AUTH_SUCCESS_STATUS) {
@@ -318,6 +431,13 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             val chunk = stream.receive()
                 ?: throw ProxyError.ProtocolError("Hysteria: connection closed during authentication")
             buffer += chunk
+            // A masquerading server answers with whatever its site sends, and
+            // this runs under the session lock: without a ceiling, a frame
+            // that never completes could pile up to the connection window on
+            // the heap while every dial waits.
+            if (buffer.size > MAX_AUTH_RESPONSE) {
+                throw ProxyError.ProtocolError("Hysteria: authentication response too large")
+            }
         }
     }
 
@@ -349,6 +469,15 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
     private companion object {
         const val ALPN = "h3"
         const val MAX_RESPONSE = 8192
+
+        /** The most the authentication reply may buffer before its HEADERS frame completes. */
+        const val MAX_AUTH_RESPONSE = 64 * 1024
+
+        /**
+         * How long the server has to answer the authentication request once
+         * HTTP/3 is up; a handshake-length wait, since both cross the path once.
+         */
+        const val AUTH_TIMEOUT_MS = 10_000L
 
         /**
          * The Hysteria UDP message size assumed while QUIC cannot say yet:

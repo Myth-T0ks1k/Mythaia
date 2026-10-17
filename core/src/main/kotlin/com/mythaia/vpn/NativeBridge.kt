@@ -425,7 +425,9 @@ object NativeBridge {
     external fun nativeQuicShutdownStream(handle: Long, streamId: Long, errorCode: Long)
 
     /**
-     * Reports that [count] bytes of a stream have been consumed.
+     * Reports consumed bytes: [streamCount] of stream [streamId]'s window
+     * (none when the id is negative) and [connectionCount] of the
+     * connection's.
      *
      * Without it the peer's flow-control window closes and the transfer stalls
      * partway through with nothing logged anywhere. It queues MAX_STREAM_DATA
@@ -433,7 +435,7 @@ object NativeBridge {
      * to leave.
      */
     @JvmStatic
-    external fun nativeQuicExtendOffsets(handle: Long, streamId: Long, count: Int)
+    external fun nativeQuicExtendOffsets(handle: Long, streamId: Long, streamCount: Int, connectionCount: Int)
 
     @JvmStatic
     external fun nativeQuicSelfTest(): String?
