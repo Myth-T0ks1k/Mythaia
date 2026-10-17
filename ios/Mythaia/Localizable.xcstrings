@@ -4920,6 +4920,59 @@
         }
       }
     },
+    "Fragmentation": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Фрагментация"
+          }
+        },
+        "tk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bölmek"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分片"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تکه‌تکه‌سازی"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التجزئة"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fragmentación"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phân mảnh"
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "အပိုင်းခွဲခြင်း"
+          }
+        }
+      }
+    },
     "From the provider": {
       "extractionState": "manual",
       "localizations": {
@@ -8259,6 +8312,112 @@
         }
       }
     },
+    "Pause, ms": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пауза, мс"
+          }
+        },
+        "tk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arakesme, ms"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "间隔（毫秒）"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مکث، میلی‌ثانیه"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التوقف، ملّي ثانية"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pausa, ms"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khoảng dừng, ms"
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ခေတ္တရပ်ချိန်၊ ms"
+          }
+        }
+      }
+    },
+    "Piece size, bytes": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Размер куска, байт"
+          }
+        },
+        "tk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bölegiň ölçegi, baýt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分片大小（字节）"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اندازه هر تکه، بایت"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حجم القطعة، بايت"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tamaño del fragmento, bytes"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kích thước mảnh, byte"
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "အပိုင်းအရွယ်အစား၊ ဘိုက်"
+          }
+        }
+      }
+    },
     "Ping": {
       "extractionState": "manual",
       "localizations": {
@@ -10146,6 +10305,59 @@
         }
       }
     },
+    "Sends the first packet of each TLS connection to a server in small pieces, so filters that read the server name do not see it whole. A server whose link sets its own fragmentation uses that.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Первый пакет каждого TLS-соединения с сервером уходит маленькими кусками, чтобы фильтры, читающие имя сервера, не видели его целиком. Сервер, в ссылке которого задана своя фрагментация, использует её."
+          }
+        },
+        "tk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serwere her TLS birikmesiniň ilkinji paketi kiçi böleklerde iberilýär, şonuň üçin serweriň adyny okaýan süzgüçler ony doly görmeýär. Salgysynda öz bölmegi bellenen serwer şony ulanýar."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与服务器的每个 TLS 连接的第一个数据包会被分成小块发送，使读取服务器名称的过滤器无法看到完整内容。链接中自带分片设置的服务器使用其自身设置。"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "نخستین بسته هر اتصال TLS به سرور در تکه‌های کوچک فرستاده می‌شود تا فیلترهایی که نام سرور را می‌خوانند آن را کامل نبینند. سروری که پیوندش تکه‌تکه‌سازی خودش را دارد از همان استفاده می‌کند."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تُرسل أول حزمة من كل اتصال TLS بالخادم في قطع صغيرة، فلا ترى المرشحات التي تقرأ اسم الخادم الاسم كاملاً. الخادم الذي يحدد رابطه تجزئته الخاصة يستخدمها."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El primer paquete de cada conexión TLS con un servidor se envía en trozos pequeños, para que los filtros que leen el nombre del servidor no lo vean entero. Un servidor cuyo enlace define su propia fragmentación usa la suya."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gói đầu tiên của mỗi kết nối TLS tới máy chủ được gửi thành các mảnh nhỏ, để bộ lọc đọc tên máy chủ không thấy trọn vẹn. Máy chủ có liên kết tự đặt phân mảnh sẽ dùng thiết lập đó."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ဆာဗာသို့ TLS ချိတ်ဆက်မှုတိုင်း၏ ပထမပက်ကက်ကို အပိုင်းငယ်များဖြင့် ပို့သဖြင့် ဆာဗာအမည်ကို ဖတ်သော စစ်ထုတ်မှုများက အပြည့်အစုံ မမြင်ရပါ။ ကိုယ်ပိုင် အပိုင်းခွဲမှု သတ်မှတ်ထားသော လင့်ခ်ရှိ ဆာဗာသည် ၎င်းကို အသုံးပြုသည်။"
+          }
+        }
+      }
+    },
     "Server": {
       "extractionState": "manual",
       "localizations": {
@@ -10778,6 +10990,59 @@
           "stringUnit": {
             "state": "translated",
             "value": "GitHub ပေါ်ရှိ source code"
+          }
+        }
+      }
+    },
+    "Split the TLS ClientHello": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дробить TLS ClientHello"
+          }
+        },
+        "tk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TLS ClientHello-ny bölmek"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拆分 TLS ClientHello"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تکه‌تکه کردن TLS ClientHello"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تقسيم TLS ClientHello"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dividir el ClientHello de TLS"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chia nhỏ TLS ClientHello"
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TLS ClientHello ကို အပိုင်းခွဲရန်"
           }
         }
       }

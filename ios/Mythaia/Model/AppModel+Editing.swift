@@ -108,6 +108,12 @@ extension AppModel {
         pushSettingsToTunnel()
     }
 
+    func setFragment(_ fragment: FragmentSettings) {
+        var copy = advanced
+        copy.fragment = fragment
+        setAdvanced(copy)
+    }
+
     func setAllowInsecure(_ on: Bool) {
         var copy = advanced
         copy.allowInsecure = on

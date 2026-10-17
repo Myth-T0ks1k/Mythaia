@@ -67,6 +67,8 @@ targets:
     sources:
       - path: MythaiaTunnel
         excludes: ["**/*.md", "**/*.h"]
+      # The advanced settings the app writes and the tunnel applies.
+      - path: Mythaia/Model/AdvancedSettings.swift
       - path: ../app/src/main/assets/Rules.db
         buildPhase: resources
       # lwIP, the userspace TCP/IP stack behind TUN mode: exactly the files

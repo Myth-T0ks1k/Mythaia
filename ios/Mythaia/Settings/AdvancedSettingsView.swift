@@ -12,6 +12,7 @@ struct AdvancedSettingsView: View {
     var body: some View {
         Form {
             securitySection
+            fragmentSection
             routingSection
         }
         .scrollContentBackground(.hidden)
@@ -56,6 +57,78 @@ struct AdvancedSettingsView: View {
                     .foregroundColor(model.advanced.allowInsecure ? Palette.error : Palette.onSurfaceVariant)
             }
         }
+    }
+
+    /// The first packet of a TLS connection carries the server name in the
+    /// clear; split into small pieces with pauses between them, it gets past
+    /// filters that read only whole packets.
+    private var fragmentSection: some View {
+        Section {
+            Toggle(isOn: fragmentEnabledBinding) {
+                Label("Split the TLS ClientHello", systemImage: "scissors")
+            }
+            if model.advanced.fragment.isEnabled {
+                Stepper(value: fragmentLengthBinding, in: 10...500, step: 10) {
+                    LabeledContent {
+                        Text(verbatim: rangeText(model.advanced.fragment.minLength, model.advanced.fragment.maxLength))
+                    } label: {
+                        Text("Piece size, bytes")
+                    }
+                }
+                Stepper(value: fragmentDelayBinding, in: 0...100, step: 5) {
+                    LabeledContent {
+                        Text(verbatim: rangeText(model.advanced.fragment.minInterval, model.advanced.fragment.maxInterval))
+                    } label: {
+                        Text("Pause, ms")
+                    }
+                }
+            }
+        } header: {
+            Text("Fragmentation")
+        } footer: {
+            Text("Sends the first packet of each TLS connection to a server in small pieces, so filters that read the server name do not see it whole. A server whose link sets its own fragmentation uses that.")
+        }
+    }
+
+    private func rangeText(_ low: Int, _ high: Int) -> String {
+        String(low) + "\u{2013}" + String(high)
+    }
+
+    private var fragmentEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { model.advanced.fragment.isEnabled },
+            set: { on in
+                var fragment = model.advanced.fragment
+                fragment.isEnabled = on
+                model.setFragment(fragment)
+            }
+        )
+    }
+
+    /// The stepper moves the lower bound; the upper one stays twice as large,
+    /// as in the default 100 to 200.
+    private var fragmentLengthBinding: Binding<Int> {
+        Binding(
+            get: { model.advanced.fragment.minLength },
+            set: { value in
+                var fragment = model.advanced.fragment
+                fragment.minLength = value
+                fragment.maxLength = value * 2
+                model.setFragment(fragment)
+            }
+        )
+    }
+
+    private var fragmentDelayBinding: Binding<Int> {
+        Binding(
+            get: { model.advanced.fragment.minInterval },
+            set: { value in
+                var fragment = model.advanced.fragment
+                fragment.minInterval = value
+                fragment.maxInterval = value * 2
+                model.setFragment(fragment)
+            }
+        )
     }
 
     private var routingSection: some View {
