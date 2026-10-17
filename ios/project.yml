@@ -1,0 +1,83 @@
+# XcodeGen spec for Mythaia Pro on iOS. The .xcodeproj is generated, not
+# committed:   brew install xcodegen && cp Config.example.xcconfig Config.xcconfig && xcodegen
+name: Mythaia
+options:
+  bundleIdPrefix: com.mythaia
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+# Team id and bundle id live in Config.xcconfig (not committed); see Config.example.xcconfig.
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
+settings:
+  base:
+    MARKETING_VERSION: "1.3.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: "YES"
+    DEAD_CODE_STRIPPING: "YES"
+    LOCALIZATION_PREFERS_STRING_CATALOGS: "YES"
+    SWIFT_EMIT_LOC_STRINGS: "YES"
+
+packages:
+  MythaiaKit:
+    path: Packages/MythaiaKit
+
+targets:
+  Mythaia:
+    type: application
+    platform: iOS
+    sources:
+      - path: Mythaia
+        excludes: ["**/*.md"]
+      # One routing rules database for every platform: the one the Android app ships.
+      - path: ../app/src/main/assets/Rules.db
+        buildPhase: resources
+    dependencies:
+      - package: MythaiaKit
+      - target: MythaiaTunnel
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MYTHAIA_BUNDLE_ID)
+        PRODUCT_NAME: Mythaia
+        INFOPLIST_FILE: Mythaia/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Mythaia Pro
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        CODE_SIGN_ENTITLEMENTS: Mythaia/Mythaia.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1,2"
+    scheme:
+      testTargets: []
+
+  MythaiaTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MythaiaTunnel
+        excludes: ["**/*.md"]
+      - path: ../app/src/main/assets/Rules.db
+        buildPhase: resources
+    dependencies:
+      - package: MythaiaKit
+      - sdk: NetworkExtension.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MYTHAIA_BUNDLE_ID).Tunnel
+        PRODUCT_NAME: MythaiaTunnel
+        INFOPLIST_FILE: MythaiaTunnel/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Mythaia Tunnel
+        CODE_SIGN_ENTITLEMENTS: MythaiaTunnel/MythaiaTunnel.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: "YES"

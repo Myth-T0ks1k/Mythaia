@@ -1,0 +1,9 @@
+// Copy to Config.xcconfig (not committed) and fill in before generating the
+// project. With an Apple developer account: your team id, and a bundle id
+// registered to it with the App Groups and Network Extensions capabilities.
+// Without one, leave DEVELOPMENT_TEAM empty and build unsigned
+// (CODE_SIGNING_ALLOWED=NO), as the CI does.
+
+DEVELOPMENT_TEAM =
+MYTHAIA_BUNDLE_ID = com.mythaia.pro
+MYTHAIA_APP_GROUP = group.$(MYTHAIA_BUNDLE_ID)
