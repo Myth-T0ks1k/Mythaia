@@ -65,14 +65,35 @@ targets:
     platform: iOS
     sources:
       - path: MythaiaTunnel
-        excludes: ["**/*.md"]
+        excludes: ["**/*.md", "**/*.h"]
       - path: ../app/src/main/assets/Rules.db
         buildPhase: resources
+      # lwIP, the userspace TCP/IP stack behind TUN mode: exactly the files
+      # app/src/main/jni/CMakeLists.txt compiles for Android. Vendored C, so
+      # its warnings are silenced.
+      - path: ../app/src/main/jni/lwip/src/core
+        compilerFlags: ["-w"]
+      - path: ../app/src/main/jni/lwip/port/sys_arch.c
+        compilerFlags: ["-w"]
+      - path: ../app/src/main/jni/lwip/lwip_bridge.c
+        compilerFlags: ["-w"]
     dependencies:
       - package: MythaiaKit
       - sdk: NetworkExtension.framework
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: MythaiaTunnel/Tun/MythaiaTunnel-Bridging-Header.h
+        # lwIP defines struct ip6_hdr and icmp6_hdr itself; with Clang modules
+        # on, the system's definitions of the same names collide with them.
+        CLANG_ENABLE_MODULES: "NO"
+        # The lwIP headers; not app/src/main/jni/compat, whose os/log.h is the
+        # Android stand-in for the real one lwip_bridge.c uses here.
+        HEADER_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/../app/src/main/jni/lwip
+          - $(SRCROOT)/../app/src/main/jni/lwip/src/include
+          - $(SRCROOT)/../app/src/main/jni/lwip/port
+          - $(SRCROOT)/../app/src/main/jni/lwip/port/arch
         PRODUCT_BUNDLE_IDENTIFIER: $(MYTHAIA_BUNDLE_ID).Tunnel
         PRODUCT_NAME: MythaiaTunnel
         INFOPLIST_FILE: MythaiaTunnel/Info.plist
