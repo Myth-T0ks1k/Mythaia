@@ -21,7 +21,7 @@ import org.junit.Test
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.Proxy
-import java.net.URL
+import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -133,7 +133,7 @@ class MacTunSmoke {
 
             // TCP through the utun, lwIP and the SOCKS5 server.
             val started = System.nanoTime()
-            val connection = URL("http://$fake:$port$path").openConnection(Proxy.NO_PROXY) as HttpURLConnection
+            val connection = URI("http://$fake:$port$path").toURL().openConnection(Proxy.NO_PROXY) as HttpURLConnection
             connection.connectTimeout = 15_000
             connection.readTimeout = 30_000
             assertEquals(200, connection.responseCode)

@@ -152,6 +152,8 @@ curl -x socks5h://127.0.0.1:21080 https://www.speedtest.net/
 bash scripts/mac-tun-smoke.sh
 ```
 
+Gradle настраивает и Android-модули, поэтому на Mac без Android SDK сначала уберите их из сборки — так же, как это делает `apple.yml`: `sed -i "" -e "/include(\":app\")/d" -e "/include(\":wear\")/d" settings.gradle.kts` (не коммитьте это изменение).
+
 Шаг для CI — в задание `lab` файла `.github/workflows/apple.yml`, после «Desktop matrix» (лаборатория и библиотека к этому моменту уже есть):
 
 ```yaml
