@@ -122,6 +122,9 @@ jobs:
         run: |
           ./gradlew :desktop:test --tests 'com.mythaia.desktop.engine.LabMatrixSmoke' --rerun --stacktrace
           cat desktop-matrix.tsv
+      # TUN mode end to end with a real utun: the runner's sudo needs no password.
+      - name: TUN smoke (utun as root)
+        run: bash scripts/mac-tun-smoke.sh
       - name: Lab logs and results
         if: always()
         uses: actions/upload-artifact@v7
@@ -151,9 +154,18 @@ jobs:
         working-directory: ios/Packages/MythaiaKit
         run: swift build -c release 2>&1 | tee ../../../swift-build.log
 
+      # The interop lab's reference servers, for LabInteropTests.
+      - name: Reference servers
+        run: bash scripts/lab/ci-macos.sh
+
       - name: MythaiaKit tests
         working-directory: ios/Packages/MythaiaKit
-        run: swift test 2>&1 | tee ../../../swift-test.log
+        env:
+          MYTHAIA_LAB_LINKS: ${{ github.workspace }}/scripts/lab/out/lab-links.txt
+          MYTHAIA_LAB_OUT: ${{ github.workspace }}/swift-lab.tsv
+        run: |
+          swift test 2>&1 | tee ../../../swift-test.log
+          grep "^LAB" ../../../swift-test.log || true
 
       - name: Generate the Xcode project
         working-directory: ios
@@ -191,4 +203,6 @@ jobs:
           path: |
             swift-build.log
             swift-test.log
+            swift-lab.tsv
             xcodebuild.log
+            scripts/lab/out/*.log
