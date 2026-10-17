@@ -19,7 +19,7 @@ class MacDaemonTest {
 
     @Test
     fun `the plist runs the root-owned copy with --service`() {
-        assertEquals("/Library/Application Support/Mythaia/Service/Mythaia Pro.app/Contents/MacOS/Mythaia Pro", launcher)
+        assertEquals("/Library/Application Support/Mythaia/Service/Mythaia Pro Service/Contents/MacOS/Mythaia Pro", launcher)
         val text = MacDaemon.plist(launcher)
         val factory = DocumentBuilderFactory.newInstance()
         factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
@@ -60,13 +60,13 @@ class MacDaemonTest {
             "/usr/sbin/chown -R root:wheel \"\$app.new\"",
             "/bin/chmod -R go-w \"\$app.new\"",
             "/bin/mv \"\$app.new\" \"\$app\"",
-            "[ -x '/Library/Application Support/Mythaia/Service/Mythaia Pro.app/Contents/MacOS/Mythaia Pro' ]",
+            "[ -x '/Library/Application Support/Mythaia/Service/Mythaia Pro Service/Contents/MacOS/Mythaia Pro' ]",
             "/bin/mv -f \"\$plist.new\" \"\$plist\"",
             "/bin/launchctl bootstrap system \"\$plist\" || { /bin/sleep 2; /bin/launchctl bootstrap system \"\$plist\"; }"
         )
         val positions = order.map { line -> lines.indexOf(line).also { assertTrue("missing: $line", it >= 0) } }
         assertEquals(positions.sorted(), positions)
-        assertTrue(lines.contains("app='/Library/Application Support/Mythaia/Service/Mythaia Pro.app'"))
+        assertTrue(lines.contains("app='/Library/Application Support/Mythaia/Service/Mythaia Pro Service'"))
         assertTrue(lines.contains("plist='/Library/LaunchDaemons/com.mythaia.desktop.service.plist'"))
         assertTrue(lines.any { it.startsWith("printf '%s' '<?xml") })
     }

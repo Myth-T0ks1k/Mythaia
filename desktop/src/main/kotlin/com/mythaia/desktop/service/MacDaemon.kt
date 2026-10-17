@@ -27,7 +27,14 @@ object MacDaemon {
     /** Root's: the daemon's snapshot and log, and the copy of the app below it. */
     const val BASE_DIR = "/Library/Application Support/Mythaia"
     const val SERVICE_DIR = "$BASE_DIR/Service"
-    const val APP_NAME = "Mythaia Pro.app"
+
+    /**
+     * The copy's folder. The bundle's layout inside, which is all the
+     * launcher goes by, but no `.app` on the name: Launch Services registers
+     * every `.app` it finds, and a second Mythaia Pro would turn up in
+     * Spotlight and Launchpad and could be picked to open mythaia:// links.
+     */
+    const val APP_NAME = "Mythaia Pro Service"
     const val LOG_FILE = "$BASE_DIR/service.log"
     /** What the JVM itself prints before the app's log is open (a launcher that cannot start, say). */
     const val STDERR_FILE = "$BASE_DIR/service.stderr.log"
