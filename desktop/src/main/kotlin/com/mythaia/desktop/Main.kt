@@ -5,6 +5,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
@@ -69,6 +70,8 @@ fun main(args: Array<String>) {
         state.updateSettings { it.copy(tunnelMode = "tun") }
         state.connect()
     }
+    // macOS hands links (mythaia://, vless:// ...) to the app as an Apple event, not as arguments.
+    if (Platform.isMac) installMacUrlHandler(state)
     Runtime.getRuntime().addShutdownHook(Thread { runCatching { state.shutdown() } })
     watchShowRequests(state)
     val startHidden = args.contains("--minimized") || state.settings.value.startMinimized
@@ -127,7 +130,7 @@ fun main(args: Array<String>) {
             onKeyEvent = { event ->
                 if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@Window false
                 when {
-                    event.isCtrlPressed && event.key == androidx.compose.ui.input.key.Key.V && !com.mythaia.desktop.ui.UiFocus.textField.value -> { state.importFromClipboard(); true }
+                    (event.isCtrlPressed || (Platform.isMac && event.isMetaPressed)) && event.key == androidx.compose.ui.input.key.Key.V && !com.mythaia.desktop.ui.UiFocus.textField.value -> { state.importFromClipboard(); true }
                     event.key == androidx.compose.ui.input.key.Key.F5 -> { state.pingGroup(state.activeGroupId, com.mythaia.data.network.LatencyKind.HTTP); true }
                     else -> false
                 }
@@ -203,7 +206,7 @@ private class FileLogBackend(private val file: File) : LogBackend {
 private fun loadNativeLibrary(logger: MythaiaLogger): Boolean {
     val file = AppPaths.nativeLibrary()
     if (file == null) {
-        logger.warning("mythaia_native.dll not found; QUIC protocols and Clash parsing are off")
+        logger.warning("${Platform.nativeLibraryName} not found; QUIC protocols and Clash parsing are off")
         return false
     }
     System.setProperty("mythaia.native.library", file.absolutePath)
@@ -214,6 +217,26 @@ private fun loadNativeLibrary(logger: MythaiaLogger): Boolean {
     } catch (e: Throwable) {
         logger.error("Native library failed to load: ${e.message}")
         false
+    }
+}
+
+/**
+ * Links opened from a browser or Finder while the app runs, or that launched
+ * it. LaunchServices delivers them through the AWT desktop handler, which
+ * must be installed before the first event loop turn to see the launch link.
+ */
+private fun installMacUrlHandler(state: AppState) {
+    runCatching {
+        val desktop = java.awt.Desktop.getDesktop()
+        if (!desktop.isSupported(java.awt.Desktop.Action.APP_OPEN_URI)) return
+        desktop.setOpenURIHandler { event ->
+            val link = event.uri.toString()
+            if (DeepLinks.isLink(link)) {
+                state.windowVisible.value = true
+                state.bringToFront.value = System.currentTimeMillis()
+                state.requestImport(DeepLinks.extract(link))
+            }
+        }
     }
 }
 

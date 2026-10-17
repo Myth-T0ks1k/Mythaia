@@ -203,6 +203,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /** Keeps [serviceAvailable]/[serviceInstalled] fresh and, while the service runs our tunnel, mirrors its counters and log. */
     private suspend fun serviceWatchLoop() {
+        // The service is the Windows TUN helper; there is nothing to watch elsewhere.
+        if (!Platform.supportsTun) return
         while (scope.isActive) {
             val installed = runCatching { com.mythaia.desktop.service.ServiceInstaller.isInstalled() }.getOrDefault(false)
             serviceInstalled.value = installed
@@ -505,7 +507,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             return@withLock
         }
         val settings = _settings.value
-        val useTun = settings.tunnelMode == "tun"
+        val useTun = settings.tunnelMode == "tun" && Platform.supportsTun
         // The service runs the TUN tunnel when it is there; otherwise this
         // process must be elevated to do it itself.
         val viaService = useTun && (serviceAvailable.value || com.mythaia.desktop.service.ServiceClient.isAvailable())

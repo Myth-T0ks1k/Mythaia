@@ -1,0 +1,145 @@
+name: Apple
+
+# Mythaia Pro for macOS (the desktop app, system-proxy mode) and for iOS
+# (the Swift app with its packet tunnel). Both build without an Apple
+# developer account: the macOS app is signed ad hoc, the iOS app is built
+# unsigned, so it compiles and its tests run, but installing it on a phone
+# needs a signing team (see ios/README.md).
+on:
+  push:
+    branches: [apple]
+  pull_request:
+    paths:
+      - "ios/**"
+      - "desktop/**"
+      - "core/**"
+      - "app/src/main/jni/**"
+      - ".github/workflows/apple.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS app (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      # The desktop app needs only :core; leave the Android modules out so the
+      # runner does not have to provide their SDK platform.
+      - name: Desktop modules only
+        run: sed -i '' -e '/include(":app")/d' -e '/include(":wear")/d' settings.gradle.kts
+
+      - name: Native library
+        run: sh desktop/native/macos/build.sh
+
+      - name: Unit tests
+        run: ./gradlew :desktop:test --tests 'com.mythaia.desktop.engine.*' --tests 'com.mythaia.desktop.store.*' --stacktrace
+
+      - name: App bundle
+        run: ./gradlew :desktop:createDistributable --stacktrace
+
+      - name: Sign ad hoc and make the disk image
+        run: |
+          app="desktop/build/compose/binaries/main/app/Mythaia Pro.app"
+          test -d "$app"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          mkdir -p dmgroot dist
+          cp -R "$app" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "Mythaia Pro" -srcfolder dmgroot -ov -format UDZO "dist/Mythaia-Pro-macos-${{ matrix.arch }}.dmg"
+          ditto -c -k --keepParent "$app" "dist/Mythaia-Pro-macos-${{ matrix.arch }}.zip"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Mythaia-Pro-macos-${{ matrix.arch }}
+          path: dist/
+
+      - name: Test report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-test-report-${{ matrix.arch }}
+          path: desktop/build/reports/tests/
+
+  ios:
+    name: iOS app
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Newest Xcode on the runner
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      - name: MythaiaKit build
+        working-directory: ios/Packages/MythaiaKit
+        run: swift build 2>&1 | tee ../../../swift-build.log
+
+      - name: MythaiaKit tests
+        working-directory: ios/Packages/MythaiaKit
+        run: swift test 2>&1 | tee ../../../swift-test.log
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          cp Config.example.xcconfig Config.xcconfig
+          xcodegen generate
+
+      - name: Build the app, unsigned
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/Mythaia.xcodeproj -scheme Mythaia -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee xcodebuild.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" xcodebuild.log
+
+      - name: Unsigned IPA
+        run: |
+          mkdir -p Payload dist
+          cp -R build/ios/Build/Products/Release-iphoneos/Mythaia.app Payload/
+          zip -qry dist/Mythaia-Pro-ios-unsigned.ipa Payload
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Mythaia-Pro-ios-unsigned
+          path: dist/
+
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-build-logs
+          path: |
+            swift-build.log
+            swift-test.log
+            xcodebuild.log

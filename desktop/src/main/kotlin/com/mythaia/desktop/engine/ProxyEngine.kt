@@ -90,12 +90,12 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
     }
 
     /**
-     * Turns the Windows proxy on or off for the running listeners. The engine
+     * Turns the system proxy on or off for the running listeners. The engine
      * owns the flag so a toggle while connected is undone on stop like any other.
      */
     fun setSystemProxy(enabled: Boolean, settings: DesktopSettings?) {
         if (enabled && settings != null) {
-            SystemProxy.enable("127.0.0.1:${settings.httpPort}", settings.proxyBypass)
+            SystemProxy.enable("127.0.0.1:${settings.httpPort}", settings.proxyBypass, "127.0.0.1:${settings.socksPort}")
             systemProxySet = true
         } else if (systemProxySet || com.mythaia.desktop.AppPaths.proxySnapshot.isFile) {
             SystemProxy.restore()

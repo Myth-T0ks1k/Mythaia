@@ -58,6 +58,8 @@ fun SettingsScreen(state: AppState) {
 
             Section(tr("settings_connection")) {
                 val needsElevation by state.needsElevation.collectAsState()
+                // TUN mode and its service are Windows-only (Wintun); macOS runs as a system proxy.
+                if (com.mythaia.desktop.Platform.supportsTun) {
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     DropdownField(
                         tr("tunnel_mode"), settings.tunnelMode,
@@ -108,6 +110,13 @@ fun SettingsScreen(state: AppState) {
                             }) { Text(tr("tun_relaunch")) }
                         },
                         dismissButton = { TextButton(onClick = { state.needsElevation.value = false }) { Text(tr("cancel")) } }
+                    )
+                }
+                } else {
+                    Text(
+                        tr("proxy_mode_hint"),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
                     )
                 }
                 var socks by remember(settings.socksPort) { mutableStateOf(settings.socksPort.toString()) }

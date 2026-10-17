@@ -59,8 +59,10 @@ keystore.jks
 # Desktop build outputs
 desktop/build/
 desktop/native/build/
+desktop/native/build-macos/
 desktop/native/out/
 desktop/resources/windows-x64/
+desktop/resources/macos-*/
 *.zip
 desktop/tools/
 *.exe

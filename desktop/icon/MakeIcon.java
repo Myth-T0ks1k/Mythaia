@@ -17,6 +17,8 @@ import javax.imageio.ImageIO;
  * PNGs the desktop app uses and packs them into a Windows .ico.
  *
  * Run from the repo root:  java desktop/icon/MakeIcon.java
+ * The Apple icons (the macOS .icns and the iOS app icon) come from
+ *                          java desktop/icon/MakeIcon.java apple
  */
 public class MakeIcon {
     static final Color AZURE = new Color(0x24548F);
@@ -24,6 +26,10 @@ public class MakeIcon {
     static final Color PAPER = new Color(0xFDFBF6);
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0 && args[0].equals("apple")) {
+            writeApple();
+            return;
+        }
         File dir = new File("desktop/icon");
         dir.mkdirs();
         File res = new File("desktop/src/main/resources/icon");
@@ -61,6 +67,61 @@ public class MakeIcon {
         Files.write(new File(res, "mythaia_mark_paper.png").toPath(), renderMark(256, PAPER));
         Files.write(new File(res, "mythaia_mark_azure.png").toPath(), renderMark(256, AZURE));
         System.out.println("icons written");
+    }
+
+    /**
+     * macOS: the tile inset on a transparent canvas the way Apple's icon grid
+     * has it (824 of 1024), packed as PNG entries into an .icns.
+     * iOS: one opaque 1024 square; the system rounds the corners itself.
+     */
+    static void writeApple() throws Exception {
+        String[] types = {"ic11", "ic12", "ic07", "ic08", "ic13", "ic09", "ic14", "ic10"};
+        int[] sizes = {32, 64, 128, 256, 256, 512, 512, 1024};
+        ByteArrayOutputStream entries = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(entries);
+        for (int i = 0; i < types.length; i++) {
+            byte[] png = renderMac(sizes[i]);
+            out.writeBytes(types[i]);
+            out.writeInt(png.length + 8);
+            out.write(png);
+        }
+        try (DataOutputStream icns = new DataOutputStream(new FileOutputStream(new File("desktop/icon/mythaia.icns")))) {
+            icns.writeBytes("icns");
+            icns.writeInt(entries.size() + 8);
+            entries.writeTo(icns);
+        }
+        File ios = new File("ios/Mythaia/Assets.xcassets/AppIcon.appiconset");
+        ios.mkdirs();
+        Files.write(new File(ios, "AppIcon-1024.png").toPath(), renderSquare(1024));
+        System.out.println("apple icons written");
+    }
+
+    static byte[] renderMac(int size) throws Exception {
+        BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        float tile = size * 824f / 1024f;
+        float margin = (size - tile) / 2f;
+        float radius = tile * 0.45f;
+        g.setPaint(new java.awt.GradientPaint(margin, margin, AZURE, margin + tile, margin + tile, AZURE_DEEP));
+        g.fill(new RoundRectangle2D.Float(margin, margin, tile, tile, radius, radius));
+        g.translate(margin, margin);
+        drawMark(g, Math.round(tile), tile * 0.16f, PAPER);
+        g.dispose();
+        return png(img);
+    }
+
+    static byte[] renderSquare(int size) throws Exception {
+        BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        g.setPaint(new java.awt.GradientPaint(0, 0, AZURE, size, size, AZURE_DEEP));
+        g.fillRect(0, 0, size, size);
+        drawMark(g, size, size * 0.17f, PAPER);
+        g.dispose();
+        return png(img);
     }
 
     /** The mark on a tile of the given colours (the tray's "off" state is slate). */

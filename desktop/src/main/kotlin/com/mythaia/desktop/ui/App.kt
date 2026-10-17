@@ -177,7 +177,7 @@ private fun StatusBar(state: AppState) {
         )
         Spacer(Modifier.width(18.dp))
         Text(
-            (if (settings.tunnelMode == "tun") tr("status_mode_tun") else tr("status_mode_proxy")) +
+            (if (settings.tunnelMode == "tun" && com.mythaia.desktop.Platform.supportsTun) tr("status_mode_tun") else tr("status_mode_proxy")) +
                 "  ·  " + tr("local_ports", settings.socksPort, settings.httpPort) +
                 "  ·  " + (if (settings.isGlobal) tr("mode_global") else tr("mode_rule")),
             style = MaterialTheme.typography.labelMedium,

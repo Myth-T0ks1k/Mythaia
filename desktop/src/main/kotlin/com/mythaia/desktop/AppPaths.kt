@@ -2,7 +2,10 @@ package com.mythaia.desktop
 
 import java.io.File
 
-/** Where the desktop app keeps its files: `%APPDATA%\Mythaia`. */
+/**
+ * Where the desktop app keeps its files: `%APPDATA%\Mythaia` on Windows,
+ * `~/Library/Application Support/Mythaia` on macOS.
+ */
 object AppPaths {
     /** Set before first use to move the data directory (the service keeps its files in ProgramData). */
     @Volatile
@@ -10,8 +13,11 @@ object AppPaths {
 
     val dataDir: File by lazy {
         overrideDataDir?.let { return@lazy it.apply { mkdirs() } }
-        val base = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-            ?: System.getProperty("user.home")
+        val home = System.getProperty("user.home")
+        val base = when {
+            Platform.isMac -> File(home, "Library/Application Support")
+            else -> System.getenv("APPDATA")?.takeIf { it.isNotBlank() }?.let { File(it) } ?: File(home)
+        }
         File(base, "Mythaia").apply { mkdirs() }
     }
 
@@ -47,14 +53,15 @@ object AppPaths {
 
     /** The JNI library, wherever this run keeps it; null when it is nowhere to be found. */
     fun nativeLibrary(): File? {
-        val name = "mythaia_native.dll"
+        val name = Platform.nativeLibraryName
+        val folder = Platform.resourceFolder
         val candidates = buildList {
             System.getProperty("mythaia.native.library")?.let { add(File(it)) }
             System.getenv("MYTHAIA_NATIVE")?.let { add(File(it)) }
             resourcesDir?.let { add(File(it, name)) }
             val cwd = File(System.getProperty("user.dir"))
-            add(File(cwd, "desktop/resources/windows-x64/$name"))
-            add(File(cwd, "resources/windows-x64/$name"))
+            add(File(cwd, "desktop/resources/$folder/$name"))
+            add(File(cwd, "resources/$folder/$name"))
             add(File(cwd, "desktop/native/out/$name"))
             add(File(cwd, name))
         }
@@ -80,4 +87,11 @@ object AppPaths {
     /** The installed launcher, or null when running from Gradle. */
     fun launcherExe(): File? =
         System.getProperty("jpackage.app-path")?.let { File(it) }?.takeIf { it.isFile }
+
+    /** The `.app` bundle the launcher sits in on macOS (`…/Mythaia Pro.app`), or null. */
+    fun appBundle(): File? {
+        val exe = launcherExe() ?: return null
+        // Contents/MacOS/<launcher>
+        return exe.parentFile?.parentFile?.parentFile?.takeIf { it.name.endsWith(".app") }
+    }
 }
