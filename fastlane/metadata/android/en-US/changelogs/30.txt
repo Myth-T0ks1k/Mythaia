@@ -1,0 +1,3 @@
+• Fixed: the app could close by itself on Hysteria2, TUIC and Nowhere servers when packets were lost.
+• A server that stops answering no longer blocks every other connection.
+• Steadier sessions and fewer stalls on QUIC servers.

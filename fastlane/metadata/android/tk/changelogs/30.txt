@@ -1,0 +1,3 @@
+• Düzedildi: paketler ýitende Hysteria2, TUIC we Nowhere serwerlerinde programma öz-özünden ýapylyp bilýärdi.
+• Jogap bermeýän serwer indi beýleki birikmeleri saklamaýar.
+• QUIC serwerlerinde has durnukly sessiýalar.
