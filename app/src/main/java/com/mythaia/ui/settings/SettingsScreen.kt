@@ -395,6 +395,8 @@ private fun SettingsRoot(
                     )
                     SettingsRowDivider()
                 }
+                UpdateRows(divider = { SettingsRowDivider() })
+                SettingsRowDivider()
                 SettingsNavRow(
                     icon = Icons.Filled.Info,
                     iconTint = MaterialTheme.colorScheme.primary,
@@ -496,7 +498,7 @@ private fun SettingsGroupCard(content: @Composable () -> Unit) {
 
 /** 1dp inset divider between rows in a [SettingsGroupCard], aligned past the icon tile. */
 @Composable
-private fun SettingsRowDivider() {
+internal fun SettingsRowDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(start = 66.dp, end = 16.dp),
         thickness = 1.dp,

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Merged into every build except the free one (-Pmythaia.foss=true): the
+    self-updater hands a verified release APK to the package installer, and
+    Android asks the user once to allow that. F-Droid ships its own updates,
+    so its build neither needs nor asks for the permission.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+</manifest>

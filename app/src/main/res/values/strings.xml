@@ -507,4 +507,32 @@
     <string name="subscription_updated_through">“%1$s” updated through %2$s</string>
     <string name="subscription_failed_through_servers">Not through a working server either: %1$s</string>
     <string name="subscription_no_working_server">No server answered, so there is nothing to go through. Check your servers and try again.</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_version">Version %1$s</string>
+    <string name="update_checking">Checking GitHub…</string>
+    <string name="update_latest">Version %1$s is the latest</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_downloading">Downloading… %1$d%%</string>
+    <string name="update_ready">Version %1$s is ready to install</string>
+    <string name="update_auto">Check for updates daily</string>
+    <string name="update_auto_hint">Off unless you turn it on. When on, the app asks GitHub once a day, when it opens.</string>
+    <string name="update_store">Updates come from your app store</string>
+    <string name="update_title" translatable="false">Mythaia %1$s</string>
+    <string name="update_download_install">Download and install</string>
+    <string name="update_install">Install</string>
+    <string name="update_later">Later</string>
+    <string name="update_retry">Try again</string>
+    <string name="update_open_github">Open on GitHub</string>
+    <string name="update_manual_only">This copy is not signed with the release key, so Android would not install the update over it. Download the new version from GitHub instead.</string>
+    <string name="update_verified">Checked: the checksum and the release signature match.</string>
+    <string name="update_install_note">The VPN disconnects while the update installs.</string>
+    <string name="update_size">%1$s of %2$s</string>
+    <string name="update_allow_installs">Allow Mythaia to install apps, then tap Install again.</string>
+    <string name="update_no_apk">The release has no APK for this device.</string>
+    <string name="update_no_installer">No app on this device can install the update.</string>
+    <string name="update_bad_apk">The downloaded file is not a Mythaia update.</string>
+    <string name="update_not_newer">The downloaded APK is not newer than this version.</string>
+    <string name="update_wrong_signature">The downloaded APK is not signed with the Mythaia release key, so it was deleted.</string>
+    <string name="update_check_failed">Could not check for updates: %1$s</string>
+    <string name="update_download_failed">Could not update: %1$s</string>
 </resources>

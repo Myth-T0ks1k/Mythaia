@@ -51,6 +51,12 @@ data class DesktopSettings(
     /** Hours between automatic subscription refreshes; 0 turns them off. */
     val subscriptionUpdateHours: Int = 12,
 
+    /** Asks GitHub for a new release once a day. Off until the user turns it on. */
+    val updateAutoCheck: Boolean = false,
+    val updateLastCheck: Long = 0,
+    /** The release the daily check already announced, so it is announced once. */
+    val updateDismissedTag: String? = null,
+
     val windowWidth: Int = 1120,
     val windowHeight: Int = 740
 ) {

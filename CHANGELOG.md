@@ -4,6 +4,20 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Updates from inside the app.** Settings → About → Check for updates asks GitHub for the
+  latest release. On Android it downloads the APK for the device (arm64-v8a, or universal on
+  anything else), checks its SHA-256 against the release's `SHA256SUMS.txt` and its signing
+  certificate against the release key, and hands it to the system installer; where GitHub is
+  blocked, the download goes through the server the tunnel is on. A daily check can be turned on
+  next to it — it is off until you do, so the app never contacts GitHub unasked. The F-Droid build
+  points to its store instead, and a copy signed with another key opens the release page.
+- **Windows:** the same check downloads the installer, or the zip for a portable copy, verifies its
+  checksum, and on request runs the installer and restarts.
+
 ## [1.3.1] — 2026-10-18
 
 ### Fixed
@@ -251,6 +265,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[Unreleased]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.1...HEAD
 [1.3.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.2...v1.2.0

@@ -146,6 +146,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         viewModel.setUiVisible(true)
+        // Only when the user turned the daily check on; at most once a day.
+        com.mythaia.data.update.AppUpdater.get(this).checkIfDue()
     }
 
     override fun onStop() {

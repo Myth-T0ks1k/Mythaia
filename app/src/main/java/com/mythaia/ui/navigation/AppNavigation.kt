@@ -255,6 +255,9 @@ private fun AppNavHost(
         }
     }
 
+    // A release the daily check found, if the user turned that check on.
+    com.mythaia.ui.settings.UpdatePrompt()
+
     // Routing Rules Updated alert — surfaces orphaned rule-set assignments that
     // were silently re-pointed to Default after a referenced proxy was deleted.
     val orphanedNames by viewModel.orphanedRuleSetNames.collectAsState()

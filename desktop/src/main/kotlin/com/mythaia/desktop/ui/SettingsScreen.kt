@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.mythaia.data.model.DomainRuleType
 import com.mythaia.desktop.APP_VERSION
 import com.mythaia.desktop.AppPaths
+import com.mythaia.desktop.update.DesktopUpdateState
 import com.mythaia.desktop.AppState
 import com.mythaia.desktop.Lang
 import com.mythaia.desktop.model.RouteRule
@@ -246,8 +250,62 @@ fun SettingsScreen(state: AppState) {
                     }
                     TextButton(onClick = { runCatching { Desktop.getDesktop().open(AppPaths.dataDir) } }) { Text(tr("open_folder")) }
                 }
+                UpdateRow(state)
+                SwitchRow(tr("update_auto"), settings.updateAutoCheck, tr("update_auto_hint")) { v ->
+                    state.rememberUpdaterState { it.copy(updateAutoCheck = v) }
+                }
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** Where the update stands, and the one thing to do about it next. */
+@Composable
+private fun UpdateRow(state: AppState) {
+    val updater = state.updater
+    val update by updater.state.collectAsState()
+    Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(tr("update_check"), style = MaterialTheme.typography.bodyLarge)
+            val (line, color) = when (val s = update) {
+                is DesktopUpdateState.Idle -> tr("version", APP_VERSION) to MaterialTheme.colorScheme.onSurfaceVariant
+                is DesktopUpdateState.Checking -> tr("update_checking") to MaterialTheme.colorScheme.onSurfaceVariant
+                is DesktopUpdateState.UpToDate -> tr("update_latest", APP_VERSION) to MaterialTheme.colorScheme.onSurfaceVariant
+                is DesktopUpdateState.Available -> tr("update_available", s.release.version.toString()) to MaterialTheme.colorScheme.primary
+                is DesktopUpdateState.Downloading ->
+                    tr("update_downloading", if (s.total > 0) (s.done * 100 / s.total).toInt() else 0) to MaterialTheme.colorScheme.onSurfaceVariant
+                is DesktopUpdateState.Ready -> tr("update_ready", s.release.version.toString()) +
+                    (if (updater.portable) "  ·  " + tr("update_portable_hint") else "") to MaterialTheme.colorScheme.primary
+                is DesktopUpdateState.Failed -> s.message to MaterialTheme.colorScheme.error
+            }
+            Text(line, style = MaterialTheme.typography.bodySmall, color = color)
+            (update as? DesktopUpdateState.Downloading)?.let { s ->
+                if (s.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { (s.done.toFloat() / s.total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                    )
+                }
+            }
+        }
+        when (val s = update) {
+            is DesktopUpdateState.Idle, is DesktopUpdateState.UpToDate ->
+                TextButton(onClick = { updater.check() }) { Text(tr("update_check_now")) }
+            is DesktopUpdateState.Checking -> CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            is DesktopUpdateState.Available, is DesktopUpdateState.Failed -> {
+                val release = (s as? DesktopUpdateState.Available)?.release ?: (s as DesktopUpdateState.Failed).release
+                if (release == null) {
+                    TextButton(onClick = { updater.check() }) { Text(tr("update_check_now")) }
+                } else {
+                    if (updater.canInstall) Button(onClick = { updater.download() }) { Text(tr("update_download")) }
+                    TextButton(onClick = { updater.openReleasePage() }) { Text(tr("update_open_github")) }
+                }
+            }
+            is DesktopUpdateState.Downloading -> TextButton(onClick = { updater.cancel() }) { Text(tr("cancel")) }
+            is DesktopUpdateState.Ready -> Button(onClick = { updater.install() }) {
+                Text(tr(if (updater.portable) "update_show_file" else "update_install"))
+            }
         }
     }
 }

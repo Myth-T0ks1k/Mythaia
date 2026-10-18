@@ -192,6 +192,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     @Volatile
     private var probeFailures = 0
 
+    /** The self-updater; it checks only when asked, or daily once the user turned that on. */
+    val updater by lazy { com.mythaia.desktop.update.DesktopUpdater(this) }
+
     init {
         MythaiaLogger.logSink = { text, level ->
             _logs.update { lines ->
@@ -208,6 +211,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         scope.launch { refreshSubscriptionsOnOpen() }
         scope.launch { subscriptionRefreshLoop() }
         scope.launch { serviceWatchLoop() }
+        scope.launch {
+            // Not in the first seconds of a start, which are the connect's.
+            delay(UPDATE_CHECK_DELAY_MS)
+            updater.checkIfDue()
+        }
     }
 
     // ------------------------------------------------------------- service
@@ -1229,6 +1237,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
     }
 
+    /** The updater's bookkeeping: saved without re-applying the connection settings. */
+    fun rememberUpdaterState(transform: (DesktopSettings) -> DesktopSettings) {
+        mutateSettings(transform)
+    }
+
     fun rememberWindowSize(width: Int, height: Int) {
         if (width < 600 || height < 400) return
         mutateSettings { if (it.windowWidth == width && it.windowHeight == height) it else it.copy(windowWidth = width, windowHeight = height) }
@@ -1369,6 +1382,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
         const val DEFAULT_GROUP = "default"
         private const val MAX_LOG_LINES = 600
+        private const val UPDATE_CHECK_DELAY_MS = 8_000L
         private const val AUTO_FIRST_ROUND_DELAY_MS = 1_500L
         private const val AUTO_RECHECK_MS = 120_000L
         private const val AUTO_SWITCH_MARGIN_MS = 50

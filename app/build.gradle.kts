@@ -37,6 +37,10 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
+
+        // The free build never updates itself from GitHub: F-Droid signs it
+        // with its own key, and Android would refuse our APK over it.
+        buildConfigField("boolean", "FOSS", foss.toString())
     }
 
     // Read from local.properties or the environment (CI). A release build with
@@ -164,12 +168,14 @@ android {
 }
 
 // The Wear OS bridge — a service and its manifest entry — lives in src/gms and
-// joins every variant unless this is the free build.
+// joins every variant unless this is the free build, and so does the
+// permission the self-updater needs to hand an APK to the installer.
 androidComponents {
     onVariants { variant ->
         if (!foss) {
             variant.sources.java?.addStaticSourceDirectory("src/gms/java")
             variant.sources.manifests.addStaticManifestFile("src/gms/AndroidManifest.xml")
+            variant.sources.manifests.addStaticManifestFile("src/selfupdate/AndroidManifest.xml")
         }
     }
 }

@@ -2,4 +2,6 @@
 <!-- Exported server lists, shared as files when too long for an Intent (see LinkExport). -->
 <paths>
     <cache-path name="exports" path="exports/" />
+    <!-- A downloaded update, verified, on its way to the package installer (see AppUpdater). -->
+    <cache-path name="updates" path="updates/" />
 </paths>
