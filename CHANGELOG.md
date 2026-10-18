@@ -42,6 +42,22 @@ All notable changes to Mythaia are recorded here. The format follows
 - **Windows:** a settings or server file that another program had open at start is no longer
   replaced with empty defaults.
 - **Windows:** NIO no longer depends on AF_UNIX sockets, which fail on some PCs.
+- **Windows:** with thousands of servers, pasting a list, refreshing a subscription or removing
+  duplicates froze the window into "Not responding": each change wrote the whole list (some 30 MB
+  for 10,000 servers) on the window's thread, and building every server's link held up every
+  click. Saves now go to disk in the background, a burst of changes as one write, links are built
+  outside the lock, and `configs.json` is stored without indentation or default values, which
+  every version reads.
+- **Windows:** the service could fail to start on a slow boot with error 1053; it now answers
+  Windows first and sets itself up afterwards, reporting progress while it does.
+- **Windows:** a TUN connection the service took more than 30 seconds to bring up was shown as
+  failed but left running. The window now asks the service what it did and uses that tunnel, or
+  stops it.
+- **Windows:** proxy mode did nothing on PCs that go online through a PPPoE, dial-up or VPN
+  connection, which have proxy settings of their own; those are now set too, and put back on
+  disconnect.
+- **Windows:** reading QR codes from the screen never found one on a second monitor, and missed
+  small ones at display scales above 100 %.
 
 ### Added
 

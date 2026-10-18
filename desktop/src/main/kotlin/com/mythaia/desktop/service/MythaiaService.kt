@@ -26,10 +26,17 @@ object MythaiaService {
     private val logger = MythaiaLogger("ServiceMain")
     private var core: ServiceCore? = null
     private var statusHandle: Winsvc.SERVICE_STATUS_HANDLE? = null
+    private val status = ServiceStatusTracker()
 
-    /** Entry for `--service` (under the service control manager). */
+    /**
+     * Entry for `--service` (under the service control manager). SCM gives
+     * a starting service 30 seconds to call the dispatcher, and on a slow
+     * boot the JVM alone takes much of that; when the folder permissions,
+     * the native library and the route cleanup came first as well, the start
+     * failed with error 1053. So the dispatcher is called at once, and the
+     * rest happens in [serviceMain] behind START_PENDING.
+     */
     fun runUnderScm(): Nothing {
-        prepare()
         val entries = Winsvc.SERVICE_TABLE_ENTRY().toArray(2)
         @Suppress("UNCHECKED_CAST")
         val table = entries as Array<Winsvc.SERVICE_TABLE_ENTRY>
@@ -37,7 +44,12 @@ object MythaiaService {
         table[0].lpServiceProc = Winsvc.SERVICE_MAIN_FUNCTION { _, _ -> serviceMain() }
         table[0].write()
         if (!Advapi32.INSTANCE.StartServiceCtrlDispatcher(table)) {
-            logger.error("StartServiceCtrlDispatcher failed: ${com.sun.jna.platform.win32.Kernel32.INSTANCE.GetLastError()}")
+            val error = com.sun.jna.platform.win32.Kernel32.INSTANCE.GetLastError()
+            // Started some other way than by SCM (1063 when run from a
+            // console): only the log is set up, so a copy started by hand
+            // cannot clean up the routes of the tunnel the real service runs.
+            openLog()
+            logger.error("StartServiceCtrlDispatcher failed: $error")
             exitProcess(1)
         }
         exitProcess(0)
@@ -45,21 +57,29 @@ object MythaiaService {
 
     /** Entry for `--service-console`: the same loop in a plain process, for testing. */
     fun runInConsole(): Nothing {
-        prepare()
+        openLog()
+        prepareEngine()
         val service = createCore()
         Runtime.getRuntime().addShutdownHook(Thread { service.stop() })
         service.serve()
         exitProcess(0)
     }
 
-    private fun prepare() {
+    /** The data folder in ProgramData, locked down, and the log in it. */
+    private fun openLog() {
         val dataDir = AppPaths.programData.apply { mkdirs() }
         AppPaths.overrideDataDir = dataDir
         MythaiaLogger.backend = FileLog(File(dataDir, "service.log"))
         lockDown(dataDir)
+    }
+
+    /** The native library, and whatever a previous run left on the network; [progress] after each step. */
+    private fun prepareEngine(progress: () -> Unit = {}) {
         AppPaths.nativeLibrary()?.let { System.setProperty("mythaia.native.library", it.absolutePath) }
         runCatching { NativeBridge.nativeQuicVersion() }
+        progress()
         runCatching { TunEngine.cleanupLeftovers() }
+        progress()
         logger.info("Service starting (elevated=${TunEngine.isElevated()}, wintun=${TunEngine.isAvailable()})")
     }
 
@@ -111,8 +131,13 @@ object MythaiaService {
             null
         )
         statusHandle = handle
+        // SCM hears from the service first; each step after this one moves
+        // the checkpoint on, so a slow boot reads as progress, not a hang.
         report(Winsvc.SERVICE_START_PENDING)
         val service = try {
+            openLog()
+            report(Winsvc.SERVICE_START_PENDING)
+            prepareEngine { report(Winsvc.SERVICE_START_PENDING) }
             createCore()
         } catch (e: Throwable) {
             logger.error("Service init failed: ${e.message}")
@@ -135,20 +160,24 @@ object MythaiaService {
                 report(Winsvc.SERVICE_STOP_PENDING)
                 thread { core?.stop() }
             }
-            Winsvc.SERVICE_CONTROL_INTERROGATE -> report(Winsvc.SERVICE_RUNNING)
+            // SCM keeps the last status reported; answering RUNNING here
+            // while still starting would be a lie.
+            Winsvc.SERVICE_CONTROL_INTERROGATE -> Unit
         }
         return 0 // NO_ERROR
     }
 
     private fun report(state: Int, exitCode: Int = 0) {
         val handle = statusHandle ?: return
-        val status = Winsvc.SERVICE_STATUS()
-        status.dwServiceType = 0x00000010 // SERVICE_WIN32_OWN_PROCESS
-        status.dwCurrentState = state
-        status.dwControlsAccepted = if (state == Winsvc.SERVICE_RUNNING) Winsvc.SERVICE_ACCEPT_STOP or Winsvc.SERVICE_ACCEPT_SHUTDOWN else 0
-        status.dwWin32ExitCode = exitCode
-        status.dwWaitHint = if (state == Winsvc.SERVICE_START_PENDING || state == Winsvc.SERVICE_STOP_PENDING) 10_000 else 0
-        Advapi32.INSTANCE.SetServiceStatus(handle, status)
+        val next = status.next(state, exitCode)
+        val win = Winsvc.SERVICE_STATUS()
+        win.dwServiceType = 0x00000010 // SERVICE_WIN32_OWN_PROCESS
+        win.dwCurrentState = next.state
+        win.dwControlsAccepted = next.controlsAccepted
+        win.dwWin32ExitCode = next.exitCode
+        win.dwCheckPoint = next.checkPoint
+        win.dwWaitHint = next.waitHintMs
+        Advapi32.INSTANCE.SetServiceStatus(handle, win)
     }
 
     private class FileLog(private val file: File) : LogBackend {
@@ -174,4 +203,40 @@ object MythaiaService {
 
     @Suppress("unused")
     private val unused: Pointer? = null
+}
+
+/**
+ * The fields of each status report. A pending state carries a wait hint and
+ * a checkpoint that grows with every report of that state, which is how SCM
+ * tells a slow start from a hung one; a settled state carries neither, and
+ * only RUNNING accepts stop and shutdown.
+ */
+internal class ServiceStatusTracker {
+    data class Report(val state: Int, val controlsAccepted: Int, val exitCode: Int, val checkPoint: Int, val waitHintMs: Int)
+
+    private var state = 0
+    private var checkPoint = 0
+
+    @Synchronized
+    fun next(state: Int, exitCode: Int = 0): Report {
+        val pending = state == Winsvc.SERVICE_START_PENDING || state == Winsvc.SERVICE_STOP_PENDING
+        checkPoint = when {
+            !pending -> 0
+            state == this.state -> checkPoint + 1
+            else -> 1
+        }
+        this.state = state
+        return Report(
+            state = state,
+            controlsAccepted = if (state == Winsvc.SERVICE_RUNNING) Winsvc.SERVICE_ACCEPT_STOP or Winsvc.SERVICE_ACCEPT_SHUTDOWN else 0,
+            exitCode = exitCode,
+            checkPoint = checkPoint,
+            waitHintMs = if (pending) PENDING_WAIT_HINT_MS else 0
+        )
+    }
+
+    companion object {
+        /** Each step of the start (icacls, the native library, the route cleanup) reports within this. */
+        const val PENDING_WAIT_HINT_MS = 30_000
+    }
 }

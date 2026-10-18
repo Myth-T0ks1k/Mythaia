@@ -12,8 +12,10 @@ import kotlinx.serialization.json.Json
 
 /**
  * The Windows per-user proxy (what Edge, Chrome, WinHTTP-using apps and the
- * system itself read). Set through the registry and announced with
- * WinINet's settings-changed notification so browsers pick it up at once.
+ * system itself read). The LAN settings are set through the registry, the
+ * dial-up, PPPoE and VPN connections' own through [PerConnectionProxy], and
+ * the change is announced with WinINet's settings-changed notification so
+ * browsers pick it up at once.
  *
  * What was there before is snapshotted to disk the first time it is
  * replaced and restored on disconnect, so a crash cannot leave the user with
@@ -25,8 +27,14 @@ object SystemProxy {
     private const val INTERNET_OPTION_REFRESH = 37
     private const val INTERNET_OPTION_SETTINGS_CHANGED = 39
 
+    /** The LAN values, and each phonebook connection's options by name (absent from older snapshots). */
     @Serializable
-    data class Snapshot(val enable: Int, val server: String?, val override: String?)
+    data class Snapshot(
+        val enable: Int,
+        val server: String?,
+        val override: String?,
+        val connections: Map<String, PerConnectionProxy.Options> = emptyMap()
+    )
 
     @Suppress("FunctionName")
     private interface WinInet : Library {
@@ -61,14 +69,20 @@ object SystemProxy {
     fun enable(server: String, bypass: String) {
         if (!isWindows) return
         try {
-            if (!AppPaths.proxySnapshot.exists()) {
-                current()?.let { AppPaths.proxySnapshot.writeText(json.encodeToString(Snapshot.serializer(), it)) }
+            val connections = PerConnectionProxy.connectionNames().orEmpty()
+            val saved = readSnapshot()
+            val snapshot = withConnections(saved ?: current(), connections, server)
+            if (snapshot != null && snapshot != saved) {
+                AppPaths.proxySnapshot.writeText(json.encodeToString(Snapshot.serializer(), snapshot))
             }
             Advapi32Util.registrySetIntValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyEnable", 1)
             Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyServer", server)
             Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyOverride", bypass)
+            // A PC online through one of these reads its options, not the LAN's.
+            val proxied = PerConnectionProxy.proxied(server, bypass)
+            val set = connections.count { PerConnectionProxy.set(it, proxied) }
             announceChange()
-            logger.info("System proxy set to $server")
+            logger.info("System proxy set to $server" + if (connections.isEmpty()) "" else " (and on $set of ${connections.size} dial-up/VPN connections)")
         } catch (e: Exception) {
             logger.error("Could not set the system proxy: ${e.message}")
         } catch (e: LinkageError) {
@@ -83,8 +97,7 @@ object SystemProxy {
     fun restore() {
         if (!isWindows) return
         try {
-            val snapshot = AppPaths.proxySnapshot.takeIf { it.isFile }
-                ?.let { runCatching { json.decodeFromString(Snapshot.serializer(), it.readText()) }.getOrNull() }
+            val snapshot = readSnapshot()
             // The user's own server and exception strings go back whether or
             // not their proxy was switched on: a disabled corporate proxy is
             // still theirs to keep.
@@ -93,6 +106,8 @@ object SystemProxy {
                 snapshot.override?.let { Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyOverride", it) }
                 val enable = if (snapshot.enable == 1 && !snapshot.server.isNullOrBlank()) 1 else 0
                 Advapi32Util.registrySetIntValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyEnable", enable)
+                // A connection deleted since is simply refused.
+                snapshot.connections.forEach { (name, options) -> PerConnectionProxy.set(name, options) }
             } else {
                 Advapi32Util.registrySetIntValue(WinReg.HKEY_CURRENT_USER, KEY, "ProxyEnable", 0)
             }
@@ -109,6 +124,28 @@ object SystemProxy {
     /** On start: a snapshot left behind means the last run did not get to restore. */
     fun restoreIfLeftOver() {
         if (AppPaths.proxySnapshot.isFile) restore()
+    }
+
+    private fun readSnapshot(): Snapshot? = AppPaths.proxySnapshot.takeIf { it.isFile }
+        ?.let { runCatching { json.decodeFromString(Snapshot.serializer(), it.readText()) }.getOrNull() }
+
+    /**
+     * [base] with the options of each of [connections] it does not hold yet,
+     * read now, before they are changed: one added since the first snapshot
+     * gets its own. Options that already point at [proxy] are not the user's,
+     * so going back from them means no proxy.
+     */
+    internal fun withConnections(
+        base: Snapshot?,
+        connections: List<String>,
+        proxy: String,
+        query: (String) -> PerConnectionProxy.Options? = PerConnectionProxy::query
+    ): Snapshot? {
+        val known = base?.connections.orEmpty()
+        val added = connections.filter { it !in known }
+            .mapNotNull { name -> query(name)?.let { name to PerConnectionProxy.before(it, proxy) } }
+        if (added.isEmpty()) return base
+        return (base ?: Snapshot(enable = 0, server = null, override = null)).copy(connections = known + added)
     }
 
     private fun announceChange() {

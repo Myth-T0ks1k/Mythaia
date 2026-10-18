@@ -50,6 +50,9 @@ object NamedPipe {
         Native.load("advapi32", Advapi32Sddl::class.java, W32APIOptions.DEFAULT_OPTIONS)
     }
 
+    /** The server took the request but sent no reply in time: unlike no server at all, it may still act on it. */
+    class NoReply(message: String) : IOException(message)
+
     /** One connected client on the server side. */
     class ServerConnection internal constructor(private val handle: WinNT.HANDLE) : AutoCloseable {
         private val pending = ByteArrayOutputStream()
@@ -115,8 +118,8 @@ object NamedPipe {
     /**
      * One request/response exchange as a client; null when no server is
      * listening. [timeoutMs] bounds the whole exchange, the reply included:
-     * a server that accepts and then hangs ends in an [IOException], not in
-     * a caller blocked for good.
+     * a server that accepts and then hangs ends in [NoReply], not in a
+     * caller blocked for good.
      */
     @Throws(IOException::class)
     fun exchange(name: String, line: String, timeoutMs: Long = 5_000): String? {
@@ -126,7 +129,7 @@ object NamedPipe {
             try {
                 writeAll(handle, (line + "\n").toByteArray(Charsets.UTF_8))
                 return readReply(handle, deadline)
-                    ?: throw IOException("no reply on $name within $timeoutMs ms")
+                    ?: throw NoReply("no reply on $name within $timeoutMs ms")
             } finally {
                 Kernel32.INSTANCE.CloseHandle(handle)
             }

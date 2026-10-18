@@ -108,6 +108,14 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private var remoteTun: ProxyConfiguration? = null
     private var remoteLogSeq = 0L
 
+    /**
+     * The server of a service start that never got an answer, not even to
+     * the stop that followed: the service may still bring that tunnel up,
+     * and [serviceWatchLoop] stops it once the service talks again.
+     */
+    @Volatile
+    private var strayServiceStart: UUID? = null
+
     /** Whichever tunnel is up. */
     val isTunnelRunning: Boolean get() = engine.isRunning || tun.isRunning || remoteTun != null
 
@@ -246,8 +254,25 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 val reply = if (installed) com.mythaia.desktop.service.ServiceClient.ping() else null
                 serviceAvailable.value = reply != null
                 serviceVersion.value = reply?.appVersion
+                val stray = strayServiceStart
+                if (stray != null && reply != null) stopStrayTunnel(stray)
                 delay(5_000)
             }
+        }
+    }
+
+    /**
+     * Stops the tunnel of a start the window gave up on, if the service went
+     * on to bring it up after all. Under the connect lock, so it cannot stop
+     * the tunnel of a connect that is starting.
+     */
+    private suspend fun stopStrayTunnel(stray: UUID) = connectLock.withLock {
+        if (strayServiceStart != stray || remoteTun != null) return@withLock
+        val status = com.mythaia.desktop.service.ServiceClient.status(remoteLogSeq) ?: return@withLock
+        strayServiceStart = null
+        if (status.running && status.configurationId == stray.toString()) {
+            logger.warning("The service brought up a tunnel after the window had stopped waiting for it; stopping it")
+            if (com.mythaia.desktop.service.ServiceClient.stop() == null) strayServiceStart = stray
         }
     }
 
@@ -554,6 +579,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             when {
                 viaService -> {
                     if (!wasRunning) stats.reset()
+                    // This start replaces whatever an earlier one left behind.
+                    strayServiceStart = null
+                    // Waits out a slow start and adopts its tunnel; see ServiceClient.start.
                     com.mythaia.desktop.service.ServiceClient.start(settings, config, _rules.value)
                     remoteTun = config
                     serviceAvailable.value = true
@@ -575,7 +603,12 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             )
             runCatching {
                 when {
-                    viaService -> { com.mythaia.desktop.service.ServiceClient.stop(); remoteTun = null }
+                    viaService -> {
+                        remoteTun = null
+                        // Unanswered, the service may be busy with the start
+                        // still and bring its tunnel up later.
+                        if (com.mythaia.desktop.service.ServiceClient.stop() == null) strayServiceStart = config.id
+                    }
                     useTun -> tun.stop()
                     else -> engine.stop()
                 }
@@ -608,7 +641,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         _connectivityOk.value = true
     }
 
-    /** Called from the exit path: puts the system back the way it was. */
+    /** Called from the exit path: puts the system back the way it was, and lets the last saves finish. */
     fun shutdown() {
         runCatching {
             runBlocking {
@@ -616,6 +649,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             }
         }
         scope.cancel()
+        store.flush()
     }
 
     private fun restartBackgroundJobs(groupId: String) {
@@ -854,8 +888,16 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         (line.startsWith("https://", ignoreCase = true) || line.startsWith("http://", ignoreCase = true)) &&
             !line.substringAfter("://").substringBefore('/').contains('@')
 
-    /** Adds every link in [text]; an https:// line without credentials is a subscription; Xray JSON imports whole. */
+    /**
+     * Adds every link in [text]; an https:// line without credentials is a
+     * subscription; Xray JSON imports whole. Parsed off the caller's thread:
+     * a pasted list of 10,000 links froze the window.
+     */
     fun addText(text: String, subscriptionName: String? = null, frontSni: String? = null, frontTargets: List<String> = emptyList()) {
+        scope.launch { addTextNow(text, subscriptionName, frontSni, frontTargets) }
+    }
+
+    private fun addTextNow(text: String, subscriptionName: String?, frontSni: String?, frontTargets: List<String>) {
         if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(text)) {
             try {
                 val imported = com.mythaia.data.network.XrayJsonImporter.parse(text).map { it.copy(subscriptionId = null) }
@@ -924,33 +966,38 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         mutateConfigurations { list -> list.map { if (it.id == config.id) it.copy(name = name.trim()) else it } }
     }
 
-    /** Drops servers in [groupId] whose link repeats an earlier one. Returns how many went. */
-    fun removeDuplicates(groupId: String): Int {
-        var removed = 0
-        mutateConfigurations { list ->
-            val seen = HashSet<String>()
-            list.filter { c ->
-                if (groupIdOf(c) != groupId) true
-                else {
-                    val key = runCatching { c.toUrl().substringBefore('#') }.getOrDefault(c.id.toString())
-                    if (seen.add(key)) true else { removed++; false }
+    /**
+     * Drops servers in [groupId] whose link repeats an earlier one, off the
+     * UI thread (a link per server is thousands of them), and says how many went.
+     */
+    fun removeDuplicates(groupId: String) {
+        scope.launch {
+            var removed = 0
+            mutateConfigurationsOutsideLock { list ->
+                val seen = HashSet<String>()
+                val next = list.filter { c ->
+                    if (groupIdOf(c) != groupId) true
+                    else seen.add(runCatching { c.toUrl().substringBefore('#') }.getOrDefault(c.id.toString()))
                 }
+                removed = list.size - next.size
+                next
             }
+            pruneSelection()
+            notify(tr("removed_n", removed))
         }
-        pruneSelection()
-        return removed
     }
 
-    /** Drops servers in [groupId] whose last measurement failed. Returns how many went. */
-    fun removeFailed(groupId: String): Int {
-        // Unreachable, or a certificate that does not verify: either way it does not work.
-        val failed = groupConfigs(groupId).filter {
-            val result = _latencies.value[it.id]
-            result is LatencyResult.Failed || result is LatencyResult.Insecure
-        }.map { it.id }.toSet()
-        if (failed.isEmpty()) return 0
-        deleteConfigurations(failed)
-        return failed.size
+    /** Drops servers in [groupId] whose last measurement failed, and says how many went. */
+    fun removeFailed(groupId: String) {
+        scope.launch {
+            // Unreachable, or a certificate that does not verify: either way it does not work.
+            val failed = groupConfigs(groupId).filter {
+                val result = _latencies.value[it.id]
+                result is LatencyResult.Failed || result is LatencyResult.Insecure
+            }.map { it.id }.toSet()
+            if (failed.isNotEmpty()) deleteConfigurations(failed)
+            notify(tr("removed_n", failed.size))
+        }
     }
 
     fun addSubscription(url: String, name: String?, frontSni: String?, frontTargets: List<String>) {
@@ -1028,12 +1075,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
         // The same link twice in a feed is one server; ids of servers
         // that stayed are kept so pins and Auto choices survive.
-        val fresh = result.configurations.distinctBy { runCatching { it.toUrl() }.getOrDefault(it.id.toString()) }
-        mutateConfigurations { list ->
+        val fresh = result.configurations
+            .map { it to runCatching { it.toUrl() }.getOrNull() }
+            .distinctBy { (c, link) -> link ?: c.id.toString() }
+        mutateConfigurationsOutsideLock { list ->
             val previous = list.filter { it.subscriptionId == id }
             val byLink = previous.associateBy { runCatching { it.toUrl() }.getOrNull() }.toMutableMap()
-            val merged = fresh.map { c ->
-                val link = runCatching { c.toUrl() }.getOrNull()
+            val merged = fresh.map { (c, link) ->
                 val old = link?.let { byLink.remove(it) }
                 c.copy(id = old?.id ?: c.id, subscriptionId = id)
             }
@@ -1237,6 +1285,29 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
     }
 
+    /**
+     * [mutateConfigurations] for a transform too slow to hold [stateLock]
+     * through — one that builds a link per server, thousands of them, while
+     * a click on the UI thread waits for the lock. It runs on the current
+     * list outside the lock, and its result is kept only if the list is
+     * still that one; otherwise it runs again on the new list. After a few
+     * lost races it runs under the lock like any other change.
+     */
+    private fun mutateConfigurationsOutsideLock(transform: (List<ProxyConfiguration>) -> List<ProxyConfiguration>) {
+        repeat(OUTSIDE_LOCK_ATTEMPTS) {
+            val before = _configurations.value
+            val next = transform(before)
+            synchronized(stateLock) {
+                if (_configurations.value === before) {
+                    _configurations.value = next
+                    store.saveConfigurations(next)
+                    return
+                }
+            }
+        }
+        mutateConfigurations(transform)
+    }
+
     private fun mutateSubscriptions(transform: (List<Subscription>) -> List<Subscription>) {
         synchronized(stateLock) {
             val next = transform(_subscriptions.value)
@@ -1292,6 +1363,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     companion object {
         /** How long the panel gets through each server tried. */
         private const val THROUGH_SERVER_TIMEOUT_MS = 20_000
+
+        /** Runs of a slow list change outside the lock before it takes the lock instead. */
+        private const val OUTSIDE_LOCK_ATTEMPTS = 3
 
         const val DEFAULT_GROUP = "default"
         private const val MAX_LOG_LINES = 600

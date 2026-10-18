@@ -223,8 +223,8 @@ private fun ServersTab(state: AppState) {
                 DropdownMenuItem(text = { Text(tr("select_fastest")) }, onClick = { menu = false; state.useAuto(shownGroup) })
                 DropdownMenuItem(text = { Text(tr("copy_all_links")) }, onClick = { menu = false; state.copyToClipboard(state.linksOf(configs)) })
                 DropdownMenuItem(text = { Text(tr("save_links_file")) }, onClick = { menu = false; state.saveLinksToFile(configs, group.name) })
-                DropdownMenuItem(text = { Text(tr("remove_duplicates")) }, onClick = { menu = false; state.notify(tr("removed_n", state.removeDuplicates(shownGroup))) })
-                DropdownMenuItem(text = { Text(tr("remove_failed")) }, onClick = { menu = false; state.notify(tr("removed_n", state.removeFailed(shownGroup))) })
+                DropdownMenuItem(text = { Text(tr("remove_duplicates")) }, onClick = { menu = false; state.removeDuplicates(shownGroup) })
+                DropdownMenuItem(text = { Text(tr("remove_failed")) }, onClick = { menu = false; state.removeFailed(shownGroup) })
                 if (group.subscription != null) {
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text(tr("update_all")) }, onClick = { menu = false; state.updateAllSubscriptions() })
