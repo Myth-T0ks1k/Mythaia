@@ -1,7 +1,9 @@
 package com.mythaia.data.network
 
+import com.mythaia.data.model.HopInterval
 import com.mythaia.data.model.HttpUpgradeConfiguration
 import com.mythaia.data.model.OutboundProtocol
+import com.mythaia.data.model.PortUnion
 import com.mythaia.data.model.RealityConfiguration
 import com.mythaia.data.model.TlsConfiguration
 import com.mythaia.data.model.TlsFingerprint
@@ -33,7 +35,11 @@ object ClashProxyParser {
 
         val root = runCatching { JSONObject(jsonStr) }.getOrNull()
             ?: throw ParseError.InvalidYaml("Root document is not a mapping")
+        return parseDocument(root)
+    }
 
+    /** [parse] after the YAML has become JSON, which is what the native parser hands back. */
+    internal fun parseDocument(root: JSONObject): ParseResult {
         val proxies = root.optJSONArray("proxies")
             ?: throw ParseError.MissingProxiesKey()
 
@@ -312,14 +318,18 @@ object ClashProxyParser {
             ?: node.optString("auth").takeIf { it.isNotEmpty() }
             ?: return null
 
-        val portInt = node.optInt("port", -1)
+        // Port hopping: `ports: 20000-30000` (also `443,8443` or mihomo's
+        // `443/8443`), every `hop-interval` seconds. A list Clash itself
+        // would reject is skipped rather than dialled on one port of it.
+        val portsText = node.opt("ports")?.takeIf { it != JSONObject.NULL }?.toString()?.trim().orEmpty()
+        val ports = if (portsText.isEmpty()) null else (PortUnion.parse(portsText) ?: return null)
+        val hopping = ports?.takeIf { it.hops }
+        val interval = hopping?.let { HopInterval.parse(node.opt("hop-interval")?.takeIf { v -> v != JSONObject.NULL }?.toString()) }
+
+        // `port` may be left out when `ports` is given.
+        val portInt = node.optInt("port", -1).takeIf { it > 0 } ?: ports?.first ?: -1
         if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
         val port = portInt.toUShort()
-
-        // A port range means the server hops between ports, which needs the
-        // QUIC path this client does not have yet. Better skipped than
-        // imported as something that cannot connect.
-        if (node.optString("ports", "").isNotEmpty()) return null
 
         val tls = passwordProtocolTls(node, server)
 
@@ -338,6 +348,9 @@ object ClashProxyParser {
             password = password,
             hysteriaUpMbps = bandwidthMbps(node, "up"),
             hysteriaDownMbps = bandwidthMbps(node, "down"),
+            hysteriaPorts = hopping?.toString(),
+            hysteriaHopInterval = interval?.min,
+            hysteriaHopIntervalMax = interval?.max?.takeIf { it != interval.min },
             // `obfs: none` means no obfuscation, not a type to refuse at dial.
             obfuscation = node.optString("obfs", "").takeIf { it.isNotEmpty() && !it.equals("none", ignoreCase = true) }?.lowercase(),
             obfuscationPassword = node.optJSONObject("obfs-password")?.toString()

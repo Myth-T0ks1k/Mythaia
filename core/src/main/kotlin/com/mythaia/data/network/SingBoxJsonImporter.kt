@@ -1,6 +1,8 @@
 package com.mythaia.data.network
 
+import com.mythaia.data.model.HopInterval
 import com.mythaia.data.model.OutboundProtocol
+import com.mythaia.data.model.PortUnion
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.ProxyError
 import com.mythaia.data.model.WireGuardIni
@@ -157,9 +159,9 @@ object SingBoxJsonImporter {
     // ------------------------------------------------------------- pieces
 
     /**
-     * `server:server_port`, IPv6 bracketed. Hysteria2's port hopping
-     * (`server_ports: ["20000:30000"]`) is not dialled as such; the first
-     * port of the range is, which the server answers on like any other.
+     * `server:server_port`, IPv6 bracketed. A Hysteria2 outbound that hops
+     * (`server_ports: ["20000:30000"]`) and names no `server_port` gets the
+     * first port of the list here; the list itself goes into `mport`.
      */
     private fun hostPort(item: JSONObject): String {
         val type = item.optString("type")
@@ -385,6 +387,15 @@ object SingBoxJsonImporter {
             ?.let { params["upmbps"] = it.toString() }
         (XrayJsonImporter.bandwidthMbps(item.opt("down_mbps")) ?: XrayJsonImporter.bandwidthMbps(item.opt("down")))
             ?.let { params["downmbps"] = it.toString() }
+        // Port hopping: `server_ports: ["20000:30000", "443"]`, every
+        // `hop_interval` (a Go duration, 30s by default), or at random up to
+        // `hop_interval_max` (sing-box 1.14).
+        PortUnion.parse(XrayJsonImporter.stringList(item.opt("server_ports")))?.takeIf { it.hops }?.let { ports ->
+            params["mport"] = ports.toString()
+            val min = HopInterval.parse(item.optString("hop_interval"))
+            val max = HopInterval.parse(item.optString("hop_interval_max"))
+            HopInterval.of(min?.min, max?.max ?: min?.max)?.let { params["hop-interval"] = it.toString() }
+        }
         val q = if (params.isEmpty()) "" else "?${query(params)}"
         return "hysteria2://${encode(password)}@${hostPort(item)}$q#${label(item, name)}"
     }

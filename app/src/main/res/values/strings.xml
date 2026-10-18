@@ -564,4 +564,9 @@
     <string name="settings_managed_by">Settings managed by %1$s</string>
     <string name="start_on_boot">Connect when the phone starts</string>
     <string name="subscription_pin_top">Pin to top</string>
+    <string name="port_hopping">Port hopping</string>
+    <string name="port_hopping_hint">Ports the server answers on, such as 20000-30000 or 443,8443. Each connection starts on one of them at random and moves to another every hop interval. Empty: only the port above.</string>
+    <string name="hop_interval">Hop interval, s</string>
+    <string name="hop_interval_hint">30 by default, at least 5; 10-50 picks each interval at random.</string>
+    <string name="invalid_port_list">Ports 1 to 65535: single ports and ranges, separated by commas</string>
 </resources>

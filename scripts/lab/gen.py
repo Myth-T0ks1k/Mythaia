@@ -159,6 +159,10 @@ links.append(f"hysteria2://{PW}@{HOST}:21002?{q({'sni': SNI, 'insecure': '1', 'o
 links.append(f"hysteria2://{PW}@{HOST}:21010?{q({'sni': SNI, 'insecure': '1', 'upmbps': '50', 'downmbps': '100'})}#{name('Hysteria2 Brutal')}")
 fm_salamander = json.dumps({"udp": [{"type": "salamander", "settings": {"password": "salty"}}]}, separators=(",", ":"))
 links.append(f"hysteria2://{PW}@{HOST}:21002?{q({'sni': SNI, 'insecure': '1', 'fm': fm_salamander})}#{name('Hysteria2 Salamander via fm')}")
+# Port hopping: hoprelay.py stands in for the server's iptables DNAT, 21100-21104 -> 21001 and
+# 21110-21114 -> 21002 (python hoprelay.py 21100-21104=21001 21110-21114=21002).
+links.append(f"hysteria2://{PW}@{HOST}:21100-21104/?{q({'sni': SNI, 'insecure': '1', 'hop-interval': '5'})}#{name('Hysteria2 port hopping')}")
+links.append(f"hysteria2://{PW}@{HOST}:21110?{q({'sni': SNI, 'insecure': '1', 'obfs': 'salamander', 'obfs-password': 'salty', 'mport': '21110-21114', 'hop-interval': '5'})}#{name('Hysteria2 port hopping mport Salamander')}")
 links.append(f"tuic://{UUID}:{PW}@{HOST}:21003?{q({'sni': SNI, 'allow_insecure': '1', 'alpn': 'h3', 'congestion_control': 'bbr'})}#{name('TUIC v5')}")
 links.append(f"anytls://{PW}@{HOST}:21004?{q({'sni': SNI, 'insecure': '1'})}#{name('AnyTLS')}")
 links.append(f"https://lab:{PW}@{HOST}:21005#{name('Naive HTTP2')}")

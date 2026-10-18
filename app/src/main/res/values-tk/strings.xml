@@ -530,4 +530,9 @@
     <string name="settings_managed_by">Sazlamalar %1$s tarapyndan dolandyrylýar</string>
     <string name="start_on_boot">Telefon açylanda birik</string>
     <string name="subscription_pin_top">Ýokarda berkit</string>
+    <string name="port_hopping">Portlary çalyşmak</string>
+    <string name="port_hopping_hint">Serweriň jogap berýän portlary, meselem 20000-30000 ýa-da 443,8443. Her birikme olaryň birinden tötänleýin başlaýar we her çalşyk aralygynda başgasyna geçýär. Boş: diňe ýokardaky port.</string>
+    <string name="hop_interval">Çalşyk aralygy, s</string>
+    <string name="hop_interval_hint">Adatça 30, iň az 5; 10-50 her aralygy tötänleýin saýlaýar.</string>
+    <string name="invalid_port_list">1-den 65535-e çenli portlar: ýeke portlar we aralyklar, otur bilen bölünen</string>
 </resources>

@@ -535,6 +535,14 @@ object XrayJsonImporter {
         }
         bandwidthMbps(hysteria.opt("up"))?.let { params["upmbps"] = it.toString() }
         bandwidthMbps(hysteria.opt("down"))?.let { params["downmbps"] = it.toString() }
+        // Port hopping, from FinalMask: `quicParams.udpHop` in Xray 26, a
+        // `udphop` mask in later versions.
+        stream.optJSONObject("finalmask")?.let { ProxyConfiguration.finalMaskUdpHop(it.toString()) }?.let { (ports, interval) ->
+            ports?.takeIf { it.hops }?.let { hopping ->
+                params["mport"] = hopping.toString()
+                interval?.let { params["hop-interval"] = it.toString() }
+            }
+        }
 
         val q = if (params.isEmpty()) "" else "?${query(params)}"
         return "hysteria2://${encode(auth)}@${hostPort(server)}$q#${encode(name.ifEmpty { hostPort(server) })}"

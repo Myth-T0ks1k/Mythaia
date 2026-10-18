@@ -544,4 +544,9 @@
     <string name="settings_managed_by">Настройки управляются подпиской %1$s</string>
     <string name="start_on_boot">Подключаться при включении телефона</string>
     <string name="subscription_pin_top">Закрепить наверху</string>
+    <string name="port_hopping">Смена портов</string>
+    <string name="port_hopping_hint">Порты, на которых отвечает сервер, например 20000-30000 или 443,8443. Каждое соединение начинает со случайного из них и переходит на другой через интервал смены. Пусто — только порт выше.</string>
+    <string name="hop_interval">Интервал смены, с</string>
+    <string name="hop_interval_hint">По умолчанию 30, не меньше 5; 10-50 — каждый раз случайный интервал.</string>
+    <string name="invalid_port_list">Порты от 1 до 65535: отдельные порты и диапазоны через запятую</string>
 </resources>

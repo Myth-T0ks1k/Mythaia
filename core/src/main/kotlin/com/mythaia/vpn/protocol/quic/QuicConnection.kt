@@ -2,15 +2,11 @@ package com.mythaia.vpn.protocol.quic
 
 import com.mythaia.data.model.TlsFingerprint
 import com.mythaia.vpn.NativeBridge
-import com.mythaia.vpn.SocketProtector
 import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.DatagramPacket
-import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -51,7 +47,12 @@ class QuicConnection(
      * Hysteria's packet obfuscation, applied to every datagram in both
      * directions; null sends QUIC packets as they are.
      */
-    private val obfuscator: com.mythaia.vpn.protocol.hysteria.HysteriaObfuscator? = null
+    private val obfuscator: com.mythaia.vpn.protocol.hysteria.HysteriaObfuscator? = null,
+    /**
+     * Hysteria2 port hopping: the ports to start on and move between, in
+     * place of [serverPort]; see [QuicUdpPath]. Null stays on [serverPort].
+     */
+    private val hopping: QuicPortHopping? = null
 ) : NativeBridge.QuicCallback {
 
     private val tls = QuicTlsHandler(tlsServerName, alpn, tuning, fingerprint, allowInsecure, pinnedCertSha256, verifyName)
@@ -63,15 +64,15 @@ class QuicConnection(
     /** Serialises every call into ngtcp2, which is not thread-safe. */
     private val engineLock = Any()
 
+    /** The socket and the server port; it moves when [hopping] is set. */
     @Volatile
-    private var socket: DatagramSocket? = null
-
-    @Volatile
-    private var endpoint: InetSocketAddress? = null
+    private var path: QuicUdpPath? = null
 
     private val running = AtomicBoolean(false)
     private val handshake = CompletableDeferred<Boolean>()
-    private val threads = mutableListOf<Thread>()
+
+    /** Readers come and go as the path hops, so this is added to from more than one thread. */
+    private val threads = java.util.Collections.synchronizedList(mutableListOf<Thread>())
 
     /** Where unreliable datagrams go, when anything wants them. */
     @Volatile
@@ -127,28 +128,24 @@ class QuicConnection(
             return false
         }
 
-        val bound = DatagramSocket()
-        if (!SocketProtector.protect(bound)) {
-            bound.close()
-            logger.warning("[QUIC] Could not protect the socket from the tunnel")
-            return false
-        }
-        bound.soTimeout = SOCKET_POLL_MS
-        socket = bound
-
-        val target = InetSocketAddress(InetAddress.getByName(address), serverPort)
-        endpoint = target
+        // A hopping connection starts on a random port of its list, as the
+        // official client does; ngtcp2 is told that one and never another.
+        val firstPort = hopping?.let { it.ports.random(it.random) } ?: serverPort
+        val udp = QuicUdpPath(InetAddress.getByName(address), firstPort, hopping)
+        val bound = udp.open() ?: return false
+        path = udp
 
         handle = NativeBridge.nativeQuicConnCreate(
             address,
-            serverPort,
+            firstPort,
             bound.localAddress.hostAddress ?: "0.0.0.0",
             bound.localPort,
             tuning.toNativeArray(),
             this
         )
         if (handle == 0L) {
-            bound.close()
+            udp.close()
+            path = null
             logger.warning("[QUIC] ngtcp2 refused to create the connection")
             return false
         }
@@ -156,7 +153,7 @@ class QuicConnection(
         // The hello advertises what ngtcp2 was created with, connection id included.
         tls.localTransportParameters = NativeBridge.nativeQuicLocalTransportParams(handle)
 
-        spawn("quic-read", ::runReader)
+        udp.start(::spawn, ::onPacket)
         spawn("quic-timer", ::runTimer)
 
         // The first flight goes out as soon as something asks ngtcp2 to write.
@@ -202,10 +199,10 @@ class QuicConnection(
             pendingDatagrams.clear()
         }
 
-        socket?.close()
-        socket = null
-        threads.forEach { it.interrupt() }
-        threads.clear()
+        path?.close()
+        path = null
+        val stopping = synchronized(threads) { threads.toList().also { threads.clear() } }
+        stopping.forEach { it.interrupt() }
 
         if (!handshake.isCompleted) handshake.complete(false)
     }
@@ -445,11 +442,10 @@ class QuicConnection(
 
     /** Puts one datagram on the wire, obfuscated when configured. False when the socket has gone. */
     private fun send(datagram: ByteArray): Boolean {
-        val target = endpoint ?: return false
-        val current = socket ?: return false
+        val current = path ?: return false
         return try {
             val wire = obfuscator?.seal(datagram) ?: listOf(datagram)
-            for (piece in wire) current.send(DatagramPacket(piece, piece.size, target))
+            for (piece in wire) current.send(piece)
             true
         } catch (e: Exception) {
             if (running.get()) logger.warning("[QUIC] Send failed: ${e.message}")
@@ -457,38 +453,28 @@ class QuicConnection(
         }
     }
 
-    private fun runReader() {
-        val buffer = ByteArray(MAX_DATAGRAM)
-        val packet = DatagramPacket(buffer, buffer.size)
-
-        while (running.get()) {
-            val current = socket ?: break
-            try {
-                packet.setData(buffer, 0, buffer.size)
-                current.receive(packet)
-            } catch (e: java.net.SocketTimeoutException) {
-                continue
-            } catch (e: Exception) {
-                if (running.get()) logger.warning("[QUIC] Socket read failed: ${e.message}")
-                break
-            }
-
-            val raw = buffer.copyOf(packet.length)
-            // An obfuscated datagram that does not open is not ours: noise on
-            // the port, or a piece the obfuscator is still reassembling.
-            val received = if (obfuscator != null) (obfuscator.open(raw) ?: continue) else raw
-            val rv = synchronized(engineLock) {
-                if (handle == 0L) return@synchronized 0
-                NativeBridge.nativeQuicConnRead(handle, received, received.size)
-            }
-            if (rv < 0) {
-                logger.warning("[QUIC] Connection failed while reading (ngtcp2 $rv)")
-                if (!handshake.isCompleted) handshake.complete(false)
-                close()
-                return
-            }
-            flush()
+    /**
+     * One datagram from the server, on whichever socket of the path it came
+     * in on; false stops that socket's reader. Every one is handed to ngtcp2
+     * as arriving on the path the connection was created with.
+     */
+    private fun onPacket(raw: ByteArray): Boolean {
+        if (!running.get()) return false
+        // An obfuscated datagram that does not open is not ours: noise on
+        // the port, or a piece the obfuscator is still reassembling.
+        val received = if (obfuscator != null) (obfuscator.open(raw) ?: return true) else raw
+        val rv = synchronized(engineLock) {
+            if (handle == 0L) return@synchronized 0
+            NativeBridge.nativeQuicConnRead(handle, received, received.size)
         }
+        if (rv < 0) {
+            logger.warning("[QUIC] Connection failed while reading (ngtcp2 $rv)")
+            if (!handshake.isCompleted) handshake.complete(false)
+            close()
+            return false
+        }
+        flush()
+        return true
     }
 
     /**
@@ -601,16 +587,12 @@ class QuicConnection(
          */
         internal const val WRITE_CLOSED = -2L
 
-        /** Everything a QUIC datagram can be, plus room to read a larger one. */
-        private const val MAX_DATAGRAM = 1500
-
         /** quic-go queues 32; fragments of a large payload count one each. */
         private const val MAX_PENDING_DATAGRAMS = 64
 
         /** How long a datagram may wait for room before it is dropped. */
         private const val MAX_DATAGRAM_AGE_NS = 500_000_000L
 
-        private const val SOCKET_POLL_MS = 1000
         /** The longest the timer sleeps; it wakes sooner when ngtcp2's deadline is nearer. */
         private const val TIMER_TICK_NANOS = 10_000_000L
 

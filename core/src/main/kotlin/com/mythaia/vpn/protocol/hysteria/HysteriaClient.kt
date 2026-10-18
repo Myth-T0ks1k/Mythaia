@@ -8,6 +8,7 @@ import com.mythaia.vpn.protocol.http3.Http3FrameType
 import com.mythaia.vpn.protocol.http3.Http3Framer
 import com.mythaia.vpn.protocol.http3.QpackEncoder
 import com.mythaia.vpn.protocol.quic.QuicConnection
+import com.mythaia.vpn.protocol.quic.QuicPortHopping
 import com.mythaia.vpn.protocol.quic.QuicRedialBackoff
 import com.mythaia.vpn.protocol.quic.QuicStream
 import com.mythaia.vpn.protocol.quic.QuicTuning
@@ -298,7 +299,10 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             allowInsecure = tls?.allowInsecure == true,
             pinnedCertSha256 = tls?.pinnedCertSha256,
             verifyName = tls?.verifyName,
-            obfuscator = obfuscation?.let { HysteriaObfuscator.of(it) }
+            obfuscator = obfuscation?.let { HysteriaObfuscator.of(it) },
+            // Each session starts on a random port of the list and hops from
+            // there; a redial after a failure picks afresh.
+            hopping = configuration.hysteriaPortUnion?.let { QuicPortHopping(it, configuration.hysteriaHop) }
         )
         // Registered before the handshake so no reply to a UDP flow is lost
         // to a session that is still coming up.

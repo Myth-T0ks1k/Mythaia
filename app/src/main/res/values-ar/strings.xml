@@ -558,4 +558,9 @@
     <string name="settings_managed_by">الإعدادات مُدارة بواسطة %1$s</string>
     <string name="start_on_boot">الاتصال عند تشغيل الهاتف</string>
     <string name="subscription_pin_top">تثبيت في الأعلى</string>
+    <string name="port_hopping">تبديل المنافذ</string>
+    <string name="port_hopping_hint">المنافذ التي يستجيب عليها الخادم، مثل 20000-30000 أو 443,8443. يبدأ كل اتصال بأحدها عشوائيًا وينتقل إلى آخر بعد كل فاصل تبديل. فارغ: المنفذ أعلاه فقط.</string>
+    <string name="hop_interval">فاصل التبديل، ث</string>
+    <string name="hop_interval_hint">30 افتراضيًا، و5 على الأقل؛ 10-50 يختار كل فاصل عشوائيًا.</string>
+    <string name="invalid_port_list">منافذ من 1 إلى 65535: منافذ مفردة ونطاقات مفصولة بفواصل</string>
 </resources>

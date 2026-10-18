@@ -523,4 +523,9 @@
     <string name="settings_managed_by">ဆက်တင်များကို %1$s က စီမံထားသည်</string>
     <string name="start_on_boot">ဖုန်းစတင်ဖွင့်ချိန်တွင် ချိတ်ဆက်ရန်</string>
     <string name="subscription_pin_top">ထိပ်ဆုံးတွင် ပင်ထိုးရန်</string>
+    <string name="port_hopping">ပို့တ် ပြောင်းလဲခြင်း</string>
+    <string name="port_hopping_hint">ဆာဗာက တုံ့ပြန်သော ပို့တ်များ၊ ဥပမာ 20000-30000 သို့မဟုတ် 443,8443။ ချိတ်ဆက်မှုတိုင်းသည် ၎င်းတို့ထဲမှ တစ်ခုကို ကျပန်းရွေး၍ စတင်ပြီး ပြောင်းလဲကာလတိုင်း အခြားတစ်ခုသို့ ရွှေ့သည်။ ဗလာ - အပေါ်က ပို့တ်သာ။</string>
+    <string name="hop_interval">ပြောင်းလဲကာလ၊ စက္ကန့်</string>
+    <string name="hop_interval_hint">ပုံမှန် 30၊ အနည်းဆုံး 5။ 10-50 ဆိုလျှင် ကာလတိုင်းကို ကျပန်းရွေးသည်။</string>
+    <string name="invalid_port_list">ပို့တ် 1 မှ 65535 - တစ်ခုချင်း ပို့တ်များနှင့် အပိုင်းအခြားများကို ကော်မာဖြင့် ခွဲပါ</string>
 </resources>

@@ -392,6 +392,11 @@ object S {
         "pin_subscription" to "Закрепить подписку",
         "unpin_subscription" to "Открепить подписку",
         "subscription_links_hidden" to "Настройки серверов скрыты провайдером",
+        "port_hopping" to "Смена портов",
+        "port_hopping_hint" to "Порты, на которых отвечает сервер, например 20000-30000 или 443,8443. Каждое соединение начинает со случайного из них и переходит на другой через интервал смены. Пусто — только порт выше.",
+        "hop_interval" to "Интервал смены, с",
+        "hop_interval_hint" to "По умолчанию 30, не меньше 5; 10-50 — каждый раз случайный интервал.",
+        "invalid_port_list" to "Порты от 1 до 65535: отдельные порты и диапазоны через запятую",
     )
 
     private val EN: Map<String, String> = mapOf(
@@ -752,6 +757,11 @@ object S {
         "pin_subscription" to "Pin subscription",
         "unpin_subscription" to "Unpin subscription",
         "subscription_links_hidden" to "Server settings are hidden by the provider",
+        "port_hopping" to "Port hopping",
+        "port_hopping_hint" to "Ports the server answers on, such as 20000-30000 or 443,8443. Each connection starts on one of them at random and moves to another every hop interval. Empty: only the port above.",
+        "hop_interval" to "Hop interval, s",
+        "hop_interval_hint" to "30 by default, at least 5; 10-50 picks each interval at random.",
+        "invalid_port_list" to "Ports 1 to 65535: single ports and ranges, separated by commas",
     )
 }
 

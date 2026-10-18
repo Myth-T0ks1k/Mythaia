@@ -63,6 +63,7 @@ object QuicClientPool {
     internal fun key(c: ProxyConfiguration): String = listOf(
         c.outboundProtocol, c.serverAddress, c.serverPort, c.uuid, c.password, c.trojanPassword,
         c.obfuscation, c.obfuscationPassword, c.hysteriaUpMbps, c.hysteriaDownMbps,
+        c.hysteriaPorts, c.hysteriaHopInterval, c.hysteriaHopIntervalMax,
         c.tls?.serverName, c.tls?.allowInsecure, c.tls?.fingerprint, c.tls?.alpn,
         c.tls?.pinnedCertSha256, c.tls?.verifyName
     ).joinToString("|")

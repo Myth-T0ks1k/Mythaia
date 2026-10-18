@@ -33,7 +33,20 @@ export MYTHAIA_MATRIX_OUT=matrix-results.tsv
 ./gradlew :desktop:test --tests "com.mythaia.desktop.engine.LabMatrixSmoke" --rerun
 ```
 
-`MYTHAIA_MATRIX_LOG=1` добавляет журнал ядра в отчёт теста (`desktop/build/test-results/test/*LabMatrix*.xml`). Сейчас проходят все 36 строк.
+**Смена портов Hysteria2.** Две строки «Hysteria2 port hopping» идут через `hoprelay.py` — он делает то же, что iptables DNAT перед настоящим сервером: порты 21100-21104 ведут на 21001, 21110-21114 на 21002, и после каждой смены порта сервер видит клиента с нового адреса. Без него эти строки не проходят:
+
+```bash
+python hoprelay.py 21100-21104=21001 21110-21114=21002 > out/hoprelay.log &
+```
+
+Долгий прогон — одна сессия через несколько смен порта: TCP-эхо и UDP-эхо каждые 250 мс, тест проверяет, что всё вернулось, порт менялся каждые 5 с, а рукопожатие было одно. В `out/hoprelay.log` видно каждый новый адрес клиента и все пакеты рукопожатия (long header) — они только в начале.
+
+```bash
+export MYTHAIA_HOP_LINK="$(grep 'port%20hopping$' scripts/lab/out/lab-links.txt)"
+./gradlew :desktop:test --tests "com.mythaia.desktop.engine.PortHopSmoke" --rerun
+```
+
+`MYTHAIA_MATRIX_LOG=1` добавляет журнал ядра в отчёт теста (`desktop/build/test-results/test/*LabMatrix*.xml`). Сейчас проходят все 38 строк (с `hoprelay.py`).
 
 **Ваши подписки через провайдера.** Тот же тест принимает файлы подписок: сохраните тело подписки (base64, ссылки, JSON Xray или sing-box) в файл и передайте его в `MYTHAIA_MATRIX` без `MYTHAIA_MATRIX_HOST`. JVM ходит в сеть напрямую, мимо системного прокси (Hiddify), поэтому это честная проверка «как у телефона в Туркменистане».
 

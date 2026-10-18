@@ -70,6 +70,14 @@ All notable changes to Mythaia are recorded here. The format follows
   `sub-expire` is within three days, the app raises a system notification once per message on
   Android (`Provider messages` channel) and Windows (tray notification), without Firebase or Google
   Play services.
+- **Hysteria2 port hopping.** Servers that answer on a range of ports (`host:20000-30000`,
+  `mport=`, Clash `ports`/`hop-interval`, sing-box `server_ports`/`hop_interval`/`hop_interval_max`,
+  Xray FinalMask `udpHop`) are dialled the way the official client does it: each connection starts
+  on a random port of the list and moves to another every 30 seconds, or at the interval the server
+  gives (at least 5 s, or a random one between two bounds). The move happens under the QUIC session,
+  so open downloads, calls and UDP flows carry on. Both editors have the port list and the
+  interval; exported links keep one port and put the list in `mport`, which v2rayN and 3x-ui read.
+  Clash servers with `ports` were skipped before.
 
 ## [1.3.1] — 2026-10-18
 

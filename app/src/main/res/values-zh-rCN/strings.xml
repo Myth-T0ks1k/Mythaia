@@ -523,4 +523,9 @@
     <string name="settings_managed_by">设置由 %1$s 管理</string>
     <string name="start_on_boot">开机时自动连接</string>
     <string name="subscription_pin_top">置顶</string>
+    <string name="port_hopping">端口跳跃</string>
+    <string name="port_hopping_hint">服务器响应的端口，例如 20000-30000 或 443,8443。每个连接随机从其中一个开始，每隔一个跳跃间隔换到另一个。留空：只用上面的端口。</string>
+    <string name="hop_interval">跳跃间隔（秒）</string>
+    <string name="hop_interval_hint">默认 30，至少 5；10-50 表示每次随机选择间隔。</string>
+    <string name="invalid_port_list">端口 1–65535：单个端口或端口段，用逗号分隔</string>
 </resources>

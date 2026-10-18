@@ -267,7 +267,10 @@ object LatencyTester {
     /** The UDP side of the ping: a QUIC probe, disguised the way a Hysteria2 server expects. */
     private fun pingUdp(config: ProxyConfiguration): LatencyResult {
         val host = DnsCache.resolveHost(config.connectAddress) ?: return LatencyResult.Failed
-        val target = java.net.InetSocketAddress(java.net.InetAddress.getByName(host), config.serverPort.toInt())
+        // A hopping server is probed on a random port of its list, as a
+        // connection would start on one.
+        val port = config.hysteriaPortUnion?.random() ?: config.serverPort.toInt()
+        val target = java.net.InetSocketAddress(java.net.InetAddress.getByName(host), port)
         val obfuscator = if (config.outboundProtocol == com.mythaia.data.model.OutboundProtocol.HYSTERIA2) {
             com.mythaia.vpn.protocol.hysteria.HysteriaObfuscation
                 .make(config.obfuscation, config.obfuscationPassword)

@@ -42,9 +42,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mythaia.data.model.FragmentSettings
+import com.mythaia.data.model.HopInterval
 import com.mythaia.data.model.HttpUpgradeConfiguration
 import com.mythaia.data.model.NaiveProtocol
 import com.mythaia.data.model.OutboundProtocol
+import com.mythaia.data.model.PortUnion
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.RealityConfiguration
 import com.mythaia.data.model.TlsConfiguration
@@ -231,6 +233,10 @@ private fun ServerEditorForm(
     var vmessSecurity by remember { mutableStateOf(c?.vmessSecurity ?: "auto") }
     var hyUp by remember { mutableStateOf(c?.hysteriaUpMbps?.toString() ?: "") }
     var hyDown by remember { mutableStateOf(c?.hysteriaDownMbps?.toString() ?: "") }
+    var hyPorts by remember { mutableStateOf(c?.hysteriaPorts ?: "") }
+    var hyHop by remember {
+        mutableStateOf(c?.takeIf { it.hysteriaHopInterval != null }?.hysteriaHop?.toString() ?: "")
+    }
     var obfs by remember { mutableStateOf(c?.obfuscation ?: "none") }
     var obfsPassword by remember { mutableStateOf(c?.obfuscationPassword ?: "") }
     var nowhereUp by remember { mutableStateOf(c?.nowhereUplink ?: "udp") }
@@ -293,6 +299,11 @@ private fun ServerEditorForm(
     val mbpsValid = (hyUp.isBlank() || hyUp.trim().toIntOrNull()?.let { it > 0 } == true) &&
         (hyDown.isBlank() || hyDown.trim().toIntOrNull()?.let { it > 0 } == true) &&
         (hyUp.isBlank() == hyDown.isBlank())
+    // Port hopping: a list of more than one port, and an interval only with it.
+    val hopPorts = PortUnion.parse(hyPorts)?.takeIf { it.hops }
+    val hopPortsValid = hyPorts.isBlank() || hopPorts != null
+    val hopInterval = HopInterval.parse(hyHop)
+    val hopIntervalValid = hyHop.isBlank() || hopInterval != null
 
     val isValid = name.isNotBlank() &&
             serverAddress.isNotBlank() &&
@@ -303,7 +314,8 @@ private fun ServerEditorForm(
                 isShadowsocks -> ssPassword.isNotEmpty()
                 isSocks5 -> true
                 isTrojan -> trojanPassword.isNotEmpty()
-                isHysteria2 -> password.isNotEmpty() && mbpsValid && (obfs == "none" || obfsPassword.isNotEmpty())
+                isHysteria2 -> password.isNotEmpty() && mbpsValid && hopPortsValid && hopIntervalValid &&
+                    (obfs == "none" || obfsPassword.isNotEmpty())
                 isAnyTls || isNowhere -> password.isNotEmpty()
                 isTuic -> uuidValid && password.isNotEmpty()
                 isSudoku -> sudokuKey.isNotBlank()
@@ -527,6 +539,11 @@ private fun ServerEditorForm(
                             vmessSecurity = if (isVmess) vmessSecurity.takeIf { it != "auto" } else null,
                             hysteriaUpMbps = if (isHysteria2) hyUp.trim().toIntOrNull() else null,
                             hysteriaDownMbps = if (isHysteria2) hyDown.trim().toIntOrNull() else null,
+                            hysteriaPorts = if (isHysteria2) hopPorts?.toString() else null,
+                            hysteriaHopInterval = if (isHysteria2 && hopPorts != null) hopInterval?.min else null,
+                            hysteriaHopIntervalMax = if (isHysteria2 && hopPorts != null) {
+                                hopInterval?.takeIf { it.max != it.min }?.max
+                            } else null,
                             obfuscation = if (isHysteria2 && obfs != "none") obfs else null,
                             obfuscationPassword = if (isHysteria2 && obfs != "none") obfsPassword else null,
                             nowhereUplink = if (isNowhere) nowhereUp else null,
@@ -655,6 +672,20 @@ private fun ServerEditorForm(
                             style = MaterialTheme.typography.bodySmall,
                             color = if (mbpsValid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
                         )
+                        EditorWingField(hyPorts, { hyPorts = it }, tr("port_hopping"), placeholder = "20000-30000")
+                        Text(
+                            text = tr(if (hopPortsValid) "port_hopping_hint" else "invalid_port_list"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (hopPortsValid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                        )
+                        if (hyPorts.isNotBlank()) {
+                            EditorWingField(hyHop, { hyHop = it }, tr("hop_interval"), placeholder = "30")
+                            Text(
+                                text = tr("hop_interval_hint"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hopIntervalValid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                            )
+                        }
                         EditorDropdownField(
                             label = tr("obfuscation"),
                             selectedValue = obfs,

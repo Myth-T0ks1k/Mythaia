@@ -816,6 +816,21 @@ data class ProxyConfiguration(
      */
     val hysteriaUpMbps: Int? = null,
     val hysteriaDownMbps: Int? = null,
+    /**
+     * Hysteria2 port hopping: every port the server answers on, as a
+     * normalised [PortUnion] (`20000-30000`, `443,8443`). Null dials
+     * [serverPort] alone. With it each connection starts on a random port of
+     * the list and moves to another every hop interval, and [serverPort] is
+     * only the port shown and pinged when the list gives none of its own.
+     */
+    val hysteriaPorts: String? = null,
+    /**
+     * Seconds between hops; null is the official 30. With
+     * [hysteriaHopIntervalMax] set, each interval is picked at random from
+     * this to that, as the official `minHopInterval`/`maxHopInterval` do.
+     */
+    val hysteriaHopInterval: Int? = null,
+    val hysteriaHopIntervalMax: Int? = null,
     /** Hysteria2 obfuscation, currently only `salamander`. */
     val obfuscation: String? = null,
     /**
@@ -937,7 +952,15 @@ data class ProxyConfiguration(
     }
 
     val displayEndpoint: String
-        get() = "$bracketedServerAddress:$serverPort"
+        get() = "$bracketedServerAddress:${hysteriaPortUnion ?: serverPort}"
+
+    /** The ports a Hysteria2 server hops between; null when it is dialled on [serverPort] alone. */
+    val hysteriaPortUnion: PortUnion?
+        get() = if (outboundProtocol == OutboundProtocol.HYSTERIA2) PortUnion.parse(hysteriaPorts)?.takeIf { it.hops } else null
+
+    /** How often a hopping Hysteria2 connection moves port; the official 30 s unless set. */
+    val hysteriaHop: HopInterval
+        get() = HopInterval.of(hysteriaHopInterval, hysteriaHopIntervalMax) ?: HopInterval.DEFAULT
 
     fun contentEquals(other: ProxyConfiguration): Boolean =
         name == other.name &&
@@ -970,6 +993,9 @@ data class ProxyConfiguration(
                 password == other.password &&
                 hysteriaUpMbps == other.hysteriaUpMbps &&
                 hysteriaDownMbps == other.hysteriaDownMbps &&
+                hysteriaPorts == other.hysteriaPorts &&
+                hysteriaHopInterval == other.hysteriaHopInterval &&
+                hysteriaHopIntervalMax == other.hysteriaHopIntervalMax &&
                 obfuscation == other.obfuscation &&
                 vmessSecurity == other.vmessSecurity &&
                 obfuscationPassword == other.obfuscationPassword &&
@@ -1056,6 +1082,12 @@ data class ProxyConfiguration(
      *
      * Always the long spelling: `hy2://` is an accepted alias on the way in,
      * and emitting the canonical scheme keeps a round trip stable.
+     *
+     * Port hopping goes out as `mport=` beside a single port rather than as
+     * the official `host:20000-30000` authority: a port list there is not a
+     * URI any standard parser reads (v2rayN, and every importer built on a
+     * URI class, reject the whole link), while `mport` is what v2rayN and
+     * 3x-ui write and a client that does not know it still dials the port.
      */
     private fun toHysteria2Url(): String {
         val params = mutableListOf<String>()
@@ -1064,6 +1096,10 @@ data class ProxyConfiguration(
         hysteriaDownMbps?.let { params.add("downmbps=$it") }
         obfuscation?.let { params.add("obfs=$it") }
         obfuscationPassword?.let { params.add("obfs-password=${urlEncode(it)}") }
+        hysteriaPortUnion?.let { ports ->
+            params.add("mport=$ports")
+            if (hysteriaHopInterval != null) params.add("hop-interval=$hysteriaHop")
+        }
 
         val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
         return "hysteria2://${urlEncode(password ?: "")}@$bracketedServerAddress:$serverPort" +
@@ -1911,7 +1947,9 @@ data class ProxyConfiguration(
             val host: String,
             val port: UShort,
             val params: Map<String, String>,
-            val name: String?
+            val name: String?,
+            /** A port list in the authority (`host:20000-30000`); [port] is then its first port. */
+            val ports: PortUnion? = null
         )
 
         private fun decomposeUserInfoLink(
@@ -1922,7 +1960,9 @@ data class ProxyConfiguration(
              * both default to 443, and a link written without one is common
              * enough that rejecting it is the wrong answer.
              */
-            defaultPort: UShort? = null
+            defaultPort: UShort? = null,
+            /** Whether the authority may name a port list, as Hysteria2's official links do. */
+            portUnion: Boolean = false
         ): UserInfoLink {
             var remaining = url.removePrefix(scheme)
 
@@ -1951,6 +1991,32 @@ data class ProxyConfiguration(
             if (serverPart.endsWith("/")) serverPart = serverPart.dropLast(1)
             val slashIdx = serverPart.indexOf('/')
             if (slashIdx >= 0) serverPart = serverPart.substring(0, slashIdx)
+
+            // `host:7000-10000,20000` (or `[v6]:…`): the port part after the
+            // host, read as a list. The host itself never holds ',' or '-'
+            // after its last ':' unless it is an unbracketed IPv6 literal,
+            // which parseHostPort refuses below anyway.
+            if (portUnion) {
+                val portText = if (serverPart.startsWith("[")) {
+                    serverPart.substringAfter("]", "").removePrefix(":")
+                } else {
+                    serverPart.substringAfterLast(':', "")
+                }
+                if (PortUnion.isList(portText)) {
+                    val ports = PortUnion.parse(portText)
+                        ?: throw ProxyError.InvalidUrl("Invalid port list: $portText")
+                    val hostPart = serverPart.dropLast(portText.length + 1)
+                    val (host, _) = parseHostPort("$hostPart:${ports.first}")
+                    return UserInfoLink(
+                        password = password,
+                        host = host,
+                        port = ports.first.toUShort(),
+                        params = parseQueryParams(queryString),
+                        name = fragmentName?.takeIf { it.isNotEmpty() },
+                        ports = ports
+                    )
+                }
+            }
 
             val (host, port) = parseHostPort(serverPart, defaultPort)
             return UserInfoLink(
@@ -2120,8 +2186,17 @@ data class ProxyConfiguration(
          * TLS is mandatory; Hysteria2 runs over QUIC and has no plaintext form.
          */
         private fun fromHysteria2Url(url: String, scheme: String): ProxyConfiguration {
-            val link = decomposeUserInfoLink(url, scheme, defaultPort = 443u)
+            val link = decomposeUserInfoLink(url, scheme, defaultPort = 443u, portUnion = true)
             val params = link.params
+            val hop = finalMaskUdpHop(params["fm"])
+            // The official authority list first, then v2rayN's and 3x-ui's
+            // `mport`, then Xray's FinalMask. A list of one port is no hopping.
+            val ports = (link.ports
+                ?: PortUnion.parse(params["mport"])
+                ?: hop?.first)?.takeIf { it.hops }
+            val interval = HopInterval.parse(
+                params["hop-interval"] ?: params["hopInterval"] ?: params["hop_interval"]
+            ) ?: hop?.second
 
             val sni = params["sni"]?.takeIf { it.isNotEmpty() } ?: link.host
             val alpn = parseAlpn(params["alpn"])
@@ -2151,6 +2226,9 @@ data class ProxyConfiguration(
                 // Brutal over BBR, so no default is filled in here.
                 hysteriaUpMbps = params["upmbps"]?.toIntOrNull(),
                 hysteriaDownMbps = params["downmbps"]?.toIntOrNull(),
+                hysteriaPorts = ports?.toString(),
+                hysteriaHopInterval = interval?.takeIf { ports != null }?.min,
+                hysteriaHopIntervalMax = interval?.takeIf { ports != null && it.max != it.min }?.max,
                 // `obfs=none` is how some panels spell "no obfuscation"; kept
                 // verbatim it is refused at every dial as a type this build
                 // does not speak.
@@ -2159,6 +2237,41 @@ data class ProxyConfiguration(
                 obfuscationPassword = params["obfs-password"]?.takeIf { it.isNotEmpty() }
                     ?: finalMaskSalamander(params["fm"])?.second
             )
+        }
+
+        /**
+         * The port hopping a FinalMask `fm=` document asks for, ports and
+         * interval, or null.
+         *
+         * Xray 26 puts it under `quicParams.udpHop` (`ports`, `interval`);
+         * later Xray made it a `udp` mask of type `udphop` (`remotePorts`,
+         * `interval`). The interval is whole seconds or a `from-to` range in
+         * both, a JSON number or string.
+         */
+        internal fun finalMaskUdpHop(fm: String?): Pair<PortUnion?, HopInterval?>? {
+            if (fm.isNullOrBlank()) return null
+            val root = runCatching { org.json.JSONObject(fm) }.getOrNull() ?: return null
+            fun read(hop: org.json.JSONObject, portsKey: String): Pair<PortUnion?, HopInterval?>? {
+                val ports = when (val raw = hop.opt(portsKey)) {
+                    is org.json.JSONArray -> PortUnion.parse((0 until raw.length()).map { raw.opt(it).toString() })
+                    null -> null
+                    else -> PortUnion.parse(raw.toString())
+                }
+                val interval = when (val raw = hop.opt("interval")) {
+                    is org.json.JSONObject -> HopInterval.of(raw.optInt("from", 0), raw.optInt("to", 0))
+                    null -> null
+                    else -> HopInterval.parse(raw.toString())
+                }
+                return if (ports == null && interval == null) null else ports to interval
+            }
+            root.optJSONObject("quicParams")?.optJSONObject("udpHop")?.let { read(it, "ports") }?.let { return it }
+            val udp = root.optJSONArray("udp") ?: return null
+            for (i in 0 until udp.length()) {
+                val mask = udp.optJSONObject(i) ?: continue
+                if (mask.optString("type") != "udphop") continue
+                return mask.optJSONObject("settings")?.let { read(it, "remotePorts") }
+            }
+            return null
         }
 
         /**

@@ -523,4 +523,9 @@
     <string name="settings_managed_by">Cài đặt do %1$s quản lý</string>
     <string name="start_on_boot">Kết nối khi khởi động điện thoại</string>
     <string name="subscription_pin_top">Ghim lên đầu</string>
+    <string name="port_hopping">Nhảy cổng</string>
+    <string name="port_hopping_hint">Các cổng máy chủ trả lời, ví dụ 20000-30000 hoặc 443,8443. Mỗi kết nối bắt đầu ở một cổng ngẫu nhiên trong số đó và chuyển sang cổng khác sau mỗi khoảng nhảy. Để trống: chỉ dùng cổng ở trên.</string>
+    <string name="hop_interval">Khoảng nhảy, giây</string>
+    <string name="hop_interval_hint">Mặc định 30, tối thiểu 5; 10-50 sẽ chọn ngẫu nhiên mỗi khoảng.</string>
+    <string name="invalid_port_list">Cổng từ 1 đến 65535: cổng đơn và dải cổng, phân tách bằng dấu phẩy</string>
 </resources>

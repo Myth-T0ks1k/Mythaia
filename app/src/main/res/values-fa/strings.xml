@@ -530,4 +530,9 @@
     <string name="settings_managed_by">تنظیمات تحت مدیریت %1$s</string>
     <string name="start_on_boot">اتصال هنگام روشن شدن گوشی</string>
     <string name="subscription_pin_top">سنجاق در بالا</string>
+    <string name="port_hopping">پرش پورت</string>
+    <string name="port_hopping_hint">پورت‌هایی که سرور روی آن‌ها پاسخ می‌دهد، مثل 20000-30000 یا 443,8443. هر اتصال با یکی از آن‌ها به‌طور تصادفی شروع می‌شود و در هر بازهٔ پرش به پورت دیگری می‌رود. خالی: فقط پورت بالا.</string>
+    <string name="hop_interval">بازهٔ پرش، ثانیه</string>
+    <string name="hop_interval_hint">پیش‌فرض 30، حداقل 5؛ 10-50 هر بازه را تصادفی انتخاب می‌کند.</string>
+    <string name="invalid_port_list">پورت‌های 1 تا 65535: پورت‌های تکی و بازه‌ها، جدا شده با ویرگول</string>
 </resources>
