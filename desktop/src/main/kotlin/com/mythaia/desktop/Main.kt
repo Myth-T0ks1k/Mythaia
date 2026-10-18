@@ -48,10 +48,18 @@ private object InstanceLock {
 @OptIn(ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
     keepNioOffAfUnix()
+    // Before anything touches JNA or Skia: their DLLs from the app folder, never %TEMP%.
+    val jnaDir = NativeLoading.configureJna()
+    NativeLoading.fixSkikoPath()
     // The service process: no window, no user data, just the tunnel behind a pipe.
     if (args.contains("--service")) com.mythaia.desktop.service.MythaiaService.runUnderScm()
     if (args.contains("--service-console")) com.mythaia.desktop.service.MythaiaService.runInConsole()
     val logger = installLogging()
+    // Started by the proxy guard after a crash, or at sign-in: put the proxy back and leave.
+    if (args.contains(com.mythaia.desktop.engine.ProxyGuard.RESTORE_ARG)) {
+        exitProcess(com.mythaia.desktop.engine.ProxyGuard.restoreAfterCrash())
+    }
+    logJna(logger, jnaDir)
     val graphicsCrashed = CrashReporting.install()
     chooseRenderer(logger, graphicsCrashed)
     // The elevated helper the running app starts to register or remove the service: no window, no lock.
@@ -63,8 +71,10 @@ fun main(args: Array<String>) {
     }
     // The elevated copy started for TUN mode replaces a window that is still
     // shutting down and holds the lock for a few seconds more; giving up at
-    // once left neither of them running.
-    if (!acquireInstanceLock(logger, waitMillis = if (args.contains("--tun")) 15_000 else 0)) {
+    // once left neither of them running. Otherwise half a second: the crash
+    // restore (ProxyGuard) takes the lock for an instant to see whether an
+    // instance runs, and must not turn this one away.
+    if (!acquireInstanceLock(logger, waitMillis = if (args.contains("--tun")) 15_000 else 500)) {
         // Ask the running instance to show itself (and import a link we were given), then leave.
         args.firstOrNull { DeepLinks.isLink(it) }?.let { runCatching { AppPaths.importRequest.writeText(DeepLinks.extract(it)) } }
         runCatching { AppPaths.showRequest.writeText(System.currentTimeMillis().toString()) }
@@ -74,6 +84,8 @@ fun main(args: Array<String>) {
 
     val nativeAvailable = loadNativeLibrary(logger)
     SystemProxy.restoreIfLeftOver()
+    // Before anything can set the proxy: if this process is killed, the guard puts it back.
+    com.mythaia.desktop.engine.ProxyGuard.start()
     runCatching { com.mythaia.desktop.tun.TunEngine.cleanupLeftovers() }
     runCatching { com.mythaia.desktop.tun.Elevation.cleanupArgFile() }
 
@@ -295,14 +307,30 @@ private fun loadNativeLibrary(logger: MythaiaLogger): Boolean {
         logger.warning("mythaia_native.dll not found; QUIC protocols and Clash parsing are off")
         return false
     }
-    System.setProperty("mythaia.native.library", file.absolutePath)
+    val path = NativeLoading.loadablePath(file)
+    System.setProperty("mythaia.native.library", path)
     return try {
         val version = NativeBridge.nativeQuicVersion()
-        logger.info("Native library loaded from ${file.absolutePath} (ngtcp2 $version)")
+        logger.info("Native library loaded from $path (ngtcp2 $version)")
         true
     } catch (e: Throwable) {
         logger.error("Native library failed to load: ${e.message}")
         false
+    }
+}
+
+/**
+ * Loads JNA's native part now, so the log says where it came from and a
+ * failure is reported once, here, rather than by the first registry call.
+ */
+private fun logJna(logger: MythaiaLogger, shippedDir: File?) {
+    if (shippedDir == null) logger.info("jnidispatch.dll is not in the app folder; JNA unpacks its own copy")
+    try {
+        // Reading it initialises Native, which is what loads jnidispatch.dll.
+        val bits = com.sun.jna.Native.POINTER_SIZE * 8
+        logger.info("JNA native part ($bits-bit) from ${System.getProperty("jnidispatch.path") ?: "?"}")
+    } catch (e: LinkageError) {
+        logger.error("JNA's native part did not load: ${e.message ?: e}; system proxy, TUN and the service are unavailable")
     }
 }
 

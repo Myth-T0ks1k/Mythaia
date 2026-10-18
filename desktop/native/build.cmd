@@ -1,11 +1,13 @@
 @echo off
 rem ---------------------------------------------------------------------------
-rem build.cmd - one-shot Release build of mythaia_native.dll for x64 Windows.
+rem build.cmd - one-shot Release build of mythaia_native.dll (and the proxy
+rem guard) for x64 Windows.
 rem
 rem   1. loads the MSVC x64 environment
 rem   2. configures desktop/native with CMake + Ninja in Release
 rem   3. builds
-rem   4. copies the DLL to desktop/native/out/mythaia_native.dll
+rem   4. copies the DLL to desktop/native/out/mythaia_native.dll and the
+rem      proxy guard to desktop/native/out/mythaia-proxy-guard.exe
 rem
 rem Step 1 prefers vcvars64.bat. On a VS install where that script is broken
 rem (vcvarsall.bat missing - the case on the machine this was written on,
@@ -134,7 +136,12 @@ if errorlevel 1 (
     echo build.cmd: copy failed
     exit /b 1
 )
+copy /y "%BUILD_DIR%\mythaia-proxy-guard.exe" "%OUT_DIR%\mythaia-proxy-guard.exe" >nul
+if errorlevel 1 (
+    echo build.cmd: copy of the proxy guard failed
+    exit /b 1
+)
 
-echo === Done: %OUT_DIR%\mythaia_native.dll
+echo === Done: %OUT_DIR%\mythaia_native.dll and mythaia-proxy-guard.exe
 endlocal
 exit /b 0

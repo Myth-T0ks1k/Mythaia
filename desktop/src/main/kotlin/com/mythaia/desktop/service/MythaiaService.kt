@@ -75,7 +75,7 @@ object MythaiaService {
 
     /** The native library, and whatever a previous run left on the network; [progress] after each step. */
     private fun prepareEngine(progress: () -> Unit = {}) {
-        AppPaths.nativeLibrary()?.let { System.setProperty("mythaia.native.library", it.absolutePath) }
+        AppPaths.nativeLibrary()?.let { System.setProperty("mythaia.native.library", com.mythaia.desktop.NativeLoading.loadablePath(it)) }
         runCatching { NativeBridge.nativeQuicVersion() }
         progress()
         runCatching { TunEngine.cleanupLeftovers() }

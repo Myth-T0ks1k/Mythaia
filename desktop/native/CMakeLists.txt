@@ -240,3 +240,13 @@ set_target_properties(mythaia_native PROPERTIES
     OUTPUT_NAME "mythaia_native"   # System.loadLibrary("mythaia_native") -> mythaia_native.dll
     PREFIX ""
 )
+
+# --------------------------------------------------------------------------
+# The proxy guard: a windowless helper that puts the system proxy back
+# when the app dies without doing it (see proxy_guard.c). Windows only, so
+# it lives here rather than with the shared JNI sources.
+# --------------------------------------------------------------------------
+add_executable(mythaia_proxy_guard WIN32 ${CMAKE_CURRENT_SOURCE_DIR}/proxy_guard.c)
+target_compile_definitions(mythaia_proxy_guard PRIVATE UNICODE _UNICODE)
+target_link_libraries(mythaia_proxy_guard PRIVATE shell32)
+set_target_properties(mythaia_proxy_guard PROPERTIES OUTPUT_NAME "mythaia-proxy-guard")

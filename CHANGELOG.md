@@ -6,6 +6,20 @@ All notable changes to Mythaia are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows:** ending the app from Task Manager, or a crash, left the system proxy pointing at it,
+  and every program on the PC was offline until the app was started again. A small helper
+  (`mythaia-proxy-guard.exe`, no administrator rights, no window) now waits for the app to exit and
+  puts the old proxy settings back if the app did not; a sign-in entry does the same after a power
+  cut or a blue screen.
+- **Windows:** JNA's `jnidispatch.dll` ships with the app instead of being unpacked into `%TEMP%`
+  on every start, where antivirus and AppLocker block DLLs and the system proxy, TUN and the
+  service then did not work.
+- **Windows:** on a PC whose system locale cannot spell the install folder (Turkmen ň, ş or ý under
+  a Russian or English locale, often in the user name of a per-user install) the app quit before
+  showing anything. The launcher now runs with UTF-8 as its code page (Windows 10 1903 and later).
+
 ### Added
 
 - **Updates from inside the app.** Settings → About → Check for updates asks GitHub for the
@@ -276,7 +290,6 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
-[Unreleased]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.1...HEAD
 [1.3.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.1.2...v1.2.0

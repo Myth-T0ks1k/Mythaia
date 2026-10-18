@@ -176,12 +176,21 @@ object WindowsNet {
         fun GetOEMCP(): Int
     }
 
-    /** The console (OEM) code page, so tool output reads correctly on a localised Windows. */
+    /**
+     * The console (OEM) code page the tools write in, so their output reads
+     * correctly on a localised Windows. The system's, from the registry:
+     * this process runs with UTF-8 as its own code page (the launcher's
+     * manifest), so GetOEMCP here says 65001 while netsh and route, which
+     * have no such manifest, still write in the system's.
+     */
     private val consoleCharset: java.nio.charset.Charset by lazy {
-        runCatching {
-            val cp = com.sun.jna.Native.load("kernel32", Kernel32Ex::class.java).GetOEMCP()
-            if (cp > 0) java.nio.charset.Charset.forName("cp$cp") else null
-        }.getOrNull() ?: runCatching { java.nio.charset.Charset.forName("cp866") }.getOrNull() ?: Charsets.UTF_8
+        val fromRegistry = runCatching {
+            Advapi32Util.registryGetStringValue(WinReg.HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage", "OEMCP")
+                .trim().toIntOrNull()
+        }.getOrNull()
+        val cp = fromRegistry ?: runCatching { com.sun.jna.Native.load("kernel32", Kernel32Ex::class.java).GetOEMCP() }.getOrNull()
+        cp?.takeIf { it > 0 }?.let { runCatching { java.nio.charset.Charset.forName(if (it == 65001) "UTF-8" else "cp$it") }.getOrNull() }
+            ?: runCatching { java.nio.charset.Charset.forName("cp866") }.getOrNull() ?: Charsets.UTF_8
     }
 
     /** The SID of [file]'s owner (`S-1-5-18` for SYSTEM), or null when it cannot be read. */

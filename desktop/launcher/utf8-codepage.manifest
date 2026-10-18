@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Merged into the jpackage launcher by desktop/build.gradle.kts (mt.exe):
+  the process runs with UTF-8 as its ANSI code page, so the JVM can load
+  itself and every DLL from a folder whose name the system code page
+  cannot spell. Windows 10 1903 and later; earlier versions ignore it.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+  <asmv3:application>
+    <asmv3:windowsSettings xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">
+      <activeCodePage>UTF-8</activeCodePage>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+</assembly>
