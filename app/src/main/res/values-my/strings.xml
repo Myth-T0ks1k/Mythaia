@@ -11,6 +11,7 @@
     <string name="allow_insecure">မလုံခြုံမှုခွင့်ပြု</string>
     <string name="auto">အလိုအလျောက်</string>
     <string name="cancel">ပယ်ဖျက်ရန်</string>
+    <string name="connect">ချိတ်ဆက်ရန်</string>
     <string name="connected">ချိတ်ဆက်ပြီး</string>
     <string name="connecting">ချိတ်ဆက်နေသည်…</string>
     <string name="continue_action">ဆက်လုပ်ရန်</string>

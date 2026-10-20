@@ -11,6 +11,7 @@
     <string name="allow_insecure">Cho phép không an toàn</string>
     <string name="auto">Tự động</string>
     <string name="cancel">Hủy bỏ</string>
+    <string name="connect">Kết nối</string>
     <string name="connected">Đã kết nối</string>
     <string name="connecting">Đang kết nối…</string>
     <string name="continue_action">Tiếp tục</string>

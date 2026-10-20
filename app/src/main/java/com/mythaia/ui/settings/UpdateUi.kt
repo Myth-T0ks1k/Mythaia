@@ -147,6 +147,7 @@ private fun UpdateRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .settingsRowFocus()
             .clickable(onClick = onClick)
             .heightIn(min = 60.dp)
             .padding(horizontal = 16.dp, vertical = 8.dp),

@@ -11,6 +11,7 @@
     <string name="allow_insecure">اجازه ناامن</string>
     <string name="auto">خودکار</string>
     <string name="cancel">لغو</string>
+    <string name="connect">اتصال</string>
     <string name="connected">متصل</string>
     <string name="connecting">در حال اتصال…</string>
     <string name="continue_action">ادامه</string>

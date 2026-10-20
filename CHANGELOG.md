@@ -23,6 +23,11 @@ All notable changes to Mythaia are recorded here. The format follows
   Persian or Chinese — and otherwise from the GeoIP database for an address already known; the
   list never sends a DNS query for it. Each section has its own speed test and an Auto that keeps
   to that country's servers, also in the background. Grouping can be turned off in the list's menu.
+- **Android TV home screen.** On a television (`UiModeManager` / leanback), Home opens as a
+  two-pane 10-foot layout built for a remote's D-pad: the connect toggle receives focus first,
+  groups and chains switch across the top, the server list and its country sections sit beside it
+  in large cards with high-contrast focus borders, and Settings is reachable with the D-pad alone.
+  Phone and tablet layouts are unchanged.
 
 ## [1.3.1] — 2026-10-18
 

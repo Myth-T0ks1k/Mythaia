@@ -11,6 +11,7 @@
     <string name="allow_insecure">Небезопасное соединение</string>
     <string name="auto">Авто</string>
     <string name="cancel">Отмена</string>
+    <string name="connect">Подключить</string>
     <string name="connected">Подключено</string>
     <string name="connecting">Подключение…</string>
     <string name="continue_action">Продолжить</string>

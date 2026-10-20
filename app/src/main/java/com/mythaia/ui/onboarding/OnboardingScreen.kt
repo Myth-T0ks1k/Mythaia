@@ -42,6 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -64,6 +66,12 @@ fun OnboardingScreen(
     val defaultCountry = remember { catalog.suggestedCountryCode() ?: "" }
     var selectedCountry by rememberSaveable { mutableStateOf(defaultCountry) }
     var adBlockEnabled by rememberSaveable { mutableStateOf(false) }
+
+    val isTv = com.mythaia.ui.home.isTelevision(context)
+    val primaryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(currentPage, isTv) {
+        if (isTv) runCatching { primaryFocus.requestFocus() }
+    }
 
     // Calm Wing hero: everything sits on the warm bone/deep-ink background from
     // the theme; azure is the only accent, surfaces are paper with 1dp hairlines.
@@ -150,7 +158,8 @@ fun OnboardingScreen(
                         }
                     },
                     shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp)
+                    contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp),
+                    modifier = if (isTv) Modifier.focusRequester(primaryFocus) else Modifier
                 ) {
                     Text(
                         if (currentPage < 1) stringResource(R.string.next)

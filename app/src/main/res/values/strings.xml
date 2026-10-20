@@ -16,6 +16,7 @@
     <string name="allow_insecure">Allow Insecure</string>
     <string name="auto">Auto</string>
     <string name="cancel">Cancel</string>
+    <string name="connect">Connect</string>
     <string name="connected">Connected</string>
     <string name="connecting">Connecting…</string>
     <string name="continue_action">Continue</string>

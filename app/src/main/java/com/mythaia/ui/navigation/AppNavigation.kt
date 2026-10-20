@@ -126,10 +126,12 @@ fun AppNavigation(viewModel: VpnViewModel) {
     }
 
     // A rail once the window is wide enough for one; 600dp is Material's own
-    // compact/medium boundary.
+    // compact/medium boundary. Always use the rail on Android TV.
+    val isTv = com.mythaia.ui.home.isTelevision(androidx.compose.ui.platform.LocalContext.current)
     val density = LocalDensity.current
     val containerWidth = LocalWindowInfo.current.containerSize.width
-    val wideLayout = with(density) { containerWidth.toDp() } >= WIDE_LAYOUT_BREAKPOINT_DP.dp
+    val wideLayout = isTv || with(density) { containerWidth.toDp() } >= WIDE_LAYOUT_BREAKPOINT_DP.dp
+    val openSettings = { go(topLevelRoutes.first { it.route == SettingsRoute }) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -209,7 +211,9 @@ fun AppNavigation(viewModel: VpnViewModel) {
                     AppNavHost(
                         navController = navController,
                         viewModel = viewModel,
-                        contentPadding = innerPadding
+                        contentPadding = innerPadding,
+                        isTv = isTv,
+                        onOpenSettings = openSettings
                     )
                 }
             }
@@ -217,7 +221,9 @@ fun AppNavigation(viewModel: VpnViewModel) {
             AppNavHost(
                 navController = navController,
                 viewModel = viewModel,
-                contentPadding = innerPadding
+                contentPadding = innerPadding,
+                isTv = isTv,
+                onOpenSettings = openSettings
             )
         }
     }
@@ -228,17 +234,27 @@ fun AppNavigation(viewModel: VpnViewModel) {
 private fun AppNavHost(
     navController: NavHostController,
     viewModel: VpnViewModel,
-    contentPadding: PaddingValues
+    contentPadding: PaddingValues,
+    isTv: Boolean,
+    onOpenSettings: () -> Unit
 ) {
     NavHost(
         navController = navController,
         startDestination = HomeRoute
     ) {
         composable<HomeRoute> {
-            HomeScreen(
-                viewModel = viewModel,
-                contentPadding = contentPadding
-            )
+            if (isTv) {
+                com.mythaia.ui.home.TvHomeScreen(
+                    viewModel = viewModel,
+                    onOpenSettings = onOpenSettings,
+                    contentPadding = contentPadding
+                )
+            } else {
+                HomeScreen(
+                    viewModel = viewModel,
+                    contentPadding = contentPadding
+                )
+            }
         }
         composable<ProxiesRoute> {
             // Only the bottom inset: the screen draws its own header under the

@@ -11,6 +11,7 @@
     <string name="allow_insecure">السماح بغير الآمن</string>
     <string name="auto">تلقائي</string>
     <string name="cancel">إلغاء</string>
+    <string name="connect">اتصال</string>
     <string name="connected">متصل</string>
     <string name="connecting">جارٍ الاتصال…</string>
     <string name="continue_action">متابعة</string>
