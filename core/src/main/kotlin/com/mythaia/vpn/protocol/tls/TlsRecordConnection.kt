@@ -2,6 +2,7 @@ package com.mythaia.vpn.protocol.tls
 
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.NativeBridge
+import com.mythaia.vpn.Tls13Crypto
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.protocol.vless.RealityError
 import kotlinx.coroutines.runBlocking
@@ -84,7 +85,27 @@ class TlsRecordConnection private constructor(
      */
     var negotiatedAlpn: String? = null
 
+    /**
+     * TLS 1.3 `exporter_master_secret` (RFC 8446 §7.5), populated by the
+     * handshake driver when the connection is TLS 1.3. Null on TLS 1.2.
+     */
+    internal var exporterMasterSecret: ByteArray? = null
+
     val isTls13: Boolean get() = tlsVersion >= 0x0304
+
+    /**
+     * Exports keying material bound to this TLS 1.3 session (RFC 5705 / RFC 8446 §7.5).
+     * Returns null when the connection is not TLS 1.3 or the exporter secret is unavailable.
+     */
+    fun exportKeyingMaterial(
+        label: ByteArray,
+        context: ByteArray = ByteArray(0),
+        length: Int
+    ): ByteArray? {
+        if (!isTls13) return null
+        val secret = exporterMasterSecret ?: return null
+        return Tls13Crypto.exportKeyingMaterial(cipherSuite, secret, label, context, length)
+    }
 
     private val isChaCha = TlsCipherSuite.isChaCha20(cipherSuite)
     private val isAEAD = TlsCipherSuite.isAEAD(cipherSuite)

@@ -1,5 +1,6 @@
 package com.mythaia.vpn.protocol.tls
 
+import com.mythaia.vpn.Tls13Crypto
 import com.mythaia.vpn.X25519Crypto
 import com.mythaia.vpn.mitm.ClientHelloParser
 import com.mythaia.vpn.mitm.MitmLeafCertificates
@@ -203,6 +204,9 @@ class TlsServer(
             isServer = true
         )
         connection.connection = transport
+        connection.exporterMasterSecret = Tls13Crypto.deriveExporterMasterSecret(
+            suite, handshakeSecret, transcriptThroughServerFinished
+        )
         // The wire may carry no ALPN (client offered none), but the application
         // layer still has to frame something; default it to http/1.1.
         connection.negotiatedAlpn = negotiatedAlpn ?: DEFAULT_ALPN

@@ -5,7 +5,15 @@ import com.mythaia.data.model.ProxyError
 import com.mythaia.data.model.TlsConfiguration
 import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
+import com.mythaia.vpn.protocol.Transport
+import com.mythaia.vpn.protocol.TunneledTransport
+import com.mythaia.vpn.protocol.tls.TlsClient
+import com.mythaia.vpn.protocol.tls.TlsRecordConnection
 import com.mythaia.vpn.util.MythaiaLogger
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -14,13 +22,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 private val logger = MythaiaLogger("Nowhere")
 
 /**
- * Dials Nowhere over its QUIC carrier.
+ * Dials Nowhere over its QUIC and TLS-on-TCP carriers.
  *
- * A dial is short: classify the destination, lease a flow id, build the
- * duplex flow request, and hand it to the shared [NowhereSession], which
- * owns the connection and the authentication. What is left for this layer is
- * the identity — the session id and the flow ids that are unique within it —
- * and the decision to try again.
+ * A dial classifies the destination, leases a flow id, builds the flow request
+ * (or the `OPEN` and `ATTACH` pair when uplink and downlink carriers differ),
+ * and opens the flow over the configured carrier(s).
  *
  * The identity outlives any one connection on purpose. The portal pairs
  * everything a client does by session id, so a reconnect that chose a fresh
@@ -34,11 +40,6 @@ private val logger = MythaiaLogger("Nowhere")
  * The retry is skipped when the request carried payload, because a request
  * the portal may already have acted on must not be sent twice.
  *
- * Only a duplex flow on the QUIC carrier (`up=udp`, `down=udp`) is dialled.
- * The TLS-on-TCP carrier, the asymmetric shapes and the multiplexer pool the
- * reference builds on it are not wired; a profile asking for them is refused
- * with a message saying so rather than dialled wrongly.
- *
  * Derived from the Anywhere reference implementation (GPL-3.0),
  * Copyright (C) 2026 NodePassProject.
  */
@@ -48,6 +49,12 @@ class NowhereClient(
 ) {
 
     /**
+     * Optional transport factory for unit tests to exercise the TLS carrier
+     * (symmetric and asymmetric) against an in-memory [com.mythaia.vpn.protocol.tls.TlsServer].
+     */
+    internal var tlsTransportFactory: (() -> Transport)? = null
+
+    /**
      * Opens a proxied TCP flow to [host]:[port].
      *
      * [initialData], when given, rides inside the flow request: the portal
@@ -55,13 +62,10 @@ class NowhereClient(
      * trip beyond the one the READY already costs.
      */
     suspend fun connect(host: String, port: Int, initialData: ByteArray? = null): ProxyConnection {
-        if (tunnel != null) {
-            throw ProxyError.ProtocolError("Nowhere does not support proxy chains yet")
-        }
         val identity = Identity.of(configuration)
         val settings = settings(configuration, identity.sessionId)
-        carrierRefusal(settings.uplink, settings.downlink)?.let {
-            throw ProxyError.ProtocolError(it)
+        if (tunnel != null && (settings.uplink == NowhereNetwork.UDP || settings.downlink == NowhereNetwork.UDP)) {
+            throw ProxyError.ProtocolError("Nowhere does not support proxy chains over QUIC")
         }
 
         val target = try {
@@ -74,24 +78,83 @@ class NowhereClient(
         var retriesLeft = 1
         while (true) {
             val lease = identity.lease()
-            val session = NowhereSession.shared(settings)
+            val usesQuic = settings.uplink == NowhereNetwork.UDP || settings.downlink == NowhereNetwork.UDP
+            val session = if (usesQuic) NowhereSession.shared(settings) else null
             try {
-                val request = NowhereProtocol.encodeFlowRequest(
-                    header = duplexHeader(lease.flowId, settings),
-                    target = target,
-                    initialData = initialData
-                )
-                val flow = session.openFlow(request)
-                return NowhereStreamConnection(flow.stream, flow.pending) {
-                    lease.release()
-                    session.flowEnded()
+                if (settings.uplink == settings.downlink) {
+                    val request = NowhereProtocol.encodeFlowRequest(
+                        header = duplexHeader(lease.flowId, settings, NowhereProtocol.FlowKind.TCP),
+                        target = target,
+                        initialData = initialData
+                    )
+                    return when (settings.uplink) {
+                        NowhereNetwork.UDP -> {
+                            val flow = session!!.openFlow(request)
+                            NowhereStreamConnection(flow.stream, flow.pending) {
+                                lease.release()
+                                session.flowEnded()
+                            }
+                        }
+                        NowhereNetwork.TCP -> {
+                            val flow = openTlsFlow(settings, request)
+                            NowhereStreamConnection(flow.connection, flow.pending) {
+                                lease.release()
+                                flow.onClosed()
+                            }
+                        }
+                    }
+                } else {
+                    val openRequest = NowhereProtocol.encodeFlowRequest(
+                        header = NowhereProtocol.FlowHeader(
+                            role = NowhereProtocol.FlowRole.OPEN,
+                            flowId = lease.flowId,
+                            kind = NowhereProtocol.FlowKind.TCP,
+                            uplink = settings.uplink,
+                            downlink = settings.downlink
+                        ),
+                        target = target,
+                        initialData = initialData
+                    )
+                    val attachRequest = NowhereProtocol.encodeFlowRequest(
+                        header = NowhereProtocol.FlowHeader(
+                            role = NowhereProtocol.FlowRole.ATTACH,
+                            flowId = lease.flowId,
+                            kind = NowhereProtocol.FlowKind.TCP,
+                            uplink = settings.uplink,
+                            downlink = settings.downlink
+                        ),
+                        target = null,
+                        initialData = null
+                    )
+                    val (upFlow, downFlow) = openAsymmetricStreamFlows(
+                        settings = settings,
+                        session = session,
+                        openRequest = openRequest,
+                        attachRequest = attachRequest
+                    )
+                    if (upFlow.pending.isNotEmpty()) {
+                        upFlow.close()
+                        downFlow.close()
+                        throw NowhereError.ProtocolViolation(
+                            "Unexpected downlink payload on Nowhere uplink stream"
+                        )
+                    }
+                    return NowhereAsymmetricStreamConnection(
+                        uplink = upFlow.connection,
+                        downlink = downFlow.connection,
+                        pending = downFlow.pending
+                    ) {
+                        lease.release()
+                        upFlow.onClosed()
+                        downFlow.onClosed()
+                    }
                 }
             } catch (e: Exception) {
                 lease.release()
                 val replaced = e is NowhereSession.FlowRejected &&
                     e.code == NowhereProtocol.FlowRejectCode.SESSION_REPLACED
                 val stale = e is NowhereSession.Unavailable
-                if (replaced || stale) NowhereSession.invalidate(session)
+                if (session != null && (replaced || stale)) NowhereSession.invalidate(session)
 
                 // A stale session is safe to retry only if the portal cannot
                 // have acted on the request; a replaced one told us it did
@@ -113,12 +176,281 @@ class NowhereClient(
     }
 
     /**
-     * UDP over Nowhere rides QUIC datagrams with its own control stream,
-     * fragmentation and reassembly budget; none of that is wired to the flow
-     * layer here yet.
+     * Opens a proxied UDP flow to [host]:[port].
+     *
+     * Over the QUIC carrier (`UDP`), packets ride QUIC datagrams (with
+     * fragmentation and reassembly) alongside a dedicated control stream.
+     * Over the TLS carrier (`TCP`), packets ride the stream with a 2-byte
+     * big-endian length prefix ([NowhereProtocol.encodeUdpStreamPacket]).
+     * Asymmetric configurations (`up=tcp, down=udp` or `up=udp, down=tcp`)
+     * pair an `OPEN` uplink half-flow with an `ATTACH` downlink half-flow.
      */
     suspend fun connectUDP(host: String, port: Int): ProxyConnection {
-        throw ProxyError.ProtocolError("Nowhere UDP is not wired to the flow layer yet")
+        val identity = Identity.of(configuration)
+        val settings = settings(configuration, identity.sessionId)
+        if (tunnel != null && (settings.uplink == NowhereNetwork.UDP || settings.downlink == NowhereNetwork.UDP)) {
+            throw ProxyError.ProtocolError("Nowhere does not support proxy chains over QUIC")
+        }
+
+        val target = try {
+            NowhereProtocol.Target.of(host, port)
+        } catch (e: NowhereError) {
+            throw ProxyError.ProtocolError("Nowhere: ${e.message}")
+        }
+
+        var retriesLeft = 1
+        while (true) {
+            val lease = identity.lease()
+            val usesQuic = settings.uplink == NowhereNetwork.UDP || settings.downlink == NowhereNetwork.UDP
+            val session = if (usesQuic) NowhereSession.shared(settings) else null
+            try {
+                if (settings.uplink == settings.downlink) {
+                    val request = NowhereProtocol.encodeFlowRequest(
+                        header = duplexHeader(lease.flowId, settings, NowhereProtocol.FlowKind.UDP),
+                        target = target,
+                        initialData = null
+                    )
+                    return when (settings.uplink) {
+                        NowhereNetwork.UDP -> {
+                            val quicUdp = session!!.openUdpFlow(lease.flowId, request)
+                            NowhereQuicUdpConnection(quicUdp) {
+                                lease.release()
+                            }
+                        }
+                        NowhereNetwork.TCP -> {
+                            val tlsFlow = openTlsFlow(settings, request)
+                            NowhereUdpStreamConnection(tlsFlow.connection, tlsFlow.pending) {
+                                lease.release()
+                                tlsFlow.onClosed()
+                            }
+                        }
+                    }
+                } else {
+                    val openRequest = NowhereProtocol.encodeFlowRequest(
+                        header = NowhereProtocol.FlowHeader(
+                            role = NowhereProtocol.FlowRole.OPEN,
+                            flowId = lease.flowId,
+                            kind = NowhereProtocol.FlowKind.UDP,
+                            uplink = settings.uplink,
+                            downlink = settings.downlink
+                        ),
+                        target = target,
+                        initialData = null
+                    )
+                    val attachRequest = NowhereProtocol.encodeFlowRequest(
+                        header = NowhereProtocol.FlowHeader(
+                            role = NowhereProtocol.FlowRole.ATTACH,
+                            flowId = lease.flowId,
+                            kind = NowhereProtocol.FlowKind.UDP,
+                            uplink = settings.uplink,
+                            downlink = settings.downlink
+                        ),
+                        target = null,
+                        initialData = null
+                    )
+                    return openAsymmetricUdpFlow(
+                        flowId = lease.flowId,
+                        settings = settings,
+                        session = session!!,
+                        openRequest = openRequest,
+                        attachRequest = attachRequest,
+                        onClosed = { lease.release() }
+                    )
+                }
+            } catch (e: Exception) {
+                lease.release()
+                val replaced = e is NowhereSession.FlowRejected &&
+                    e.code == NowhereProtocol.FlowRejectCode.SESSION_REPLACED
+                val stale = e is NowhereSession.Unavailable
+                if (session != null && (replaced || stale)) NowhereSession.invalidate(session)
+
+                if (retriesLeft > 0 && (replaced || stale)) {
+                    retriesLeft -= 1
+                    logger.debug("[Nowhere] Retrying UDP $host:$port after: ${e.message}")
+                    continue
+                }
+                throw when (e) {
+                    is ProxyError -> e
+                    is NowhereSession.FlowRejected ->
+                        ProxyError.ProtocolError("Nowhere refused UDP $host:$port: ${e.code.description}")
+                    else -> ProxyError.ProtocolError(e.message ?: "Nowhere: UDP dial failed")
+                }
+            }
+        }
+    }
+
+    private class OpenedCarrierFlow(
+        val connection: ProxyConnection,
+        val pending: ByteArray,
+        val onClosed: () -> Unit
+    ) {
+        fun close() {
+            runCatching { connection.cancel() }
+            runCatching { onClosed() }
+        }
+    }
+
+    private suspend fun openStreamHalf(
+        carrier: NowhereNetwork,
+        settings: NowhereConfiguration,
+        session: NowhereSession?,
+        request: ByteArray
+    ): OpenedCarrierFlow = when (carrier) {
+        NowhereNetwork.UDP -> {
+            val s = session ?: throw NowhereSession.Unavailable("Nowhere: missing QUIC session")
+            val flow = s.openFlow(request)
+            OpenedCarrierFlow(
+                connection = flow.stream,
+                pending = flow.pending,
+                onClosed = { s.flowEnded() }
+            )
+        }
+        NowhereNetwork.TCP -> openTlsFlow(settings, request)
+    }
+
+    private suspend fun openAsymmetricStreamFlows(
+        settings: NowhereConfiguration,
+        session: NowhereSession?,
+        openRequest: ByteArray,
+        attachRequest: ByteArray
+    ): Pair<OpenedCarrierFlow, OpenedCarrierFlow> = coroutineScope {
+        var openedUp: OpenedCarrierFlow? = null
+        var openedDown: OpenedCarrierFlow? = null
+        try {
+            val upJob = async {
+                openStreamHalf(settings.uplink, settings, session, openRequest).also { openedUp = it }
+            }
+            val downJob = async {
+                openStreamHalf(settings.downlink, settings, session, attachRequest).also { openedDown = it }
+            }
+            Pair(upJob.await(), downJob.await())
+        } catch (e: Exception) {
+            openedUp?.close()
+            openedDown?.close()
+            throw e
+        }
+    }
+
+    private suspend fun openAsymmetricUdpFlow(
+        flowId: Long,
+        settings: NowhereConfiguration,
+        session: NowhereSession,
+        openRequest: ByteArray,
+        attachRequest: ByteArray,
+        onClosed: () -> Unit
+    ): ProxyConnection = coroutineScope {
+        if (settings.uplink == NowhereNetwork.TCP && settings.downlink == NowhereNetwork.UDP) {
+            var upTls: OpenedCarrierFlow? = null
+            var downQuic: NowhereSession.OpenedUdpFlow? = null
+            try {
+                val upJob = async { openTlsFlow(settings, openRequest).also { upTls = it } }
+                val downJob = async { session.openUdpFlow(flowId, attachRequest).also { downQuic = it } }
+                val up = upJob.await()
+                val down = downJob.await()
+                if (up.pending.isNotEmpty()) {
+                    throw NowhereError.ProtocolViolation(
+                        "Unexpected downlink payload on Nowhere UDP uplink stream"
+                    )
+                }
+                val streamUp = NowhereUdpStreamConnection(up.connection, ByteArray(0), up.onClosed)
+                val quicDown = NowhereQuicUdpConnection(down) {}
+                NowhereAsymmetricStreamConnection(
+                    uplink = streamUp,
+                    downlink = quicDown,
+                    pending = ByteArray(0),
+                    onClosed = onClosed
+                )
+            } catch (e: Exception) {
+                upTls?.close()
+                downQuic?.close(sendCloseControl = true)
+                throw e
+            }
+        } else {
+            var upQuic: NowhereSession.OpenedUdpFlow? = null
+            var downTls: OpenedCarrierFlow? = null
+            try {
+                val upJob = async { session.openUdpFlow(flowId, openRequest).also { upQuic = it } }
+                val downJob = async { openTlsFlow(settings, attachRequest).also { downTls = it } }
+                val up = upJob.await()
+                val down = downJob.await()
+                val quicUp = NowhereQuicUdpConnection(up) {}
+                val streamDown = NowhereUdpStreamConnection(down.connection, down.pending, down.onClosed)
+                NowhereAsymmetricStreamConnection(
+                    uplink = quicUp,
+                    downlink = streamDown,
+                    pending = ByteArray(0),
+                    onClosed = onClosed
+                )
+            } catch (e: Exception) {
+                upQuic?.close(sendCloseControl = true)
+                downTls?.close()
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Opens one authenticated Nowhere flow over the TLS-on-TCP carrier.
+     *
+     * Every TLS carrier connection is authenticated with a 32-byte frame bound
+     * to its own TLS 1.3 exporter (`EXPORTER-Nowhere-Auth`) and sent in one
+     * write with [request].
+     */
+    private suspend fun openTlsFlow(
+        settings: NowhereConfiguration,
+        request: ByteArray
+    ): OpenedCarrierFlow {
+        val client = TlsClient(settings.tcpTlsConfiguration)
+        val record = when {
+            tlsTransportFactory != null -> client.connect(tlsTransportFactory!!.invoke())
+            tunnel != null -> client.connect(TunneledTransport(tunnel))
+            else -> client.connect(settings.proxyHost, settings.proxyPort)
+        }
+        try {
+            val negotiatedAlpn = record.negotiatedAlpn
+            if (negotiatedAlpn == null || !settings.acceptsNegotiatedAlpn(negotiatedAlpn)) {
+                throw NowhereError.ProtocolViolation("Invalid Nowhere ALPN")
+            }
+            val exporter = record.exportKeyingMaterial(
+                label = NowhereProtocol.EXPORTER_LABEL.toByteArray(Charsets.US_ASCII),
+                context = ByteArray(0),
+                length = NowhereProtocol.EXPORTER_LENGTH
+            ) ?: throw NowhereError.AuthenticationRejected("Missing TLS exporter material")
+            val authFrame = NowhereProtocol.makeAuthFrame(
+                authKey = settings.authKey,
+                transport = NowhereProtocol.AuthTransport.TLS_TCP,
+                exporter = exporter,
+                sessionId = settings.sessionId
+            )
+            val payload = NowhereFlowOpen.bootstrapPayload(authFrame, request)
+            record.send(payload)
+
+            var buffer = ByteArray(0)
+            val outcome: NowhereFlowOpen.Outcome
+            while (true) {
+                val decoded = NowhereFlowOpen.decode(buffer)
+                if (decoded != null) {
+                    outcome = decoded
+                    break
+                }
+                val chunk = record.receive()
+                if (chunk == null || chunk.isEmpty()) {
+                    throw NowhereError.InvalidFlow("Stream closed before complete READY")
+                }
+                buffer += chunk
+            }
+            return when (outcome) {
+                is NowhereFlowOpen.Outcome.Ready -> OpenedCarrierFlow(
+                    connection = TlsCarrierConnection(record),
+                    pending = outcome.pending,
+                    onClosed = {}
+                )
+                is NowhereFlowOpen.Outcome.Rejected -> throw NowhereSession.FlowRejected(outcome.code)
+            }
+        } catch (e: Exception) {
+            runCatching { record.cancel() }
+            throw e
+        }
     }
 
     /**
@@ -268,29 +600,20 @@ class NowhereClient(
         }
 
         /**
-         * Why this build cannot dial the given carriers, or null when it can.
-         *
-         * Only the QUIC carrier in both directions is implemented. The TLS
-         * carrier needs an exporter from the TLS record layer, and every
-         * other shape is built on that carrier.
-         */
-        internal fun carrierRefusal(uplink: NowhereNetwork, downlink: NowhereNetwork): String? {
-            if (uplink == NowhereNetwork.UDP && downlink == NowhereNetwork.UDP) return null
-            return "Nowhere over a TLS carrier is not wired yet; this build dials the QUIC " +
-                "carrier only (up=udp, down=udp), not up=${uplink.wireName} down=${downlink.wireName}"
-        }
-
-        /**
-         * The header of a TCP flow that rides one carrier both ways.
+         * The header of a flow that rides one carrier both ways.
          *
          * A client always emits a hop count of zero; portals raise it as they
          * forward.
          */
-        internal fun duplexHeader(flowId: Long, settings: NowhereConfiguration): NowhereProtocol.FlowHeader =
+        internal fun duplexHeader(
+            flowId: Long,
+            settings: NowhereConfiguration,
+            kind: NowhereProtocol.FlowKind = NowhereProtocol.FlowKind.TCP
+        ): NowhereProtocol.FlowHeader =
             NowhereProtocol.FlowHeader(
                 role = NowhereProtocol.FlowRole.DUPLEX,
                 flowId = flowId,
-                kind = NowhereProtocol.FlowKind.TCP,
+                kind = kind,
                 uplink = settings.uplink,
                 downlink = settings.downlink
             )
@@ -324,6 +647,48 @@ class NowhereClient(
 }
 
 /**
+ * Adapts a [TlsRecordConnection] to [ProxyConnection] for the Nowhere TLS carrier.
+ */
+private class TlsCarrierConnection(
+    private val record: TlsRecordConnection
+) : ProxyConnection() {
+
+    private val closed = AtomicBoolean(false)
+
+    override val outerTlsVersion: TlsVersion?
+        get() = if (record.isTls13) TlsVersion.TLS13 else TlsVersion.TLS12
+
+    override val isConnected: Boolean
+        get() = !closed.get() && record.connection != null
+
+    override suspend fun sendRaw(data: ByteArray) {
+        if (closed.get()) return
+        record.send(data)
+    }
+
+    override fun sendRawAsync(data: ByteArray) {
+        if (closed.get()) return
+        record.sendAsync(data)
+    }
+
+    override suspend fun receiveRaw(): ByteArray? {
+        if (closed.get()) return null
+        val data = record.receive()
+        if (data == null || data.isEmpty()) {
+            closed.set(true)
+            return null
+        }
+        return data
+    }
+
+    override fun cancel() {
+        if (closed.compareAndSet(false, true)) {
+            record.cancel()
+        }
+    }
+}
+
+/**
  * A flow presented as a proxy connection.
  *
  * Two things sit between the caller and the stream underneath. The portal
@@ -346,7 +711,7 @@ class NowhereStreamConnection(
     private val pendingLock = Any()
     private val closed = AtomicBoolean(false)
 
-    /** The carrier is QUIC, whose TLS is 1.3 by definition. */
+    /** Both QUIC and Nowhere's TLS carrier use TLS 1.3 exclusively. */
     override val outerTlsVersion: TlsVersion? get() = TlsVersion.TLS13
 
     override val isConnected: Boolean
@@ -386,3 +751,209 @@ class NowhereStreamConnection(
         if (closed.compareAndSet(false, true)) onClosed()
     }
 }
+
+/**
+ * An asymmetric flow where writes go out on [uplink] (`OPEN`) and reads come
+ * back on [downlink] (`ATTACH`).
+ */
+class NowhereAsymmetricStreamConnection(
+    private val uplink: ProxyConnection,
+    private val downlink: ProxyConnection,
+    pending: ByteArray,
+    private val onClosed: () -> Unit
+) : ProxyConnection() {
+
+    private var pending: ByteArray? = pending.takeIf { it.isNotEmpty() }
+    private val pendingLock = Any()
+    private val closed = AtomicBoolean(false)
+
+    override val outerTlsVersion: TlsVersion? get() = TlsVersion.TLS13
+
+    override val isConnected: Boolean
+        get() = !closed.get() && uplink.isConnected && downlink.isConnected
+
+    override suspend fun sendRaw(data: ByteArray) {
+        if (closed.get()) return
+        uplink.sendRaw(data)
+    }
+
+    override fun sendRawAsync(data: ByteArray) {
+        if (closed.get()) return
+        uplink.sendRawAsync(data)
+    }
+
+    override suspend fun receiveRaw(): ByteArray? {
+        synchronized(pendingLock) {
+            val held = pending
+            if (held != null) {
+                pending = null
+                return held
+            }
+        }
+        if (closed.get()) return null
+        val data = downlink.receiveRaw()
+        if (data == null) {
+            finish()
+        }
+        return data
+    }
+
+    override fun cancel() {
+        if (!closed.compareAndSet(false, true)) return
+        runCatching { uplink.cancel() }
+        runCatching { downlink.cancel() }
+        onClosed()
+    }
+
+    private fun finish() {
+        if (closed.compareAndSet(false, true)) {
+            runCatching { uplink.cancel() }
+            runCatching { downlink.cancel() }
+            onClosed()
+        }
+    }
+}
+
+/**
+ * A UDP flow carried over a stream (TLS carrier), where each datagram is
+ * prefixed with a 2-byte big-endian length ([NowhereProtocol.encodeUdpStreamPacket]
+ * and [NowhereProtocol.decodeUdpStreamPacket]).
+ */
+class NowhereUdpStreamConnection(
+    private val inner: ProxyConnection,
+    pending: ByteArray,
+    private val onClosed: () -> Unit
+) : ProxyConnection() {
+
+    private var readBuffer: ByteArray = pending.copyOf()
+    private var readOffset: Int = 0
+    private val readMutex = Mutex()
+    private val closed = AtomicBoolean(false)
+
+    override val outerTlsVersion: TlsVersion? get() = TlsVersion.TLS13
+
+    override val isConnected: Boolean
+        get() = !closed.get() && inner.isConnected
+
+    override suspend fun sendRaw(data: ByteArray) {
+        if (closed.get()) return
+        val framed = try {
+            NowhereProtocol.encodeUdpStreamPacket(data)
+        } catch (_: NowhereError.PacketTooLarge) {
+            return
+        }
+        inner.sendRaw(framed)
+    }
+
+    override fun sendRawAsync(data: ByteArray) {
+        if (closed.get()) return
+        val framed = try {
+            NowhereProtocol.encodeUdpStreamPacket(data)
+        } catch (_: NowhereError.PacketTooLarge) {
+            return
+        }
+        inner.sendRawAsync(framed)
+    }
+
+    override suspend fun receiveRaw(): ByteArray? {
+        readMutex.withLock {
+            while (true) {
+                val decoded = NowhereProtocol.decodeUdpStreamPacket(readBuffer, readOffset)
+                if (decoded != null) {
+                    readOffset += decoded.consumed
+                    compactReadBufferIfNeeded()
+                    return decoded.payload
+                }
+                if (closed.get()) return null
+                val chunk = inner.receiveRaw()
+                if (chunk == null || chunk.isEmpty()) {
+                    val unconsumed = readBuffer.size - readOffset
+                    readBuffer = ByteArray(0)
+                    readOffset = 0
+                    finish()
+                    if (unconsumed > 0) {
+                        throw NowhereError.ProtocolViolation("Truncated Nowhere UDP stream packet")
+                    }
+                    return null
+                }
+                if (readOffset > 0) {
+                    readBuffer = readBuffer.copyOfRange(readOffset, readBuffer.size)
+                    readOffset = 0
+                }
+                readBuffer += chunk
+            }
+        }
+    }
+
+    private fun compactReadBufferIfNeeded() {
+        if (readOffset == readBuffer.size) {
+            readBuffer = ByteArray(0)
+            readOffset = 0
+        } else if (readOffset >= 4096 && readOffset * 2 >= readBuffer.size) {
+            readBuffer = readBuffer.copyOfRange(readOffset, readBuffer.size)
+            readOffset = 0
+        }
+    }
+
+    override fun cancel() {
+        if (!closed.compareAndSet(false, true)) return
+        inner.cancel()
+        onClosed()
+    }
+
+    private fun finish() {
+        if (closed.compareAndSet(false, true)) onClosed()
+    }
+}
+
+/**
+ * A UDP flow carried over QUIC datagrams and a dedicated control stream.
+ */
+class NowhereQuicUdpConnection(
+    private val flow: NowhereSession.OpenedUdpFlow,
+    private val onClosed: () -> Unit
+) : ProxyConnection() {
+
+    private val closed = AtomicBoolean(false)
+
+    override val outerTlsVersion: TlsVersion? get() = TlsVersion.TLS13
+
+    override val isConnected: Boolean
+        get() = !closed.get() && flow.isConnected
+
+    override suspend fun sendRaw(data: ByteArray) {
+        if (closed.get()) return
+        flow.send(data)
+    }
+
+    override fun sendRawAsync(data: ByteArray) {
+        if (closed.get()) return
+        flow.send(data)
+    }
+
+    override suspend fun receiveRaw(): ByteArray? {
+        if (closed.get()) return null
+        return try {
+            val packet = flow.receive()
+            if (packet == null) finish()
+            packet
+        } catch (e: Throwable) {
+            finish()
+            throw e
+        }
+    }
+
+    override fun cancel() {
+        if (!closed.compareAndSet(false, true)) return
+        flow.close(sendCloseControl = true)
+        onClosed()
+    }
+
+    private fun finish() {
+        if (closed.compareAndSet(false, true)) {
+            flow.close(sendCloseControl = false)
+            onClosed()
+        }
+    }
+}
+

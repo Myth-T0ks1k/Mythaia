@@ -84,6 +84,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
         private set
     private var tls12CipherSuite: Int = 0
     private var negotiatedVersion: Int = 0x0303
+    private var negotiatedAlpn: String? = null
     private var useExtendedMasterSecret: Boolean = false
     private var tls12Transcript: ByteArray? = null
 
@@ -563,6 +564,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
                         when (hsType) {
                             0x08 -> { // EncryptedExtensions
                                 fullTranscript = fullTranscript + hsMessage
+                                parseEncryptedExtensions(hsBody)
                             }
                             0x0B -> { // Certificate
                                 fullTranscript = fullTranscript + hsMessage
@@ -1060,9 +1062,13 @@ class TlsClient(private val configuration: TlsConfiguration) {
             clientIV = appKeys.clientIV,
             serverKey = appKeys.serverKey,
             serverIV = appKeys.serverIV,
-            cipherSuite = keyDerivation?.cipherSuite ?: TlsCipherSuite.TLS_AES_128_GCM_SHA256
+            cipherSuite = kd.cipherSuite
         )
         tlsConnection.connection = connection
+        tlsConnection.negotiatedAlpn = negotiatedAlpn
+        tlsConnection.exporterMasterSecret = Tls13Crypto.deriveExporterMasterSecret(
+            kd.cipherSuite, hs, fullTranscript
+        )
         connection = null
 
         clearHandshakeState()
@@ -1307,6 +1313,13 @@ class TlsClient(private val configuration: TlsConfiguration) {
                 offset += 4
 
                 when (extType) {
+                    0x0010 -> {
+                        negotiatedAlpn = readAlpnExtension(serverHelloMsg, offset, extDataLen)
+                        val configuredAlpn = configuration.alpn
+                        if (!configuredAlpn.isNullOrEmpty() && negotiatedAlpn != null && negotiatedAlpn !in configuredAlpn) {
+                            throw TlsError.HandshakeFailed("Server selected ALPN '$negotiatedAlpn', which was not offered")
+                        }
+                    }
                     0x0017 -> useExtendedMasterSecret = true
                     0x002B -> { // supported_versions: if server responds 0x0304, it's TLS 1.3
                         if (extDataLen >= 2) {
@@ -1320,6 +1333,34 @@ class TlsClient(private val configuration: TlsConfiguration) {
             }
         }
 
+    }
+
+    private fun parseEncryptedExtensions(body: ByteArray) {
+        if (body.size < 2) return
+        val total = ((body[0].toInt() and 0xFF) shl 8) or (body[1].toInt() and 0xFF)
+        var at = 2
+        val end = minOf(2 + total, body.size)
+        while (at + 4 <= end) {
+            val type = ((body[at].toInt() and 0xFF) shl 8) or (body[at + 1].toInt() and 0xFF)
+            val length = ((body[at + 2].toInt() and 0xFF) shl 8) or (body[at + 3].toInt() and 0xFF)
+            at += 4
+            if (at + length > end) break
+            if (type == 0x0010) {
+                negotiatedAlpn = readAlpnExtension(body, at, length)
+                val configuredAlpn = configuration.alpn
+                if (!configuredAlpn.isNullOrEmpty() && negotiatedAlpn != null && negotiatedAlpn !in configuredAlpn) {
+                    throw TlsError.HandshakeFailed("Server selected ALPN '$negotiatedAlpn', which was not offered")
+                }
+            }
+            at += length
+        }
+    }
+
+    private fun readAlpnExtension(body: ByteArray, at: Int, length: Int): String? {
+        if (length < 3) return null
+        val nameLength = body[at + 2].toInt() and 0xFF
+        if (at + 3 + nameLength > body.size || nameLength == 0) return null
+        return String(body, at + 3, nameLength, Charsets.US_ASCII)
     }
 
     private fun parseTls12CertificateMessage(body: ByteArray) {
@@ -1637,6 +1678,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
             initialServerSeqNum = 1
         )
         tlsConnection.connection = connection
+        tlsConnection.negotiatedAlpn = negotiatedAlpn
         connection = null
 
         if (off < buf.size) {
@@ -1854,6 +1896,7 @@ class TlsClient(private val configuration: TlsConfiguration) {
         handshakeKeys = null
         handshakeTranscript = null
         serverRandom = null
+        negotiatedAlpn = null
         tls12Transcript = null
         serverCertificates.clear()
     }

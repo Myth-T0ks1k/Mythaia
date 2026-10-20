@@ -1,5 +1,6 @@
 package com.mythaia.vpn.protocol.nowhere
 
+import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.quic.QuicConnection
 import com.mythaia.vpn.protocol.quic.QuicStream
 import com.mythaia.vpn.protocol.quic.QuicTuning
@@ -9,12 +10,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -105,17 +108,50 @@ internal object NowhereFlowOpen {
  * spent, so a later flow polls for a stream rather than failing on the first
  * refusal.
  *
- * Only the QUIC carrier is implemented. The TLS-on-TCP carrier needs a TLS
- * exporter that the record layer here does not expose yet, and the asymmetric
- * and multiplexed shapes are built on top of that carrier.
- *
  * Derived from the Anywhere reference implementation (GPL-3.0),
  * Copyright (C) 2026 NodePassProject.
  */
 class NowhereSession(val configuration: NowhereConfiguration) {
 
     /** A flow the portal accepted, and any payload that arrived behind READY. */
-    class OpenedFlow(val stream: QuicStream, val pending: ByteArray)
+    class OpenedFlow(val stream: ProxyConnection, val pending: ByteArray)
+
+    /** A QUIC-backed UDP flow handle: control stream and datagram send/receive. */
+    class OpenedUdpFlow internal constructor(
+        val flowId: Long,
+        val controlStream: ProxyConnection,
+        private val incoming: Channel<ByteArray>,
+        private val session: NowhereSession
+    ) {
+        private val closed = AtomicBoolean(false)
+
+        val isConnected: Boolean
+            get() = !closed.get() && session.isUsable
+
+        fun send(payload: ByteArray) {
+            if (closed.get()) return
+            session.sendUdp(flowId, payload)
+        }
+
+        suspend fun receive(): ByteArray? {
+            if (closed.get()) return null
+            val result = incoming.receiveCatching()
+            result.exceptionOrNull()?.let { err ->
+                close(sendCloseControl = false)
+                throw err
+            }
+            val packet = result.getOrNull()
+            if (packet == null) {
+                close(sendCloseControl = false)
+            }
+            return packet
+        }
+
+        fun close(sendCloseControl: Boolean = true) {
+            if (!closed.compareAndSet(false, true)) return
+            session.closeUdpFlow(flowId, controlStream, sendCloseControl)
+        }
+    }
 
     /**
      * The session cannot carry a flow and will not recover.
@@ -154,6 +190,16 @@ class NowhereSession(val configuration: NowhereConfiguration) {
     @Volatile
     private var idleSince = 0L
 
+    private val udpFlows = ConcurrentHashMap<Long, Channel<ByteArray>>()
+    private val reassembler = NowhereFragmentReassembler()
+    private val packetIdLock = Any()
+    private var nextPacketId = 1L
+
+    /** Hooks for unit tests to exercise flow/datagram framing without native ngtcp2. */
+    internal var streamOpener: (suspend (ByteArray) -> OpenedFlow)? = null
+    internal var datagramSender: ((ByteArray) -> Unit)? = null
+    internal var maxDatagramPayloadProvider: (() -> Int)? = null
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
 
     val isClosed: Boolean get() = phase.get() == Phase.CLOSED
@@ -179,6 +225,18 @@ class NowhereSession(val configuration: NowhereConfiguration) {
      * is finished and the caller should build another before giving up.
      */
     suspend fun openFlow(request: ByteArray): OpenedFlow {
+        streamOpener?.let { opener ->
+            if (phase.get() == Phase.CLOSED) throw Unavailable("Nowhere: session closed")
+            activeFlows.incrementAndGet()
+            idleSince = 0L
+            return try {
+                opener(request)
+            } catch (e: Exception) {
+                flowEnded()
+                throw e
+            }
+        }
+
         val bootstrap: Boolean
         var stream: QuicStream? = null
         val payload: ByteArray
@@ -248,6 +306,152 @@ class NowhereSession(val configuration: NowhereConfiguration) {
     }
 
     /**
+     * Opens a QUIC-backed UDP flow for [flowId].
+     *
+     * The stream opened by [request] is the UDP control stream; datagrams carry
+     * the packets themselves. The datagram channel is registered before the
+     * request goes out so a packet arriving right behind READY is not dropped.
+     */
+    suspend fun openUdpFlow(flowId: Long, request: ByteArray): OpenedUdpFlow {
+        val channel = Channel<ByteArray>(Channel.UNLIMITED)
+        udpFlows[flowId] = channel
+        val opened = try {
+            openFlow(request)
+        } catch (e: Exception) {
+            udpFlows.remove(flowId)?.close()
+            synchronized(reassembler) { reassembler.forget(flowId) }
+            throw e
+        }
+        if (opened.pending.isNotEmpty()) {
+            udpFlows.remove(flowId)?.close()
+            synchronized(reassembler) { reassembler.forget(flowId) }
+            opened.stream.cancel()
+            flowEnded()
+            throw NowhereError.ProtocolViolation("Unexpected data on Nowhere UDP control stream")
+        }
+        val handle = OpenedUdpFlow(flowId, opened.stream, channel, this)
+        monitorUdpControlStream(flowId, opened.stream, channel)
+        return handle
+    }
+
+    private fun monitorUdpControlStream(
+        flowId: Long,
+        controlStream: ProxyConnection,
+        channel: Channel<ByteArray>
+    ) {
+        scope.launch {
+            try {
+                val chunk = controlStream.receiveRaw()
+                if (chunk != null && chunk.isNotEmpty()) {
+                    channel.close(NowhereError.ProtocolViolation("Unexpected data on Nowhere UDP control stream"))
+                } else {
+                    channel.close()
+                }
+            } catch (_: Exception) {
+                channel.close()
+            } finally {
+                synchronized(reassembler) { reassembler.forget(flowId) }
+            }
+        }
+    }
+
+    /**
+     * Sends one UDP packet for [flowId] as a QUIC datagram (or a sequence of
+     * `FRAGMENT` datagrams when [payload] + header exceeds the negotiated
+     * datagram budget). Packets exceeding the protocol's 64 KiB cap are
+     * dropped, matching the reference implementation.
+     */
+    fun sendUdp(flowId: Long, payload: ByteArray) {
+        if (phase.get() == Phase.CLOSED) throw Unavailable("Nowhere: session closed")
+        val negotiatedMax = maxDatagramPayloadProvider?.invoke()
+            ?: quic?.maxDatagramPayload()
+            ?: 0
+        val maxDatagramSize = if (negotiatedMax > 0) negotiatedMax else DEFAULT_MAX_DATAGRAM_PAYLOAD
+        val needsFragmentation = payload.size + NowhereProtocol.UDP_HEADER_SIZE > maxDatagramSize
+        val packetId = if (needsFragmentation) nextUdpPacketId() else 0L
+        val frames = try {
+            NowhereProtocol.encodeUdpDataFragments(
+                flowId = flowId,
+                packetId = packetId,
+                payload = payload,
+                maxDatagramSize = maxDatagramSize
+            )
+        } catch (_: NowhereError.PacketTooLarge) {
+            return
+        }
+        val sender = datagramSender
+        if (sender != null) {
+            for (frame in frames) sender(frame)
+        } else {
+            val connection = quic ?: throw Unavailable("Nowhere: session is not ready")
+            for (frame in frames) connection.sendDatagram(frame)
+        }
+    }
+
+    internal fun handleDatagram(bytes: ByteArray) {
+        val message = try {
+            NowhereProtocol.decodeUdpDatagram(bytes)
+        } catch (_: Exception) {
+            null
+        } ?: return
+        val channel = udpFlows[message.flowId] ?: return
+        when (message.type) {
+            NowhereProtocol.UdpType.DATA -> {
+                channel.trySend(message.payload)
+            }
+            NowhereProtocol.UdpType.FRAGMENT -> {
+                val reassembled = synchronized(reassembler) {
+                    reassembler.accept(message)
+                }
+                if (reassembled != null) {
+                    channel.trySend(reassembled)
+                }
+            }
+            NowhereProtocol.UdpType.CLOSE -> {
+                synchronized(reassembler) {
+                    reassembler.forget(message.flowId)
+                }
+                udpFlows.remove(message.flowId)?.close()
+            }
+        }
+    }
+
+    internal fun closeUdpFlow(
+        flowId: Long,
+        controlStream: ProxyConnection?,
+        sendCloseControl: Boolean = true
+    ) {
+        udpFlows.remove(flowId)?.close()
+        synchronized(reassembler) {
+            reassembler.forget(flowId)
+        }
+        if (sendCloseControl && phase.get() != Phase.CLOSED) {
+            val closeFrame = NowhereProtocol.encodeUdpControl(
+                type = NowhereProtocol.UdpType.CLOSE,
+                flowId = flowId
+            )
+            runCatching {
+                val sender = datagramSender
+                if (sender != null) {
+                    sender(closeFrame)
+                } else {
+                    quic?.sendDatagram(closeFrame)
+                }
+            }
+        }
+        runCatching { controlStream?.cancel() }
+        flowEnded()
+    }
+
+    internal fun nextUdpPacketId(): Long = synchronized(packetIdLock) {
+        val current = if (nextPacketId <= 0L || nextPacketId > 0xFFFFFFFFL) 1L else nextPacketId
+        var next = (current + 1L) and 0xFFFFFFFFL
+        if (next == 0L) next = 1L
+        nextPacketId = next
+        current
+    }
+
+    /**
      * Tells the session a flow it handed out has finished, so that an idle
      * session can be retired and a busy one kept.
      */
@@ -296,6 +500,7 @@ class NowhereSession(val configuration: NowhereConfiguration) {
             pinnedCertSha256 = configuration.tls.pinnedCertSha256,
             verifyName = configuration.tls.verifyName
         )
+        connection.onDatagramReceived = { bytes -> handleDatagram(bytes) }
         if (!connection.connect()) {
             connection.close()
             val failure = Unavailable("Nowhere: QUIC handshake failed")
@@ -417,6 +622,13 @@ class NowhereSession(val configuration: NowhereConfiguration) {
         val previous = phase.getAndSet(Phase.CLOSED)
         if (previous == Phase.CLOSED) return
         authenticated.completeExceptionally(error)
+        val flows = udpFlows.keys.toList()
+        for (flowId in flows) {
+            udpFlows.remove(flowId)?.close()
+            synchronized(reassembler) {
+                reassembler.forget(flowId)
+            }
+        }
         scope.cancel()
         quic?.close()
         quic = null
@@ -428,6 +640,9 @@ class NowhereSession(val configuration: NowhereConfiguration) {
         /** A portal that has not granted a stream in this long is not going to. */
         private const val STREAM_CREDIT_TIMEOUT_NANOS = 10_000_000_000L
         private const val STREAM_CREDIT_POLL_MS = 5L
+
+        /** Fallback QUIC datagram payload budget when peer transport parameters report 0. */
+        internal const val DEFAULT_MAX_DATAGRAM_PAYLOAD = 1200
 
         /** How long a session may sit without a flow before it is closed. */
         private const val IDLE_CLOSE_NANOS = 60_000_000_000L
