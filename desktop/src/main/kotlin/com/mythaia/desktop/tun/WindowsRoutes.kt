@@ -1,5 +1,6 @@
 package com.mythaia.desktop.tun
 
+import com.mythaia.vpn.util.Cidr
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -28,7 +29,7 @@ data class TunNetConfig(
     val dnsServers: List<String> = listOf("1.1.1.1", "1.0.0.1"),
     val interfaceMetric: Int = 1,
     /** Null leaves IPv6 alone (and leaking); otherwise ::/1 and 8000::/1 are routed into the adapter. */
-    val ipv6Address: String? = "fd00:6d79:7468::2",
+    val ipv6Address: String? = DEFAULT_IPV6_ADDRESS,
     val ipv6PrefixLength: Int = 64,
     val physicalInterfaceIndex: Int,
     /** Null when the physical interface has no gateway; exclusions then rely on on-link routes and socket binding. */
@@ -36,9 +37,23 @@ data class TunNetConfig(
     /** IPv4 hosts that must keep going out the physical interface: proxy servers, DNS resolvers. */
     val excludedHosts: List<String> = emptyList(),
     /** IPv4 networks (`a.b.c.d/n`) that stay on the physical interface: private ranges, country bypass. */
-    val excludedNetworks: List<String> = PRIVATE_NETWORKS
+    val excludedNetworks: List<String> = PRIVATE_NETWORKS,
+    /**
+     * WireGuard: the profile's own addresses (`a.b.c.d/n`, IPv6 too), in
+     * place of [address], [prefixLength], [gateway] and [ipv6Address]; its
+     * [dnsServers] may then be of either family. Null for the lwIP tunnel.
+     */
+    val interfaceAddresses: List<String>? = null,
+    /** WireGuard: the peer's AllowedIPs, routed on-link into the adapter instead of everything. */
+    val tunnelRoutes: List<String> = emptyList(),
+    /** WireGuard: the profile's MTU; null leaves the adapter's. */
+    val mtu: Int? = null
 ) {
+    /** Whether this is a WireGuard interface, laid out from the profile rather than the fixed plan. */
+    val isLayer3: Boolean get() = interfaceAddresses != null
+
     companion object {
+        const val DEFAULT_IPV6_ADDRESS = "fd00:6d79:7468::2"
         /** RFC 1918, link-local, carrier NAT: a proxy cannot reach these, so they never enter the tunnel. */
         val PRIVATE_NETWORKS = listOf("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10")
     }
@@ -103,6 +118,7 @@ data class RouteEntry(
 object RoutePlan {
 
     fun setup(c: TunNetConfig): List<NetCommand> {
+        if (c.isLayer3) return layer3Setup(c)
         val idx = c.interfaceIndex.toString()
         val out = ArrayList<NetCommand>()
         out += NetCommand(listOf(
@@ -145,6 +161,128 @@ object RoutePlan {
         return out
     }
 
+    /**
+     * A WireGuard interface: the profile's addresses, DNS and MTU on the
+     * adapter, and only the peer's AllowedIPs routed into it, on-link (a
+     * point-to-point interface has no next hop). `0.0.0.0/0` and `::/0` go
+     * in as two halves, like the lwIP plan's default, so the physical
+     * default route stays as it was. Nothing stays out but [TunNetConfig.excludedHosts]
+     * (the peer itself) and [TunNetConfig.excludedNetworks]: AllowedIPs is
+     * the profile's own word on what the tunnel carries, and the physical
+     * network's on-link routes are more specific than any half anyway.
+     * IPv6 routes are added only with an IPv6 address to send them from.
+     */
+    private fun layer3Setup(c: TunNetConfig): List<NetCommand> {
+        val idx = c.interfaceIndex.toString()
+        val out = ArrayList<NetCommand>()
+        val entries = c.interfaceAddresses.orEmpty().mapNotNull { Cidr.split(it) }
+        val v4 = entries.filter { !it.address.contains(':') }
+        val v6 = entries.filter { it.address.contains(':') }
+        val v4Routes = layer3Routes(c.tunnelRoutes, v6 = false)
+        val v6Routes = if (v6.isNotEmpty()) layer3Routes(c.tunnelRoutes, v6 = true) else emptyList()
+        val carriesV6 = v6.isNotEmpty() && v6Routes.isNotEmpty()
+        val v4Full = "0.0.0.0/1" in v4Routes && "128.0.0.0/1" in v4Routes
+        val v6Full = "::/1" in v6Routes && "8000::/1" in v6Routes
+        // A full-tunnel IPv4 profile without an IPv6 default route would leave
+        // IPv6 escaping on the physical interface; give the adapter the ULA
+        // sinkhole address and route ::/1 + 8000::/1 into it, where
+        // WintunPacketDevice drops the packets when the peer carries no IPv6.
+        val blockIpv6 = v4Full && !v6Full
+        val sinkholeV6 = c.ipv6Address ?: TunNetConfig.DEFAULT_IPV6_ADDRESS
+
+        v4.forEachIndexed { i, a ->
+            out += NetCommand(
+                if (i == 0) listOf("netsh", "interface", "ipv4", "set", "address", "name=$idx", "source=static",
+                    "address=${a.address}", "mask=${maskOf(a.prefix)}", "store=active")
+                else listOf("netsh", "interface", "ipv4", "add", "address", "name=$idx",
+                    "address=${a.address}", "mask=${maskOf(a.prefix)}", "store=active")
+            )
+        }
+        v6.forEach { a ->
+            out += NetCommand(listOf(
+                "netsh", "interface", "ipv6", "add", "address", "interface=$idx", "address=${a.address}/${a.prefix}", "store=active"
+            ), essential = v4.isEmpty())
+        }
+        if (v6.isEmpty() && blockIpv6) {
+            out += NetCommand(listOf(
+                "netsh", "interface", "ipv6", "add", "address", "interface=$idx", "address=$sinkholeV6/${c.ipv6PrefixLength}", "store=active"
+            ), essential = false)
+        }
+
+        val dns = c.dnsServers.map { it.trim() }.filter { com.mythaia.vpn.util.DnsCache.isIpAddress(it) }
+        val dns4 = dns.filter { !it.contains(':') }
+        val dns6 = dns.filter { it.contains(':') }
+        out += dnsCommands("ipv4", idx, dns4)
+        if (carriesV6) out += dnsCommands("ipv6", idx, dns6)
+
+        val hasV6OnInterface = v6.isNotEmpty() || blockIpv6
+        out += NetCommand(listOf(
+            "netsh", "interface", "ipv4", "set", "interface", "interface=$idx", "metric=${c.interfaceMetric}", "store=active"
+        ), essential = false)
+        if (hasV6OnInterface) out += NetCommand(listOf(
+            "netsh", "interface", "ipv6", "set", "interface", "interface=$idx", "metric=${c.interfaceMetric}", "store=active"
+        ), essential = false)
+        c.mtu?.let { mtu ->
+            out += NetCommand(listOf("netsh", "interface", "ipv4", "set", "subinterface", idx, "mtu=$mtu", "store=active"), essential = false)
+            // IPv6 needs at least 1280.
+            if (carriesV6 && mtu >= 1280) {
+                out += NetCommand(listOf("netsh", "interface", "ipv6", "set", "subinterface", idx, "mtu=$mtu", "store=active"), essential = false)
+            }
+        }
+
+        for (route in v4Routes) {
+            out += NetCommand(listOf(
+                "netsh", "interface", "ipv4", "add", "route", "prefix=$route", "interface=$idx", "nexthop=0.0.0.0", "metric=0", "store=active"
+            ))
+        }
+        val effectiveV6Routes = if (blockIpv6) (v6Routes + listOf("::/1", "8000::/1")).distinct() else v6Routes
+        for (route in effectiveV6Routes) {
+            out += NetCommand(listOf(
+                "netsh", "interface", "ipv6", "add", "route", "prefix=$route", "interface=$idx", "metric=0", "store=active"
+            ), essential = false)
+        }
+
+        out += physicalSide(c).map { NetCommand(it, essential = false) }
+        return out
+    }
+
+    /** Whether a layer-3 profile has both an IPv6 address on the adapter and an IPv6 route into the peer. */
+    fun carriesIpv6(interfaceAddresses: List<String>?, tunnelRoutes: List<String>): Boolean {
+        val hasV6Address = interfaceAddresses.orEmpty().any { Cidr.split(it)?.address?.contains(':') == true }
+        return hasV6Address && layer3Routes(tunnelRoutes, v6 = true).isNotEmpty()
+    }
+
+    /**
+     * AllowedIPs of one family as `network/prefix`: host bits cleared (wg-quick
+     * takes `10.0.0.2/24` to mean the subnet), each once, a whole-family
+     * default as its two halves.
+     */
+    fun layer3Routes(allowed: List<String>, v6: Boolean): List<String> {
+        val out = LinkedHashSet<String>()
+        for (entry in allowed) {
+            val (address, prefix) = Cidr.split(entry) ?: continue
+            if (address.contains(':') != v6) continue
+            if (prefix == 0) {
+                if (v6) { out += "::/1"; out += "8000::/1" } else { out += "0.0.0.0/1"; out += "128.0.0.0/1" }
+                continue
+            }
+            val network = Cidr.networkOf(address, prefix) ?: continue
+            out += "$network/$prefix"
+        }
+        return out.toList()
+    }
+
+    private fun dnsCommands(family: String, idx: String, servers: List<String>): List<NetCommand> =
+        servers.mapIndexed { i, server ->
+            if (i == 0) NetCommand(listOf(
+                "netsh", "interface", family, "set", "dnsservers", "name=$idx", "source=static",
+                "address=$server", "register=none", "validate=no"
+            ), essential = false)
+            else NetCommand(listOf(
+                "netsh", "interface", family, "add", "dnsservers", "name=$idx", "address=$server", "index=${i + 1}", "validate=no"
+            ), essential = false)
+        }
+
     /** The routes that outlive the adapter and so must be deleted by hand, plus the adapter's own for tidiness. */
     fun teardown(c: TunNetConfig): List<NetCommand> = teardownEntries(c).map { it.deleteCommand() }
 
@@ -155,6 +293,9 @@ object RoutePlan {
      * process left behind is exactly what the next start finds.
      */
     fun teardownEntries(c: TunNetConfig): List<RouteEntry> {
+        // A WireGuard adapter's own routes are on-link and go with it; the
+        // leftover adapter of a dead run is replaced, with them, on the next start.
+        if (c.isLayer3) return physicalSideTeardown(c)
         val out = ArrayList<RouteEntry>()
         out += RouteEntry.v4("0.0.0.0", 1, c.gateway, c.interfaceIndex)
         out += RouteEntry.v4("128.0.0.0", 1, c.gateway, c.interfaceIndex)
@@ -165,6 +306,9 @@ object RoutePlan {
         }
         return out
     }
+
+    /** The physical-side routes alone, for moving them to another network ([WindowsRoutes.repointPhysical]). */
+    fun physicalSideCommands(c: TunNetConfig): List<NetCommand> = physicalSide(c).map { NetCommand(it, essential = false) }
 
     /** The commands that keep one more host on the physical side, added while running. */
     fun excludeHost(c: TunNetConfig, ip: String): NetCommand? {
@@ -271,6 +415,28 @@ class WindowsRoutes(private val snapshot: File) {
         val result = WindowsNet.run(command.argv)
         if (!result.ok) logger.warning("Could not exclude $ip: ${result.output.lineSequence().firstOrNull()}")
         writeSnapshot(currentTeardown(config))
+    }
+
+    /**
+     * The physical network changed under a running tunnel (another Wi-Fi,
+     * a cable plugged in): the routes that keep hosts off the tunnel move to
+     * [interfaceIndex] and [gateway]. Returns false when nothing is applied.
+     */
+    fun repointPhysical(interfaceIndex: Int, gateway: String?, excludedHosts: List<String>): Boolean {
+        val old = applied ?: return false
+        for (command in currentTeardown(old).filter { it.interfaceIndex == old.physicalInterfaceIndex }.map { it.deleteCommand() }) {
+            WindowsNet.run(command.argv)
+        }
+        extraHosts.clear()
+        val moved = old.copy(physicalInterfaceIndex = interfaceIndex, physicalGateway = gateway, excludedHosts = excludedHosts)
+        writeSnapshot(RoutePlan.teardownEntries(moved))
+        for (command in RoutePlan.physicalSideCommands(moved)) {
+            val result = WindowsNet.run(command.argv)
+            if (!result.ok) logger.warning("Route on the new network refused: ${command.argv.take(3).joinToString(" ")}: ${result.output.lineSequence().firstOrNull()}")
+        }
+        applied = moved
+        logger.info("Routes moved to interface $interfaceIndex via ${gateway ?: "on-link"}")
+        return true
     }
 
     /** Undoes [apply]. Safe to call twice. */

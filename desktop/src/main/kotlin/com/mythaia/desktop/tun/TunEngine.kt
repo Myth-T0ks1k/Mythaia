@@ -8,6 +8,8 @@ import com.mythaia.desktop.model.DesktopSettings
 import com.mythaia.desktop.model.RouteRule
 import com.mythaia.desktop.model.RouteTarget
 import com.mythaia.vpn.NativeBridge
+import com.mythaia.vpn.protocol.wireguard.WireGuardConfig
+import com.mythaia.vpn.protocol.wireguard.WireGuardTunnel
 import com.mythaia.vpn.tun.TunHost
 import com.mythaia.vpn.tun.TunRoute
 import com.mythaia.vpn.tun.TunSettings
@@ -36,6 +38,13 @@ import java.util.concurrent.TimeUnit
  * throws [IOException] with a user-readable reason when it cannot come up
  * (not elevated, no wintun.dll, no default route, netsh refused). All of
  * that is undone before the exception leaves.
+ *
+ * A WireGuard or AmneziaWG profile is layer 3: there is no stream to
+ * route, so instead of lwIP the profile's own interface is built — its
+ * addresses, DNS and MTU on the adapter, its AllowedIPs as the routes — and
+ * [WireGuardTunnel] carries whole packets to the peer, whose address keeps
+ * a host route through the physical gateway. A watcher moves that route and
+ * the peer socket when the physical network changes.
  *
  * Needs an elevated process: see [isElevated] and [relaunchElevated].
  */
@@ -72,10 +81,22 @@ class TunEngine(val stats: TrafficStats) {
     private var session: WintunAdapter.Session? = null
     private var reader: Thread? = null
     private val routes = WindowsRoutes(AppPaths.tunRouteSnapshot)
+    // Read by the WireGuard tunnel's threads when it opens a socket.
+    @Volatile
     private var physical: PhysicalPath? = null
 
     @Volatile
     private var readerRunning = false
+
+    /** The WireGuard tunnel, when the profile is layer 3; [stack] is null then. */
+    @Volatile
+    private var wireGuard: WireGuardTunnel? = null
+    private var wireGuardDevice: WintunPacketDevice? = null
+    private var pathWatcher: Thread? = null
+
+    /** The adapter's interface index while up, for telling it from the physical network. */
+    @Volatile
+    private var adapterIndex = 0
 
     /** Same contract as `ProxyEngine.updateRouting`: new flows use the new rules, open ones finish as they were. */
     fun updateRouting(rules: List<RouteRule>, settings: DesktopSettings) {
@@ -93,7 +114,7 @@ class TunEngine(val stats: TrafficStats) {
         synchronized(lock) {
             this.settings = settings
             if (_status.value == Status.RUNNING) {
-                if (this.configuration?.id != configuration.id) switchTo(configuration)
+                if (this.configuration != configuration) switchTo(configuration)
                 return
             }
             if (_status.value != Status.STOPPED) throw IOException("TUN engine is busy")
@@ -117,9 +138,21 @@ class TunEngine(val stats: TrafficStats) {
         }
     }
 
-    /** Changes the outbound; open flows are re-established through the new server. */
+    /**
+     * Changes the outbound; open flows are re-established through the new
+     * server. Throws when a switch to or from WireGuard, which rebuilds the
+     * adapter, fails; the engine is stopped then.
+     */
+    @Throws(IOException::class)
     fun switchTo(configuration: ProxyConfiguration) {
         synchronized(lock) {
+            // To or from a WireGuard profile, the adapter itself changes
+            // (its addresses and routes come from the profile): start over.
+            val layer3 = configuration.outboundProtocol.isLayer3 || this.configuration?.outboundProtocol?.isLayer3 == true
+            if (layer3 && _status.value == Status.RUNNING) {
+                restartLocked(configuration)
+                return
+            }
             this.configuration = configuration
             DnsCache.setActiveProxyDomain(configuration.serverAddress)
             if (_status.value != Status.RUNNING) return
@@ -132,17 +165,47 @@ class TunEngine(val stats: TrafficStats) {
 
     /** Tears everything down and restores the routes and DNS. Blocking, a few seconds at most. */
     fun stop() {
+        val watcher: Thread?
         synchronized(lock) {
             if (_status.value == Status.STOPPED) {
                 routes.cleanupLeftovers()
                 return
             }
             _status.value = Status.STOPPING
+            watcher = pathWatcher
             try {
                 teardownLocked()
             } finally {
                 _status.value = Status.STOPPED
             }
+        }
+        // Joined outside lock so an in-flight path check blocked on lock can
+        // see the interrupted/stopped state and exit without deadlocking stop().
+        watcher?.let { w ->
+            try {
+                w.join(READER_JOIN_MS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+    }
+
+    /** Tears down and comes up again for [config]; a failure leaves the engine stopped with the reason. */
+    private fun restartLocked(config: ProxyConfiguration) {
+        logger.info("Rebuilding the tunnel for ${config.name}")
+        _status.value = Status.STARTING
+        try {
+            teardownLocked()
+            startLocked(settings, config)
+            _status.value = Status.RUNNING
+        } catch (e: Throwable) {
+            val message = e.message ?: e.toString()
+            logger.error("TUN restart failed: $message")
+            _lastError.value = message
+            runCatching { teardownLocked() }
+            _status.value = Status.STOPPED
+            if (e is VirtualMachineError) throw e
+            throw (e as? IOException) ?: IOException(message, e)
         }
     }
 
@@ -150,9 +213,13 @@ class TunEngine(val stats: TrafficStats) {
 
     private fun startLocked(settings: DesktopSettings, config: ProxyConfiguration) {
         if (!WindowsNet.isWindows) throw IOException("TUN mode is only available on Windows")
-        if (!NativeBridge.isLoaded) throw IOException("The native library (mythaia_native.dll) is not loaded")
         val dll = AppPaths.wintunLibrary() ?: throw IOException("wintun.dll not found (expected in ${AppPaths.resourcesDir ?: "resources/windows-x64"})")
         if (!isElevated()) throw IOException("TUN mode needs administrator rights")
+        if (config.outboundProtocol.isLayer3) {
+            startWireGuardLocked(dll, config)
+            return
+        }
+        if (!NativeBridge.isLoaded) throw IOException("The native library (mythaia_native.dll) is not loaded")
 
         routes.cleanupLeftovers()
 
@@ -178,6 +245,7 @@ class TunEngine(val stats: TrafficStats) {
         val created = WintunAdapter.create(dll, ADAPTER_NAME, TUNNEL_TYPE, ADAPTER_GUID)
         adapter = created
         val ifIndex = created.interfaceIndex()
+        adapterIndex = ifIndex
         logger.info("Wintun adapter '$ADAPTER_NAME' is interface $ifIndex (driver ${WintunAdapter.runningDriverVersion(dll) ?: "?"})")
 
         val networks = ArrayList(TunNetConfig.PRIVATE_NETWORKS)
@@ -222,7 +290,147 @@ class TunEngine(val stats: TrafficStats) {
         logger.info("TUN up: ${config.name} (${config.outboundProtocol.displayName}), mode=${if (settings.isGlobal) "global" else "rule"}")
     }
 
+    /**
+     * A WireGuard or AmneziaWG profile: the adapter laid out from its
+     * `[Interface]`, AllowedIPs routed into it, and the tunnel's socket bound
+     * to the physical address. Returns once the first handshake is done, so
+     * a peer that does not answer fails the start with the reason instead of
+     * leaving every program without a network behind a "connected" tunnel.
+     */
+    private fun startWireGuardLocked(dll: File, config: ProxyConfiguration) {
+        // A chain dials a stream through each hop; WireGuard sends packets and has nowhere to put one.
+        if (!config.chain.isNullOrEmpty()) throw IOException("WireGuard cannot be the exit of a proxy chain")
+        val text = config.wireGuardConfig?.takeIf { it.isNotBlank() }
+            ?: throw IOException("${config.name} has no WireGuard configuration")
+        val profile = try {
+            WireGuardConfig.parse(text)
+        } catch (e: Exception) {
+            throw IOException("WireGuard configuration is not usable: ${e.message ?: e}")
+        }
+        if (profile.addresses.none { com.mythaia.vpn.util.Cidr.split(it) != null }) {
+            throw IOException("The WireGuard configuration has no usable [Interface] Address")
+        }
+
+        routes.cleanupLeftovers()
+        val path = WindowsNet.physicalPath() ?: throw IOException("No default route: is the computer online?")
+        physical = path
+        logger.info("Physical interface ${path.interfaceIndex} at ${path.address.hostAddress} via ${path.gateway ?: "on-link"}, DNS ${path.dnsServers}")
+
+        // Names the app itself looks up (the peer's) go to the physical resolvers.
+        WindowsSocketProtector.install(path.address)
+        DnsCache.setUnderlyingNetwork(WindowsUnderlyingNetwork(path.dnsServers.ifEmpty { FALLBACK_DNS }))
+        DnsCache.setActiveProxyDomain(profile.peer.endpointHost)
+        this.configuration = config
+
+        // The socket is bound to the physical IPv4 address, so the peer must have one.
+        if (profile.peer.endpointHost.contains(':')) {
+            throw IOException("IPv6 WireGuard endpoints are not supported on Windows yet: ${profile.peer.endpointHost}")
+        }
+        val peerHosts = peerExclusions(profile, path)
+        if (peerHosts.isEmpty() && !DnsCache.isIpAddress(profile.peer.endpointHost)) {
+            throw IOException("Cannot resolve the WireGuard peer ${profile.peer.endpointHost} to an IPv4 address")
+        }
+
+        val created = WintunAdapter.create(dll, ADAPTER_NAME, TUNNEL_TYPE, ADAPTER_GUID)
+        adapter = created
+        val ifIndex = created.interfaceIndex()
+        adapterIndex = ifIndex
+        logger.info("Wintun adapter '$ADAPTER_NAME' is interface $ifIndex for WireGuard (driver ${WintunAdapter.runningDriverVersion(dll) ?: "?"})")
+
+        routes.apply(
+            TunNetConfig(
+                interfaceIndex = ifIndex,
+                dnsServers = profile.dnsServers,
+                physicalInterfaceIndex = path.interfaceIndex,
+                physicalGateway = path.gateway,
+                excludedHosts = peerHosts,
+                excludedNetworks = emptyList(),
+                interfaceAddresses = profile.addresses,
+                tunnelRoutes = profile.peer.allowedIps,
+                mtu = profile.mtu
+            )
+        )
+
+        stats.reset()
+        val newSession = created.startSession()
+        session = newSession
+        val device = WintunPacketDevice(
+            newSession,
+            stats,
+            dropIpv6 = !RoutePlan.carriesIpv6(profile.addresses, profile.peer.allowedIps)
+        )
+        wireGuardDevice = device
+        val tunnel = WireGuardTunnel(
+            profile,
+            openSocket = { physicalSocket { physical?.address } },
+            resolve = { host -> WindowsNet.resolveV4(host).firstOrNull() }
+        )
+        tunnel.onFailure = { reason ->
+            logger.error("WireGuard peer not answering: $reason")
+            _lastError.value = "WireGuard: $reason"
+        }
+        wireGuard = tunnel
+        tunnel.start(device)
+
+        val deadline = System.currentTimeMillis() + HANDSHAKE_WAIT_MS
+        while (!tunnel.hasHandshake && System.currentTimeMillis() < deadline) Thread.sleep(100)
+        if (!tunnel.hasHandshake) {
+            throw IOException("The WireGuard peer ${profile.peer.endpointHost}:${profile.peer.endpointPort} did not answer the handshake in ${HANDSHAKE_WAIT_MS / 1000} s")
+        }
+        _lastError.value = null
+        startPathWatcher(profile)
+        logger.info("TUN up: ${config.name} (${if (profile.amnezia.isEnabled) "AmneziaWG" else "WireGuard"}), routes ${profile.peer.allowedIps}, DNS ${profile.dnsServers}")
+    }
+
+    /** The peer's IPv4 addresses that need a host route through the physical gateway. */
+    private fun peerExclusions(profile: WireGuardConfig, path: PhysicalPath): List<String> =
+        WindowsNet.resolveV4(profile.peer.endpointHost)
+            .filterNot { ip -> runCatching { path.isOnLink(java.net.InetAddress.getByName(ip)) }.getOrDefault(false) }
+
+    /**
+     * Roaming: every two seconds, the physical path as it is now. When the
+     * interface, gateway or address changed (another Wi-Fi, a cable, a new
+     * DHCP lease), the peer's host route moves, sockets bind to the new
+     * address, names resolve on the new network's DNS and the tunnel opens a
+     * new socket and handshakes again. With no network at all it waits.
+     */
+    private fun startPathWatcher(profile: WireGuardConfig) {
+        val watcher = Thread({
+            while (!Thread.currentThread().isInterrupted) {
+                try {
+                    Thread.sleep(PATH_CHECK_MS)
+                } catch (e: InterruptedException) {
+                    return@Thread
+                }
+                val tunnel = wireGuard ?: return@Thread
+                val current = physical ?: continue
+                val now = runCatching { WindowsNet.physicalPathExcluding(adapterIndex) }.getOrNull() ?: continue
+                val same = now.interfaceIndex == current.interfaceIndex && now.gateway == current.gateway &&
+                    now.address == current.address
+                if (same) continue
+                synchronized(lock) {
+                    if (Thread.currentThread().isInterrupted || wireGuard !== tunnel) return@Thread
+                    logger.info("Network changed: interface ${now.interfaceIndex} at ${now.address.hostAddress} via ${now.gateway ?: "on-link"}")
+                    physical = now
+                    WindowsSocketProtector.install(now.address)
+                    DnsCache.setUnderlyingNetwork(WindowsUnderlyingNetwork(now.dnsServers.ifEmpty { FALLBACK_DNS }))
+                    routes.repointPhysical(now.interfaceIndex, now.gateway, peerExclusions(profile, now))
+                    tunnel.handleNetworkPathChange("physical network changed")
+                }
+            }
+        }, "wg-path-watch").apply { isDaemon = true }
+        pathWatcher = watcher
+        watcher.start()
+    }
+
     private fun teardownLocked() {
+        pathWatcher?.interrupt()
+        pathWatcher = null
+        // WireGuard first, while the session can still take its last packets.
+        wireGuard?.let { runCatching { it.stop() }.onFailure { e -> logger.warning("WireGuard stop: ${e.message}") } }
+        wireGuard = null
+        wireGuardDevice?.close()
+        wireGuardDevice = null
         readerRunning = false
         // Flows first, while the session can still carry their RSTs.
         stack?.let { s ->
@@ -263,6 +471,7 @@ class TunEngine(val stats: TrafficStats) {
         configuration = null
         physical = null
         stats.connections.set(0)
+        adapterIndex = 0
         logger.info("TUN down")
     }
 
@@ -321,6 +530,9 @@ class TunEngine(val stats: TrafficStats) {
         private const val ADAPTER_GUID = "{9E2F1A8C-4B6D-4C3E-9F0A-2D7B5C1E8A4F}"
         private val FALLBACK_DNS = listOf("1.1.1.1", "8.8.8.8")
         private const val READER_JOIN_MS = 2_000L
+        /** A WireGuard start waits this long for the first handshake (three attempts). */
+        private const val HANDSHAKE_WAIT_MS = 15_000L
+        private const val PATH_CHECK_MS = 2_000L
 
         /** Whether this process may create the adapter. */
         fun isElevated(): Boolean = Elevation.isElevated()

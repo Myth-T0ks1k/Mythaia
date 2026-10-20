@@ -41,12 +41,7 @@ private enum class PickerGroup(val titleKey: String) {
     TLS("proto_group_tls"), OTHER("proto_group_other")
 }
 
-/**
- * Everything a server can be created as — the Android picker's list. The
- * WireGuard family is shown but not offered: the Windows tunnel does not
- * carry layer-3 protocols yet, and a server that cannot connect is worse
- * than an honest "not here yet".
- */
+/** Everything a server can be created as — the Android picker's list. */
 private enum class PickerKind(
     val protocol: OutboundProtocol,
     val title: String,
@@ -61,8 +56,8 @@ private enum class PickerKind(
     SHADOWSOCKS(OutboundProtocol.SHADOWSOCKS, "Shadowsocks", "SS", "proto_desc_ss", PickerGroup.XRAY),
     HYSTERIA2(OutboundProtocol.HYSTERIA2, "Hysteria2", "HY", "proto_desc_hy2", PickerGroup.QUIC),
     TUIC(OutboundProtocol.TUIC, "TUIC v5", "TU", "proto_desc_tuic", PickerGroup.QUIC),
-    WIREGUARD(OutboundProtocol.WIREGUARD, "WireGuard", "WG", "proto_desc_wg", PickerGroup.VPN, available = false),
-    AMNEZIAWG(OutboundProtocol.WIREGUARD, "AmneziaWG", "AW", "proto_desc_awg", PickerGroup.VPN, available = false),
+    WIREGUARD(OutboundProtocol.WIREGUARD, "WireGuard", "WG", "proto_desc_wg", PickerGroup.VPN),
+    AMNEZIAWG(OutboundProtocol.WIREGUARD, "AmneziaWG", "AW", "proto_desc_awg", PickerGroup.VPN),
     ANYTLS(OutboundProtocol.ANYTLS, "AnyTLS", "AT", "proto_desc_anytls", PickerGroup.TLS),
     NAIVE_H2(OutboundProtocol.NAIVE_HTTP2, "NaiveProxy", "NV", "proto_desc_naive_h2", PickerGroup.TLS),
     NAIVE_H11(OutboundProtocol.NAIVE_HTTP11, "HTTPS proxy", "H1", "proto_desc_naive_h11", PickerGroup.TLS),
@@ -77,22 +72,23 @@ private enum class PickerKind(
  */
 @Composable
 fun NewServerFlow(onSave: (ProxyConfiguration) -> Unit, onDismiss: () -> Unit) {
-    var picked by remember { mutableStateOf<OutboundProtocol?>(null) }
-    val protocol = picked
-    if (protocol == null) {
+    var picked by remember { mutableStateOf<PickerKind?>(null) }
+    val kind = picked
+    if (kind == null) {
         ProtocolPicker(onPick = { picked = it })
     } else {
         ServerEditor(
             configuration = null,
             onSave = onSave,
             onDismiss = { picked = null },
-            initialProtocol = protocol
+            initialProtocol = kind.protocol,
+            amnezia = kind == PickerKind.AMNEZIAWG
         )
     }
 }
 
 @Composable
-private fun ProtocolPicker(onPick: (OutboundProtocol) -> Unit) {
+private fun ProtocolPicker(onPick: (PickerKind) -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
@@ -112,7 +108,7 @@ private fun ProtocolPicker(onPick: (OutboundProtocol) -> Unit) {
                 WingSectionTitle(tr(group.titleKey))
                 WingPanel {
                     kinds.forEachIndexed { index, kind ->
-                        PickerRow(kind, onClick = { onPick(kind.protocol) })
+                        PickerRow(kind, onClick = { onPick(kind) })
                         if (index < kinds.lastIndex) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 66.dp),

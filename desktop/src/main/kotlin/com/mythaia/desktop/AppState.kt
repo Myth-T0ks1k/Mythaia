@@ -368,6 +368,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         val byId = _configurations.value.associateBy { it.id }
         val hops = chain.proxyIds.mapNotNull { byId[it] }
         if (hops.size != chain.proxyIds.size || hops.size < 2) return null
+        if (hops.any { it.outboundProtocol.isLayer3 }) return null
         if (!nativeAvailable && hops.any { it.outboundProtocol.needsNative() }) return null
         return hops.last().copy(name = chain.name, chain = hops.dropLast(1))
     }
@@ -377,7 +378,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         selectedChain()?.let { return it }
         pinned(groupId)?.let { return it }
         val configs = autoPool(groupId)
-        if (configs.isEmpty()) return null
+        if (configs.isEmpty()) return groupConfigs(groupId).firstOrNull { it.outboundProtocol.isLayer3 }
         autoChoice(groupId)?.takeIf { it in configs }?.let { return it }
         return bestKnown(configs) ?: configs.first()
     }
@@ -386,9 +387,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private fun autoPool(groupId: String): List<ProxyConfiguration> =
         com.mythaia.data.country.ServerCountry.keepTo(dialable(groupConfigs(groupId)), _settings.value.autoCountries[groupId])
 
-    /** Without the native library the QUIC protocols cannot be dialled at all. */
+    /**
+     * Servers Auto may pick: without the native library the QUIC protocols
+     * cannot be dialled, and layer-3 tunnels are interfaces rather than
+     * interchangeable proxy outbounds.
+     */
     private fun dialable(configs: List<ProxyConfiguration>): List<ProxyConfiguration> =
-        if (nativeAvailable) configs else configs.filterNot { it.outboundProtocol.needsNative() }
+        configs.filterNot { it.outboundProtocol.isLayer3 || (!nativeAvailable && it.outboundProtocol.needsNative()) }
 
     private fun bestKnown(configs: List<ProxyConfiguration>): ProxyConfiguration? {
         val known = httpLatencies.value
@@ -488,7 +493,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     fun importFromScreen() {
         scope.launch {
             val codes = runCatching { com.mythaia.desktop.util.Qr.scanScreens() }.getOrDefault(emptyList())
-            if (codes.isEmpty()) notify(tr("no_qr_found")) else addText(codes.joinToString("\n"))
+            if (codes.isEmpty()) notify(tr("no_qr_found")) else addTextsNow(codes, null, null, emptyList())
         }
     }
 
@@ -570,7 +575,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         else scope.launch { startConnection() }
     }
 
-    fun connect() = scope.launch { startConnection() }
+    fun connect() {
+        scope.launch { startConnection() }
+    }
 
     private suspend fun startConnection() = connectLock.withLock {
         val gid = activeGroupId
@@ -597,6 +604,21 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
         val settings = _settings.value
         val useTun = settings.tunnelMode == "tun"
+        if (!useTun && config.outboundProtocol.isLayer3) {
+            val reason = tr("wg_needs_tun")
+            if (isTunnelRunning && previous is ConnectionState.Connected) {
+                notify(reason, tr("mode_tun")) {
+                    updateSettings { it.copy(tunnelMode = "tun") }
+                }
+                return@withLock
+            }
+            _connection.value = ConnectionState.Failed(reason)
+            notify(reason, tr("mode_tun")) {
+                updateSettings { it.copy(tunnelMode = "tun") }
+                connect()
+            }
+            return@withLock
+        }
         // The service runs the TUN tunnel when it is there; otherwise this
         // process must be elevated to do it itself.
         val viaService = useTun && (serviceAvailable.value || com.mythaia.desktop.service.ServiceClient.isAvailable())
@@ -698,6 +720,14 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private fun restartBackgroundJobs(groupId: String) {
         autoJob?.cancel()
         probeJob?.cancel()
+        // A WireGuard peer keeps one session per client static key; probing
+        // opens a second UDP socket and initiates a fresh handshake with the
+        // same key, clobbering the live tunnel's session on the peer.
+        if (liveConfiguration?.outboundProtocol?.isLayer3 == true) {
+            autoJob = null
+            probeJob = null
+            return
+        }
         autoJob = if (isAuto(groupId) && _settings.value.selectedChainId == null) scope.launch { autoLoop(groupId) } else null
         probeJob = scope.launch { probeLoop() }
     }
@@ -911,71 +941,25 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     /** What [addText] would make of [text]: one line per server (name and host) or subscription (host). */
-    private fun describeImport(text: String): List<String> {
-        if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(text)) {
-            return runCatching { com.mythaia.data.network.XrayJsonImporter.parse(text) }.getOrDefault(emptyList())
-                .map { "${it.name} · ${it.serverAddress}" }
-        }
-        val out = ArrayList<String>()
-        for (line in text.lines().map { it.trim() }.filter { it.isNotEmpty() }) {
-            if (isSubscriptionUrl(line)) {
-                out += line.substringAfter("://").substringBefore('/')
-                continue
-            }
-            if (!ProxyConfiguration.canParseUrl(line)) continue
-            runCatching { ProxyConfiguration.fromUrl(line) }.onSuccess { out += "${it.name} · ${it.serverAddress}" }
-        }
-        return out
-    }
-
-    /** An http(s):// line without credentials in its authority is a subscription, not a proxy link. */
-    private fun isSubscriptionUrl(line: String): Boolean =
-        (line.startsWith("https://", ignoreCase = true) || line.startsWith("http://", ignoreCase = true)) &&
-            !line.substringAfter("://").substringBefore('/').contains('@')
+    private fun describeImport(text: String): List<String> = describeImportText(text)
 
     /**
      * Adds every link in [text]; an https:// line without credentials is a
-     * subscription; Xray JSON imports whole. Parsed off the caller's thread:
-     * a pasted list of 10,000 links froze the window.
+     * subscription; Xray JSON or a `wg-quick` INI imports whole. Parsed off
+     * the caller's thread: a pasted list of 10,000 links froze the window.
      */
     fun addText(text: String, subscriptionName: String? = null, frontSni: String? = null, frontTargets: List<String> = emptyList()) {
-        scope.launch { addTextNow(text, subscriptionName, frontSni, frontTargets) }
+        scope.launch { addTextsNow(listOf(text), subscriptionName, frontSni, frontTargets) }
     }
 
-    private fun addTextNow(text: String, subscriptionName: String?, frontSni: String?, frontTargets: List<String>) {
-        if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(text)) {
-            try {
-                val imported = com.mythaia.data.network.XrayJsonImporter.parse(text).map { it.copy(subscriptionId = null) }
-                mutateConfigurations { it + imported }
-                notify(tr("added_n", imported.size))
-            } catch (e: Exception) {
-                notify(e.message ?: tr("nothing_parsed"))
-            }
-            return
-        }
-        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        val added = mutableListOf<ProxyConfiguration>()
-        val subscriptionUrls = mutableListOf<com.mythaia.data.network.SubscriptionLink>()
-        for (line in lines) {
-            // A subscription, possibly with its fronting written in
-            // (`…#front=…&sni=…` or mythaia://import?url=…&front=…).
-            if (isSubscriptionUrl(line) || line.startsWith("mythaia://import?", ignoreCase = true)) {
-                com.mythaia.data.network.SubscriptionLink.parse(line)
-                    ?.takeIf { isSubscriptionUrl(it.url) }
-                    ?.let { subscriptionUrls += it }
-                continue
-            }
-            if (!ProxyConfiguration.canParseUrl(line)) continue
-            runCatching { ProxyConfiguration.fromUrl(line) }
-                .onSuccess { added += it.copy(subscriptionId = null) }
-                .onFailure { logger.warning("Link rejected: ${it.message}") }
-        }
-        if (added.isNotEmpty()) {
-            mutateConfigurations { it + added }
-            notify(tr("added_n", added.size))
+    private fun addTextsNow(chunks: List<String>, subscriptionName: String?, frontSni: String?, frontTargets: List<String>) {
+        val parsed = parseImportChunks(chunks, subscriptionName)
+        if (parsed.configurations.isNotEmpty()) {
+            mutateConfigurations { it + parsed.configurations }
+            notify(tr("added_n", parsed.configurations.size))
         }
         // What the dialog's fields say wins; the link fills what they leave empty.
-        subscriptionUrls.forEach { link ->
+        parsed.subscriptions.forEach { link ->
             addSubscription(
                 url = link.url,
                 name = subscriptionName?.takeIf { it.isNotBlank() } ?: link.name,
@@ -983,7 +967,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 frontTargets = frontTargets.ifEmpty { link.frontTargets }
             )
         }
-        if (added.isEmpty() && subscriptionUrls.isEmpty()) notify(tr("nothing_parsed"))
+        if (parsed.configurations.isEmpty() && parsed.subscriptions.isEmpty()) {
+            notify(parsed.error ?: tr("nothing_parsed"))
+        }
     }
 
     /** Saves an edited or new server; a new one goes to the manual group. */
@@ -1022,7 +1008,12 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 val seen = HashSet<String>()
                 val next = list.filter { c ->
                     if (groupIdOf(c) != groupId) true
-                    else seen.add(runCatching { c.toUrl().substringBefore('#') }.getOrDefault(c.id.toString()))
+                    else seen.add(
+                        runCatching {
+                            val u = c.toUrl()
+                            if (c.outboundProtocol.isLayer3) u.trim() else u.substringBefore('#')
+                        }.getOrDefault(c.id.toString())
+                    )
                 }
                 removed = list.size - next.size
                 next
@@ -1436,3 +1427,64 @@ internal fun OutboundProtocol.needsNative(): Boolean = when (this) {
     OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC, OutboundProtocol.NOWHERE -> true
     else -> false
 }
+
+internal data class ParsedImport(
+    val configurations: List<ProxyConfiguration>,
+    val subscriptions: List<com.mythaia.data.network.SubscriptionLink>,
+    val error: String? = null
+)
+
+/** What [parseImportChunks] would add from [text], as `name · host` or subscription host lines. */
+internal fun describeImportText(text: String): List<String> {
+    val parsed = parseImportChunks(listOf(text))
+    return parsed.configurations.map { "${it.name} · ${it.serverAddress}" } +
+        parsed.subscriptions.map { it.url.substringAfter("://").substringBefore('/') }
+}
+
+/** An http(s):// line without credentials in its authority is a subscription, not a proxy link. */
+internal fun isSubscriptionUrl(line: String): Boolean =
+    (line.startsWith("https://", ignoreCase = true) || line.startsWith("http://", ignoreCase = true)) &&
+        !line.substringAfter("://").substringBefore('/').contains('@')
+
+/**
+ * Parses one or more imported text chunks (clipboard text, dialog paste, or QR
+ * payloads): each chunk may be an Xray JSON document, a `wg-quick` INI, or
+ * newline-separated proxy/subscription links.
+ */
+internal fun parseImportChunks(chunks: List<String>, name: String? = null): ParsedImport {
+    val added = mutableListOf<ProxyConfiguration>()
+    val subscriptions = mutableListOf<com.mythaia.data.network.SubscriptionLink>()
+    var lastError: String? = null
+    val customName = name?.trim()?.takeIf { it.isNotEmpty() }
+    for (chunk in chunks) {
+        if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(chunk)) {
+            runCatching { com.mythaia.data.network.XrayJsonImporter.parse(chunk).map { it.copy(subscriptionId = null) } }
+                .onSuccess { added += it }
+                .onFailure { lastError = it.message }
+            continue
+        }
+        if (ProxyConfiguration.looksLikeWireGuardConfig(chunk)) {
+            runCatching { ProxyConfiguration.fromWireGuardConfig(chunk.trim(), customName).copy(subscriptionId = null) }
+                .onSuccess { added += it }
+                .onFailure { lastError = it.message }
+            continue
+        }
+        val lines = chunk.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        for (line in lines) {
+            // A subscription, possibly with its fronting written in
+            // (`…#front=…&sni=…` or mythaia://import?url=…&front=…).
+            if (isSubscriptionUrl(line) || line.startsWith("mythaia://import?", ignoreCase = true)) {
+                com.mythaia.data.network.SubscriptionLink.parse(line)
+                    ?.takeIf { isSubscriptionUrl(it.url) }
+                    ?.let { subscriptions += it }
+                continue
+            }
+            if (!ProxyConfiguration.canParseUrl(line)) continue
+            runCatching { ProxyConfiguration.fromUrl(line) }
+                .onSuccess { added += it.copy(subscriptionId = null) }
+                .onFailure { lastError = it.message }
+        }
+    }
+    return ParsedImport(added, subscriptions, lastError)
+}
+

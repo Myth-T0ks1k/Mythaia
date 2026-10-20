@@ -102,7 +102,7 @@ object ProxyGuard {
             return 0
         }
         logger.warning("The last run ended without restoring the system proxy; restoring it now")
-        SystemProxy.restore()
+        SystemProxy.restoreIfLeftOver { !instanceRunning() }
         return 0
     }
 

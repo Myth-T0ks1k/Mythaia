@@ -723,7 +723,7 @@ private fun ChainDialog(chain: ProxyChain, all: List<ProxyConfiguration>, onDism
                 Box {
                     TextButton(onClick = { pickerOpen = true }) { Text(tr("chain_add_hop")) }
                     DropdownMenu(expanded = pickerOpen, onDismissRequest = { pickerOpen = false }) {
-                        all.forEach { c ->
+                        all.filterNot { it.outboundProtocol.isLayer3 }.forEach { c ->
                             DropdownMenuItem(text = { Text("${c.name} · ${c.outboundProtocol.displayName}", maxLines = 1) }, onClick = { hops = hops + c.id; pickerOpen = false })
                         }
                     }
@@ -746,6 +746,7 @@ private fun AddDialog(onDismiss: () -> Unit, onAdd: (String, String?, String?, L
     var sni by remember { mutableStateOf("") }
     var targets by remember { mutableStateOf("") }
     var fronting by remember { mutableStateOf(false) }
+    val isWgConf = ProxyConfiguration.looksLikeWireGuardConfig(text)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("add_links")) },
@@ -759,8 +760,8 @@ private fun AddDialog(onDismiss: () -> Unit, onAdd: (String, String?, String?, L
                     }) { Text(tr("add_from_clipboard")) }
                     TextButton(onClick = { fronting = !fronting }) { Text(tr("front_sni")) }
                 }
-                if (text.lineSequence().any { it.trim().let { l -> l.startsWith("http", ignoreCase = true) || l.startsWith("mythaia://import", ignoreCase = true) } } || fronting) {
-                    WingField(name, { name = it }, tr("subscription_name"))
+                if (isWgConf || text.lineSequence().any { it.trim().let { l -> l.startsWith("http", ignoreCase = true) || l.startsWith("mythaia://import", ignoreCase = true) } } || fronting) {
+                    WingField(name, { name = it }, if (isWgConf) tr("name") else tr("subscription_name"))
                 }
                 if (fronting) {
                     WingField(sni, { sni = it }, tr("front_sni"))

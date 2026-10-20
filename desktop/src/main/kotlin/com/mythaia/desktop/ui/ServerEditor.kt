@@ -64,11 +64,18 @@ import com.mythaia.vpn.util.toBase64Url
 import com.mythaia.vpn.util.toHex
 import java.util.UUID
 import com.mythaia.desktop.tr
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.mythaia.data.model.WireGuardForm
+import com.mythaia.vpn.protocol.wireguard.WireGuardConfig
 
 // Wing form language: 18dp fields inside soft 24dp panels.
 private val EditorFieldShape = RoundedCornerShape(18.dp)
@@ -104,8 +111,16 @@ fun ServerEditor(
     onSave: (ProxyConfiguration) -> Unit,
     onDismiss: () -> Unit,
     /** For a new server: the protocol picked on the protocol picker. */
-    initialProtocol: OutboundProtocol? = null
-) = WithSafeClipboard { ServerEditorForm(configuration, onSave, onDismiss, initialProtocol) }
+    initialProtocol: OutboundProtocol? = null,
+    /** For a new WireGuard profile: open with AmneziaWG obfuscation enabled. */
+    amnezia: Boolean = false
+) = WithSafeClipboard {
+    if ((configuration?.outboundProtocol ?: initialProtocol) == OutboundProtocol.WIREGUARD) {
+        WireGuardEditorForm(configuration, onSave, onDismiss, amnezia)
+    } else {
+        ServerEditorForm(configuration, onSave, onDismiss, initialProtocol)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1251,3 +1266,209 @@ private fun rangeSteps(text: String): List<String>? {
 
 private fun rangeText(range: IntRange): String =
     if (range.first == range.last) range.first.toString() else "${range.first}-${range.last}"
+
+/**
+ * The editor for a WireGuard or AmneziaWG profile: a form with a field for
+ * every key people actually set, and the raw `wg-quick` text one click away.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WireGuardEditorForm(
+    configuration: ProxyConfiguration?,
+    onSave: (ProxyConfiguration) -> Unit,
+    onDismiss: () -> Unit,
+    amnezia: Boolean
+) {
+    var name by remember { mutableStateOf(configuration?.name.orEmpty()) }
+    var form by remember {
+        mutableStateOf(
+            configuration?.wireGuardConfig?.let(WireGuardForm::fromIni)
+                ?: WireGuardForm.blank().let {
+                    if (amnezia) it.copy(jc = "4", jmin = "40", jmax = "70", s1 = "0", s2 = "0", h1 = "1", h2 = "2", h3 = "3", h4 = "4")
+                    else it
+                }
+        )
+    }
+    var textMode by remember { mutableStateOf(false) }
+    var text by remember { mutableStateOf("") }
+    var showAmnezia by remember { mutableStateOf(amnezia || form.isAmnezia) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun currentIni(): String = if (textMode) text else form.toIni()
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    actionIconContentColor = MaterialTheme.colorScheme.primary
+                ),
+                title = {
+                    Text(if (showAmnezia) tr("amneziawg_configuration") else tr("wireguard_configuration"))
+                },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = tr("cancel"))
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        val ini = currentIni()
+                        val parsed = runCatching { WireGuardConfig.parse(ini) }
+                        val failure = parsed.exceptionOrNull()
+                        if (failure != null) {
+                            error = failure.message
+                            return@IconButton
+                        }
+                        val peer = parsed.getOrThrow().peer
+                        val base = configuration ?: ProxyConfiguration.fromWireGuardConfig(ini, name)
+                        onSave(
+                            base.copy(
+                                name = name.trim().ifBlank { base.name },
+                                serverAddress = peer.endpointHost,
+                                serverPort = peer.endpointPort.toUShort(),
+                                outboundProtocol = OutboundProtocol.WIREGUARD,
+                                wireGuardConfig = ini
+                            )
+                        )
+                    }) {
+                        Icon(Icons.Default.Check, contentDescription = tr("save"))
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            EditorSectionCard(title = tr("name")) {
+                EditorWingField(name, { name = it }, tr("name"))
+                TextButton(onClick = {
+                    if (textMode) {
+                        form = WireGuardForm.fromIni(text)
+                        showAmnezia = showAmnezia || form.isAmnezia
+                    } else {
+                        text = form.toIni()
+                    }
+                    textMode = !textMode
+                    error = null
+                }) {
+                    Text(tr(if (textMode) "wg_form_mode" else "wg_text_mode"))
+                }
+            }
+
+            if (textMode) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it; error = null },
+                    label = { Text(tr("wireguard_configuration")) },
+                    placeholder = { Text(tr("wireguard_configuration_hint")) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
+                    isError = error != null,
+                    supportingText = error?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                    shape = EditorFieldShape,
+                    colors = wingTextFieldColors()
+                )
+            } else {
+                WireGuardFormSections(
+                    form = form,
+                    onForm = { form = it; error = null },
+                    showAmnezia = showAmnezia,
+                    onShowAmnezia = { on ->
+                        showAmnezia = on
+                        if (!on) form = form.copy(jc = "", jmin = "", jmax = "", s1 = "", s2 = "", h1 = "", h2 = "", h3 = "", h4 = "")
+                    }
+                )
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun WireGuardFormSections(
+    form: WireGuardForm,
+    onForm: (WireGuardForm) -> Unit,
+    showAmnezia: Boolean,
+    onShowAmnezia: (Boolean) -> Unit
+) {
+    EditorSectionCard(title = tr("wg_interface")) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                EditorWingField(form.privateKey, { onForm(form.copy(privateKey = it)) }, tr("wg_private_key"), secret = true)
+            }
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(onClick = { onForm(form.copy(privateKey = WireGuardForm.generatePrivateKey())) }) {
+                Text(tr("wg_generate"))
+            }
+        }
+        WireGuardForm.publicKeyOf(form.privateKey)?.let { pub ->
+            Text(
+                text = tr("wg_public_key_is", pub),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        EditorWingField(form.addresses, { onForm(form.copy(addresses = it)) }, tr("wg_addresses"), placeholder = "10.0.0.2/32, fd00::2/128")
+        EditorWingField(form.dns, { onForm(form.copy(dns = it)) }, tr("wg_dns"), placeholder = "1.1.1.1")
+        EditorWingField(form.mtu, { onForm(form.copy(mtu = it)) }, tr("wg_mtu"), placeholder = "1280", keyboardType = KeyboardType.Number)
+    }
+
+    EditorSectionCard(title = tr("wg_peer")) {
+        EditorWingField(form.endpoint, { onForm(form.copy(endpoint = it)) }, tr("wg_endpoint"), placeholder = "vpn.example.com:51820", keyboardType = KeyboardType.Uri)
+        EditorWingField(form.publicKey, { onForm(form.copy(publicKey = it)) }, tr("wg_peer_public_key"))
+        EditorWingField(form.presharedKey, { onForm(form.copy(presharedKey = it)) }, tr("wg_preshared_key"), secret = true)
+        EditorWingField(form.allowedIps, { onForm(form.copy(allowedIps = it)) }, tr("wg_allowed_ips"), placeholder = "0.0.0.0/0, ::/0")
+        EditorWingField(form.keepalive, { onForm(form.copy(keepalive = it)) }, tr("wg_keepalive"), placeholder = "25", keyboardType = KeyboardType.Number)
+        EditorWingField(form.reserved, { onForm(form.copy(reserved = it)) }, tr("wg_reserved"), placeholder = "0,0,0")
+        Text(tr("wg_reserved_hint"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+
+    EditorSectionCard(title = tr("wg_amnezia")) {
+        EditorSwitchRow(tr("wg_amnezia"), showAmnezia, onShowAmnezia)
+        if (showAmnezia) {
+            WireGuardNumberPair("Jc", form.jc, { onForm(form.copy(jc = it)) }, "Jmin", form.jmin, { onForm(form.copy(jmin = it)) })
+            WireGuardNumberPair("Jmax", form.jmax, { onForm(form.copy(jmax = it)) }, "S1", form.s1, { onForm(form.copy(s1 = it)) })
+            WireGuardNumberPair("S2", form.s2, { onForm(form.copy(s2 = it)) }, "H1", form.h1, { onForm(form.copy(h1 = it)) })
+            WireGuardNumberPair("H2", form.h2, { onForm(form.copy(h2 = it)) }, "H3", form.h3, { onForm(form.copy(h3 = it)) })
+            WireGuardNumberPair("H4", form.h4, { onForm(form.copy(h4 = it)) }, null, "", {})
+        }
+    }
+}
+
+@Composable
+private fun WireGuardNumberPair(
+    firstLabel: String, first: String, onFirst: (String) -> Unit,
+    secondLabel: String?, second: String, onSecond: (String) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedTextField(
+            value = first, onValueChange = onFirst, label = { Text(firstLabel) },
+            modifier = Modifier.weight(1f), singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            shape = EditorFieldShape, colors = wingTextFieldColors()
+        )
+        if (secondLabel != null) {
+            OutlinedTextField(
+                value = second, onValueChange = onSecond, label = { Text(secondLabel) },
+                modifier = Modifier.weight(1f), singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                shape = EditorFieldShape, colors = wingTextFieldColors()
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+    }
+}

@@ -34,6 +34,7 @@ import com.mythaia.vpn.util.EncryptedDnsPolicy
 import com.mythaia.vpn.util.LogBuffer
 import kotlinx.serialization.json.Json
 import com.mythaia.vpn.protocol.tls.reload
+import com.mythaia.vpn.protocol.wireguard.start
 import com.mythaia.vpn.util.reload
 
 /**

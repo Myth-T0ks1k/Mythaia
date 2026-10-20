@@ -83,7 +83,7 @@ object ServiceClient {
 
     @Throws(IOException::class)
     fun switchTo(configuration: ProxyConfiguration): ServiceProtocol.Response =
-        require(send(ServiceProtocol.Request("switch", configuration = configuration), timeoutMs = 15_000))
+        require(send(ServiceProtocol.Request("switch", configuration = configuration), timeoutMs = START_TIMEOUT_MS))
 
     @Throws(IOException::class)
     fun updateRouting(settings: DesktopSettings, rules: List<RouteRule>): ServiceProtocol.Response =

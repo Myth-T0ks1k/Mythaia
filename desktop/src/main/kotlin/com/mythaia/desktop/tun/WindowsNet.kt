@@ -5,6 +5,7 @@ import com.mythaia.vpn.util.MythaiaLogger
 import com.sun.jna.Memory
 import com.sun.jna.platform.win32.Advapi32Util
 import com.sun.jna.platform.win32.WinReg
+import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.LongByReference
 import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
@@ -60,6 +61,51 @@ object WindowsNet {
      */
     fun physicalPath(probe: String = "8.8.8.8"): PhysicalPath? {
         val (ifIndex, nextHop) = bestRoute(probe) ?: return null
+        return pathVia(ifIndex, nextHop)
+    }
+
+    /**
+     * The physical path while a tunnel adapter ([excludeIfIndex]) is up and
+     * may hold the default: the best route if it is not the adapter's, else
+     * the lowest-metric default route on any other interface. For noticing
+     * that the network under a running tunnel changed.
+     */
+    fun physicalPathExcluding(excludeIfIndex: Int, probe: String = "8.8.8.8"): PhysicalPath? {
+        val best = bestRoute(probe)
+        if (best != null && best.first != excludeIfIndex) return pathVia(best.first, best.second)
+        val route = defaultRoutes().filter { it.interfaceIndex != excludeIfIndex }.minByOrNull { it.metric } ?: return null
+        return pathVia(route.interfaceIndex, route.nextHop)
+    }
+
+    /** One IPv4 default route from the routing table. */
+    data class DefaultRoute(val interfaceIndex: Int, val nextHop: String?, val metric: Int)
+
+    /** Every 0.0.0.0/0 route in the IPv4 table (GetIpForwardTable). */
+    fun defaultRoutes(): List<DefaultRoute> {
+        val lib = runCatching { IpHlpApiLib.INSTANCE }.getOrNull() ?: return emptyList()
+        val size = IntByReference(0)
+        lib.GetIpForwardTable(null, size, false)
+        if (size.value <= 0) return emptyList()
+        // The table can grow between the two calls; a little room spares a retry.
+        val table = Memory(size.value.toLong() + 56L * 8)
+        size.value = table.size().toInt()
+        if (lib.GetIpForwardTable(table, size, false) != 0) return emptyList()
+        val count = table.getInt(0)
+        val out = ArrayList<DefaultRoute>()
+        for (i in 0 until count) {
+            val row = 4L + i * 56L
+            if (row + 56 > table.size()) break
+            val dest = table.getInt(row)
+            val mask = table.getInt(row + 4)
+            val type = table.getInt(row + 20)          // 2 = invalid
+            if (dest != 0 || mask != 0 || type == 2) continue
+            val nextHop = unpackAddress(table.getInt(row + 12))
+            out += DefaultRoute(table.getInt(row + 16), nextHop.takeIf { type != 3 && it != "0.0.0.0" }, table.getInt(row + 36))
+        }
+        return out
+    }
+
+    private fun pathVia(ifIndex: Int, nextHop: String?): PhysicalPath? {
         val nic = runCatching { NetworkInterface.getByIndex(ifIndex) }.getOrNull() ?: return null
         val v4 = nic.interfaceAddresses.filter { it.address is Inet4Address }
         val address = v4.firstOrNull()?.address ?: return null

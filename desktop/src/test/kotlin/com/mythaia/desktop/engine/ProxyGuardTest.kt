@@ -121,12 +121,18 @@ class ProxyGuardTest {
             .start()
     }
 
-    /** Guard processes whose command line names [snapshot]: the waiting second copy. */
-    private fun guardsWatching(snapshot: File): Int =
-        ProcessHandle.allProcesses()
+    /**
+     * Detached guard processes watching [snapshot]: the waiting second copy
+     * after the first copy (whose parent is the app) has already exited.
+     */
+    private fun guardsWatching(snapshot: File): Int {
+        val guards = ProcessHandle.allProcesses()
             .filter { p -> p.info().command().orElse("").endsWith("mythaia-proxy-guard.exe") }
             .filter { p -> p.info().commandLine().orElse("").let { it.isEmpty() || it.contains(snapshot.name) } }
-            .count().toInt()
+            .toList()
+        if (guards.any { it.parent().isPresent }) return 0
+        return guards.size
+    }
 
     private fun killTree(pid: Long) {
         ProcessBuilder("taskkill.exe", "/T", "/F", "/PID", pid.toString())

@@ -52,6 +52,9 @@ internal interface IpHlpApiLib : Library {
     /** `GetBestRoute(DWORD dest, DWORD src, PMIB_IPFORWARDROW)`; the row is 14 DWORDs. */
     fun GetBestRoute(destAddress: Int, sourceAddress: Int, bestRoute: Pointer): Int
 
+    /** `GetIpForwardTable(PMIB_IPFORWARDTABLE, PULONG size, BOOL order)`: a DWORD count, then the rows. */
+    fun GetIpForwardTable(table: Pointer?, size: IntByReference, order: Boolean): Int
+
     companion object {
         val INSTANCE: IpHlpApiLib by lazy { Native.load("iphlpapi", IpHlpApiLib::class.java) }
     }
@@ -156,6 +159,43 @@ class WintunAdapter private constructor(
                 if (step != RING_EMPTY || !awaitPackets()) break
             }
             if (batch.isNotEmpty()) onBatch(ArrayList(batch))
+        }
+
+        /**
+         * One packet into [buffer], waiting for it while [keepRunning]: its
+         * length, 0 when [keepRunning] turned false first, or -1 once the
+         * session has ended. A packet longer than [buffer] is dropped, as an
+         * interface with that MTU would. For the WireGuard tunnel, which
+         * reads one packet at a time.
+         */
+        fun receive(buffer: ByteArray, keepRunning: () -> Boolean): Int {
+            val size = IntByReference()
+            while (keepRunning() && open.get()) {
+                val received = synchronized(receiveLock) {
+                    val s = session ?: return -1
+                    val packet = lib.WintunReceivePacket(s, size)
+                    if (packet != null) {
+                        val n = size.value
+                        val fits = n in 1..buffer.size
+                        if (fits) packet.read(0, buffer, 0, n)
+                        lib.WintunReleaseReceivePacket(s, packet)
+                        // Too long for the buffer: dropped, and on to the next one.
+                        if (fits) n else 0
+                    } else {
+                        when (val error = Native.getLastError()) {
+                            ERROR_NO_MORE_ITEMS -> -2
+                            ERROR_HANDLE_EOF -> return -1
+                            else -> {
+                                logger.warning("WintunReceivePacket failed: error $error")
+                                return -1
+                            }
+                        }
+                    }
+                }
+                if (received > 0) return received
+                if (received == -2 && !awaitPackets()) return -1
+            }
+            return if (open.get()) 0 else -1
         }
 
         /** Moves one packet from the ring into [batch]; [RECEIVED], [RING_EMPTY] or [ENDED]. */

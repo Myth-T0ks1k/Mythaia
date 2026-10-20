@@ -42,9 +42,12 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
         router = Router(rules, settings.isGlobal, if (settings.bypassTurkmenistan) listOf("TM") else emptyList())
     }
 
-    /** Starts the listeners for [configuration]; throws when a port is taken. */
+    /** Starts the listeners for [configuration]; throws when a port is taken or [configuration] is layer 3. */
     @Throws(IOException::class)
     fun start(settings: DesktopSettings, configuration: ProxyConfiguration) {
+        if (configuration.outboundProtocol.isLayer3) {
+            throw IOException("WireGuard and AmneziaWG need TUN mode")
+        }
         if (server.isRunning) {
             switchTo(configuration)
         } else {
@@ -68,6 +71,9 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
      * they are closed now rather than at [stop].
      */
     fun switchTo(configuration: ProxyConfiguration) {
+        if (configuration.outboundProtocol.isLayer3) {
+            throw IllegalArgumentException("WireGuard and AmneziaWG need TUN mode")
+        }
         val previous = this.configuration
         this.configuration = configuration
         DnsCache.setActiveProxyDomain(configuration.serverAddress)

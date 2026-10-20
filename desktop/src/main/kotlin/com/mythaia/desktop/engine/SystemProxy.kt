@@ -147,8 +147,11 @@ object SystemProxy {
     }
 
     /** On start: a snapshot left behind means the last run did not get to restore. */
-    fun restoreIfLeftOver() {
-        if (AppPaths.proxySnapshot.isFile) restore()
+    fun restoreIfLeftOver(onlyWhen: () -> Boolean = { true }) {
+        if (!isWindows || !AppPaths.proxySnapshot.isFile) return
+        acrossProcesses {
+            if (AppPaths.proxySnapshot.isFile && onlyWhen()) restoreLocked()
+        }
     }
 
     /**

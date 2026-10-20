@@ -1,11 +1,8 @@
 package com.mythaia.vpn.protocol.wireguard
 
-import android.os.ParcelFileDescriptor
 import com.mythaia.vpn.SocketProtector
 import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.MythaiaLogger
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -17,18 +14,48 @@ import java.util.concurrent.atomic.AtomicLong
 private val logger = MythaiaLogger("WireGuard")
 
 /**
+ * The TUN as the tunnel sees it: whole IP packets in and out. Android hands
+ * over its VPN file descriptor, Windows a Wintun session.
+ */
+interface PacketDevice {
+    /**
+     * Blocks for the next packet and copies it into [buffer]; returns its
+     * length, 0 when there was none this time (the caller asks again), or
+     * -1 once the device is closed.
+     */
+    fun read(buffer: ByteArray): Int
+
+    /** Hands one packet, the first [length] bytes of [packet], to the system. */
+    fun write(packet: ByteArray, length: Int)
+
+    /** Wakes a blocked [read] for good. */
+    fun close()
+}
+
+/**
  * A WireGuard interface: the TUN on one side, one peer over UDP on the other.
  *
  * Unlike every other outbound here, WireGuard is not a stream proxy — there is
  * no per-flow dial and nothing for lwIP to terminate. Whole IP packets go in
- * and come back out, so this runs *instead of* [com.mythaia.vpn.LwipStack]
- * rather than underneath it.
+ * and come back out, so this runs *instead of* the lwIP stack rather than
+ * underneath it, on Android and on Windows alike.
  *
  * Three threads: one pulling packets off the TUN, one reading the socket, and
  * a timer that handles rekeying and keepalives. The session they share is
  * swapped, never mutated, so a rekey cannot tear a packet in half.
+ *
+ * [openSocket] makes the socket to the peer, which must not go into the
+ * tunnel itself: by default an ephemeral socket handed to [SocketProtector]
+ * (Android's VpnService.protect); Windows binds it to the physical
+ * interface's address instead. It is called again after a network change.
+ * [resolve] turns the endpoint's name into an address; Windows asks for
+ * IPv4 only, the family its bound socket can reach.
  */
-class WireGuardTunnel(private val config: WireGuardConfig) {
+class WireGuardTunnel(
+    private val config: WireGuardConfig,
+    private val openSocket: () -> DatagramSocket = { protectedSocket() },
+    private val resolve: (String) -> String? = { DnsCache.resolveHost(it) }
+) {
 
     private val bytesInCounter = AtomicLong(0)
     private val bytesOutCounter = AtomicLong(0)
@@ -48,8 +75,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     @Volatile
     private var endpoint: InetSocketAddress? = null
 
-    private var tunInput: FileInputStream? = null
-    private var tunOutput: FileOutputStream? = null
+    @Volatile
+    private var device: PacketDevice? = null
 
     /**
      * The live session, and the one it replaced.
@@ -114,6 +141,9 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     @Volatile
     var onConnected: (() -> Unit)? = null
 
+    /** Whether a handshake has completed since [start]. */
+    val hasHandshake: Boolean get() = sessionStartedAt != 0L
+
     private val threads = mutableListOf<Thread>()
 
     /**
@@ -141,18 +171,18 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     // with it set, received types are matched on their low octet only.
     private val reserved = config.headerReserved
 
-    fun start(fd: ParcelFileDescriptor) {
+    fun start(packets: PacketDevice) {
         if (running) return
         running = true
 
-        tunInput = FileInputStream(fd.fileDescriptor)
-        tunOutput = FileOutputStream(fd.fileDescriptor)
+        device = packets
 
-        val bound = DatagramSocket()
-        if (!SocketProtector.protect(bound)) {
-            bound.close()
+        val bound = try {
+            openSocket()
+        } catch (e: Exception) {
             running = false
-            throw WireGuardError("could not protect the WireGuard socket from the tunnel")
+            device = null
+            throw e
         }
         bound.soTimeout = SOCKET_POLL_MS
         socket = bound
@@ -176,10 +206,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         socket?.close()
         socket = null
 
-        runCatching { tunInput?.close() }
-        runCatching { tunOutput?.close() }
-        tunInput = null
-        tunOutput = null
+        runCatching { device?.close() }
+        device = null
 
         threads.forEach { it.interrupt() }
         threads.clear()
@@ -218,7 +246,7 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         val address = if (DnsCache.isIpAddress(host)) {
             host
         } else {
-            DnsCache.resolveHost(host)
+            resolve(host)
         }
         if (address == null) {
             logger.warning("[WG] Could not resolve ${config.peer.endpointHost}")
@@ -259,15 +287,13 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         failureReported = false
 
         val replacement = try {
-            DatagramSocket().also {
-                if (!SocketProtector.protect(it)) {
-                    it.close()
-                    throw WireGuardError("could not protect the replacement socket")
-                }
-                it.soTimeout = SOCKET_POLL_MS
-            }
+            openSocket().also { it.soTimeout = SOCKET_POLL_MS }
         } catch (e: Exception) {
             logger.warning("[WG] Could not replace the socket: " + (e.message ?: e))
+            return
+        }
+        if (!running) {
+            runCatching { replacement.close() }
             return
         }
 
@@ -406,7 +432,7 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
 
     private fun runUplink() {
         val buffer = ByteArray(config.mtu + HEADROOM)
-        val input = tunInput ?: return
+        val input = device ?: return
 
         while (running) {
             val length = try {
@@ -415,7 +441,8 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
                 if (running) logger.warning("[WG] TUN read failed: ${e.message}")
                 break
             }
-            if (length <= 0) continue
+            if (length < 0) break
+            if (length == 0) continue
 
             val target = endpoint ?: continue
             val active = session
@@ -496,9 +523,9 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
         val length = ipPacketLength(packet) ?: return
         if (length > packet.size) return
 
-        val out = tunOutput ?: return
+        val out = device ?: return
         try {
-            out.write(packet, 0, length)
+            out.write(packet, length)
             bytesInCounter.addAndGet(length.toLong())
         } catch (e: Exception) {
             if (running) logger.warning("[WG] TUN write failed for index $index: ${e.message}")
@@ -629,6 +656,19 @@ class WireGuardTunnel(private val config: WireGuardConfig) {
     }
 
     companion object {
+        /**
+         * The default [openSocket]: an ephemeral socket the platform's
+         * [SocketProtector] keeps out of the tunnel.
+         */
+        fun protectedSocket(): DatagramSocket {
+            val bound = DatagramSocket()
+            if (!SocketProtector.protect(bound)) {
+                bound.close()
+                throw WireGuardError("could not protect the WireGuard socket from the tunnel")
+            }
+            return bound
+        }
+
         /** Room for the transport header and AEAD tag on top of the MTU. */
         private const val HEADROOM = 128
 

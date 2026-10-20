@@ -42,6 +42,12 @@ All notable changes to Mythaia are recorded here. The format follows
   groups and chains switch across the top, the server list and its country sections sit beside it
   in large cards with high-contrast focus borders, and Settings is reachable with the D-pad alone.
   Phone and tablet layouts are unchanged.
+- **Windows: WireGuard and AmneziaWG.** WireGuard and AmneziaWG (`Jc`, `Jmin`, `Jmax`, `S1`, `S2`,
+  `H1`–`H4`) profiles now connect on Windows in TUN mode, both elevated and through the background
+  service, with the interface addresses, MTU, DNS and `AllowedIPs` routes from the profile and a
+  host route for the peer on the physical gateway that follows network changes. Profiles can be
+  added by pasting a `wg-quick` `.conf`, a `wg://` / `wireguard://` link, scanning a QR code, or
+  filling in the form.
 
 ## [1.3.1] — 2026-10-18
 

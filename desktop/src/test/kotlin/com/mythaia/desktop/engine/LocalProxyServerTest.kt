@@ -207,6 +207,66 @@ class LocalProxyServerTest {
         }
     }
 
+    @Test
+    fun `proxy engine refuses layer-3 WireGuard profiles`() {
+        val wg = com.mythaia.data.model.ProxyConfiguration.fromWireGuardConfig(SAMPLE_WG_CONF, "Lab WG")
+        val proxyEngine = ProxyEngine(TrafficStats())
+        val settings = com.mythaia.desktop.model.DesktopSettings(
+            socksPort = freePort(),
+            httpPort = freePort(),
+            setSystemProxy = false
+        )
+        val thrown = runCatching { proxyEngine.start(settings, wg) }.exceptionOrNull()
+        assertTrue("Expected IOException for WireGuard in ProxyEngine, got $thrown", thrown is java.io.IOException)
+        assertFalse(proxyEngine.isRunning)
+    }
+
+    @Test
+    fun `import chunks and QR round-trip wg-quick configs and wg links`() {
+        val wgUrl = "wg://198.51.100.10:51820?pk=ADAS9brqmHVG11XeR2owXGOqZnYvZMvr4Zl2ZB24ImM%3D&local_address=10.77.0.2/32&peer_pk=8f8vrIkNUX7YeEmFFDOm40WjPrdFJx7FYrQxrH7kHUo%3D&mtu=1400#LabLink"
+        val parsed = com.mythaia.desktop.parseImportChunks(listOf(SAMPLE_WG_CONF, wgUrl), name = "FromConf")
+        assertEquals(2, parsed.configurations.size)
+        assertEquals("FromConf", parsed.configurations[0].name)
+        assertEquals(com.mythaia.data.model.OutboundProtocol.WIREGUARD, parsed.configurations[0].outboundProtocol)
+        assertEquals("LabLink", parsed.configurations[1].name)
+        assertEquals(com.mythaia.data.model.OutboundProtocol.WIREGUARD, parsed.configurations[1].outboundProtocol)
+        assertEquals(listOf("WireGuard · 198.51.100.10"), com.mythaia.desktop.describeImportText(SAMPLE_WG_CONF))
+    }
+
+    @Test
+    fun `WireGuard editor form round-trips AmneziaWG parameters`() {
+        val form = com.mythaia.data.model.WireGuardForm.blank().copy(
+            privateKey = "ADAS9brqmHVG11XeR2owXGOqZnYvZMvr4Zl2ZB24ImM=",
+            addresses = "10.77.0.2/32, fd00:77::2/128",
+            dns = "1.1.1.1, 1.0.0.1",
+            mtu = "1380",
+            publicKey = "8f8vrIkNUX7YeEmFFDOm40WjPrdFJx7FYrQxrH7kHUo=",
+            endpoint = "198.51.100.10:51820",
+            allowedIps = "0.0.0.0/0, ::/0",
+            keepalive = "25",
+            jc = "4",
+            jmin = "40",
+            jmax = "70",
+            s1 = "15",
+            s2 = "25",
+            h1 = "100001",
+            h2 = "100002",
+            h3 = "100003",
+            h4 = "100004"
+        )
+        val built = com.mythaia.data.model.ProxyConfiguration.fromWireGuardConfig(form.toIni(), "AWG Test")
+        assertEquals("AWG Test", built.name)
+        val reopened = com.mythaia.data.model.WireGuardForm.fromIni(built.wireGuardConfig.orEmpty())
+        assertTrue(reopened.isAmnezia)
+        assertEquals("4", reopened.jc)
+        assertEquals("40", reopened.jmin)
+        assertEquals("70", reopened.jmax)
+        assertEquals("15", reopened.s1)
+        assertEquals("25", reopened.s2)
+        assertEquals("100001", reopened.h1)
+        assertEquals("100004", reopened.h4)
+    }
+
     private fun readUntilBlankLine(input: java.io.InputStream): String {
         val out = ByteArrayOutputStream()
         while (true) {
@@ -220,4 +280,21 @@ class LocalProxyServerTest {
     }
 
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
+
+    companion object {
+        private val SAMPLE_WG_CONF = """
+            [Interface]
+            PrivateKey = ADAS9brqmHVG11XeR2owXGOqZnYvZMvr4Zl2ZB24ImM=
+            Address = 10.77.0.2/32
+            DNS = 1.1.1.1
+            MTU = 1400
+
+            [Peer]
+            PublicKey = 8f8vrIkNUX7YeEmFFDOm40WjPrdFJx7FYrQxrH7kHUo=
+            Endpoint = 198.51.100.10:51820
+            AllowedIPs = 0.0.0.0/0, ::/0
+            PersistentKeepalive = 25
+        """.trimIndent()
+    }
 }
+
