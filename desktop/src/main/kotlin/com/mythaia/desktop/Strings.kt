@@ -377,6 +377,21 @@ object S {
         "wg_text_mode" to "Редактировать как текст",
         "wg_form_mode" to "Редактировать формой",
         "proto_android_only" to "Пока только в приложении для Android",
+        "routing_profile" to "Профиль маршрутизации",
+        "routing_profile_active" to "Маршрутизация: %s",
+        "routing_profile_turn_off" to "Выключить",
+        "routing_profile_fetching_geo" to "Загрузка баз геоданных для «%s»…",
+        "routing_profile_added" to "Профиль маршрутизации добавлен: %s",
+        "routing_profile_enabled" to "Включён профиль маршрутизации: %s",
+        "routing_profile_off" to "Профиль маршрутизации выключен",
+        "let_subscriptions_change_settings" to "Разрешить подпискам менять настройки приложения",
+        "let_subscriptions_change_settings_desc" to "Применять фрагментацию, пинг, маршруты и автоподключение из подписок",
+        "settings_managed_by" to "Настройки заданы подпиской «%s»: %s",
+        "settings_managed_reset" to "Сбросить",
+        "excluded_routes" to "Исключённые маршруты: %s",
+        "pin_subscription" to "Закрепить подписку",
+        "unpin_subscription" to "Открепить подписку",
+        "subscription_links_hidden" to "Настройки серверов скрыты провайдером",
     )
 
     private val EN: Map<String, String> = mapOf(
@@ -722,6 +737,21 @@ object S {
         "wg_text_mode" to "Edit as text",
         "wg_form_mode" to "Edit as form",
         "proto_android_only" to "Android app only for now",
+        "routing_profile" to "Routing profile",
+        "routing_profile_active" to "Routing: %s",
+        "routing_profile_turn_off" to "Turn off",
+        "routing_profile_fetching_geo" to "Downloading geo files for “%s”…",
+        "routing_profile_added" to "Routing profile added: %s",
+        "routing_profile_enabled" to "Routing profile enabled: %s",
+        "routing_profile_off" to "Routing profile turned off",
+        "let_subscriptions_change_settings" to "Let subscriptions change app settings",
+        "let_subscriptions_change_settings_desc" to "Apply fragmentation, ping, routes, and auto-connect from subscriptions",
+        "settings_managed_by" to "Settings managed by “%s”: %s",
+        "settings_managed_reset" to "Reset",
+        "excluded_routes" to "Excluded routes: %s",
+        "pin_subscription" to "Pin subscription",
+        "unpin_subscription" to "Unpin subscription",
+        "subscription_links_hidden" to "Server settings are hidden by the provider",
     )
 }
 

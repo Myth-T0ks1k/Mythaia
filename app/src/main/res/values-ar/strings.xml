@@ -536,4 +536,26 @@
     <string name="country_expanded">موسّع</string>
     <string name="country_ping">اختبار السرعة: %1$s</string>
     <string name="auto_in_country">تلقائي · %1$s فقط</string>
+    <string name="allow_subscription_settings">السماح للاشتراكات بتغيير إعدادات التطبيق</string>
+    <string name="check_latency">فحص زمن الاستجابة</string>
+    <string name="excluded_routes">المسارات المستثناة</string>
+    <string name="managed_auto_connect">اتصال تلقائي</string>
+    <string name="managed_hide_settings">تفاصيل الخادم مخفية</string>
+    <string name="managed_no_collapse">موسّع دائماً</string>
+    <string name="managed_ping_on_open">فحص الاستجابة عند الفتح</string>
+    <string name="managed_sort">ترتيب الخوادم</string>
+    <string name="managed_user_agent">User-Agent: %1$s</string>
+    <string name="open_link">فتح</string>
+    <string name="provider_messages_channel">رسائل المزود</string>
+    <string name="provider_messages_channel_description">الإعلانات وتذكيرات انتهاء الصلاحية من اشتراكاتك</string>
+    <string name="routing_profile_added">تمت إضافة ملف التوجيه: %1$s</string>
+    <string name="routing_profile_fetching">جارٍ تنزيل ملفات القواعد…</string>
+    <string name="routing_profile_turn_off">إيقاف</string>
+    <string name="routing_profile_turned_on">ملف التوجيه مفعّل: %1$s</string>
+    <string name="routing_profile_unreadable">تعذّر قراءة ملف التوجيه</string>
+    <string name="routing_profiles">ملفات التوجيه</string>
+    <string name="routing_profiles_turned_off">تم إيقاف ملف التوجيه</string>
+    <string name="settings_managed_by">الإعدادات مُدارة بواسطة %1$s</string>
+    <string name="start_on_boot">الاتصال عند تشغيل الهاتف</string>
+    <string name="subscription_pin_top">تثبيت في الأعلى</string>
 </resources>

@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- "Connect when the phone starts", which a provider may also turn on (app-auto-start). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Per-app split tunnelling: the user picks which installed apps the VPN
          carries, so the picker has to be able to enumerate them. Package
@@ -75,7 +77,24 @@
                 <data android:scheme="wireguard" />
                 <data android:scheme="wg" />
             </intent-filter>
+            <!-- Happ routing profiles: happ://routing/add|onadd/{base64} and happ://routing/off.
+                 Only the routing host, so Happ keeps its own links. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="happ" android:host="routing" />
+            </intent-filter>
         </activity>
+
+        <!-- Starts the tunnel after a reboot when "Connect when the phone starts" is on. -->
+        <receiver
+            android:name=".vpn.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Exported server lists too long to share as text go out as a file. -->
         <provider

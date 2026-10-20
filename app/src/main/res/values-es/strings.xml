@@ -515,4 +515,26 @@
     <string name="country_expanded">Expandido</string>
     <string name="country_ping">Prueba de velocidad: %1$s</string>
     <string name="auto_in_country">Auto · solo %1$s</string>
+    <string name="allow_subscription_settings">Permitir que las suscripciones cambien ajustes</string>
+    <string name="check_latency">Comprobación de latencia</string>
+    <string name="excluded_routes">Rutas excluidas</string>
+    <string name="managed_auto_connect">Conexión automática</string>
+    <string name="managed_hide_settings">Detalles del servidor ocultos</string>
+    <string name="managed_no_collapse">Siempre desplegada</string>
+    <string name="managed_ping_on_open">Comprobar latencia al abrir</string>
+    <string name="managed_sort">Orden de servidores</string>
+    <string name="managed_user_agent">User-Agent: %1$s</string>
+    <string name="open_link">Abrir</string>
+    <string name="provider_messages_channel">Mensajes del proveedor</string>
+    <string name="provider_messages_channel_description">Avisos y recordatorios de vencimiento de tus suscripciones</string>
+    <string name="routing_profile_added">Perfil de enrutamiento añadido: %1$s</string>
+    <string name="routing_profile_fetching">Descargando archivos de reglas…</string>
+    <string name="routing_profile_turn_off">Desactivar</string>
+    <string name="routing_profile_turned_on">Perfil de enrutamiento activo: %1$s</string>
+    <string name="routing_profile_unreadable">No se pudo leer el perfil de enrutamiento</string>
+    <string name="routing_profiles">Perfiles de enrutamiento</string>
+    <string name="routing_profiles_turned_off">Perfil de enrutamiento desactivado</string>
+    <string name="settings_managed_by">Ajustes gestionados por %1$s</string>
+    <string name="start_on_boot">Conectar al encender el teléfono</string>
+    <string name="subscription_pin_top">Fijar arriba</string>
 </resources>

@@ -45,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -62,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mythaia.R
+import com.mythaia.data.network.ProviderKeys
 import com.mythaia.data.network.SubscriptionRefreshScheduler
 import com.mythaia.viewmodel.VpnViewModel
 
@@ -141,6 +143,11 @@ private fun AdvancedSettingsRoot(
     var experimentalEnabled by remember { mutableStateOf(viewModel.experimentalEnabled) }
     var remnawaveHWIDEnabled by remember { mutableStateOf(viewModel.remnawaveHWIDEnabled) }
     var blockQuicEnabled by remember { mutableStateOf(viewModel.blockQuicEnabled) }
+    var startOnBoot by remember { mutableStateOf(viewModel.startOnBoot) }
+    var subscriptionSettingsAllowed by remember { mutableStateOf(viewModel.subscriptionSettingsAllowed) }
+    var managed by remember { mutableStateOf(viewModel.managedSettings()) }
+    var excludedRoutes by remember { mutableStateOf(viewModel.excludedRoutes()) }
+    var latencySettings by remember { mutableStateOf(viewModel.latencySettings()) }
     var refreshHours by remember { mutableStateOf(viewModel.subscriptionRefreshHours) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -212,6 +219,68 @@ private fun AdvancedSettingsRoot(
                     label = stringResource(R.string.geoip_database),
                     onClick = onOpenGeoIp
                 )
+                if (excludedRoutes.isNotEmpty()) {
+                    WingRowDivider()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        WingIconTile(Icons.Filled.Language)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.excluded_routes),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = excludedRoutes.joinToString(", "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = {
+                            viewModel.clearExcludedRoutes()
+                            excludedRoutes = emptyList()
+                            managed = viewModel.managedSettings()
+                        }) {
+                            Text(stringResource(R.string.reset))
+                        }
+                    }
+                }
+                latencySettings?.let { (kind, url) ->
+                    WingRowDivider()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        WingIconTile(Icons.Filled.Language)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.check_latency),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = listOfNotNull(kind?.name?.lowercase(), url).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = {
+                            viewModel.resetLatencySettings()
+                            latencySettings = null
+                            managed = viewModel.managedSettings()
+                        }) {
+                            Text(stringResource(R.string.reset))
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -236,6 +305,16 @@ private fun AdvancedSettingsRoot(
                         viewModel.subscriptionRefreshHours = it
                     }
                 )
+                WingRowDivider()
+                WingSwitchRow(
+                    icon = Icons.Filled.Autorenew,
+                    label = stringResource(R.string.allow_subscription_settings),
+                    checked = subscriptionSettingsAllowed,
+                    onCheckedChange = {
+                        subscriptionSettingsAllowed = it
+                        viewModel.subscriptionSettingsAllowed = it
+                    }
+                )
             }
             Text(
                 text = stringResource(R.string.subscription_refresh_footer),
@@ -243,6 +322,14 @@ private fun AdvancedSettingsRoot(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)
             )
+            managed.values.distinct().forEach { providerName ->
+                Text(
+                    text = stringResource(R.string.settings_managed_by, providerName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -259,6 +346,17 @@ private fun AdvancedSettingsRoot(
 
             WingSectionLabel(stringResource(R.string.other))
             WingGroupCard {
+                WingSwitchRow(
+                    icon = Icons.Filled.Autorenew,
+                    label = stringResource(R.string.start_on_boot),
+                    checked = startOnBoot,
+                    onCheckedChange = {
+                        startOnBoot = it
+                        viewModel.startOnBoot = it
+                        managed = viewModel.managedSettings()
+                    }
+                )
+                WingRowDivider()
                 WingSwitchRow(
                     icon = Icons.Filled.Fingerprint,
                     label = stringResource(R.string.remnawave_hwid),

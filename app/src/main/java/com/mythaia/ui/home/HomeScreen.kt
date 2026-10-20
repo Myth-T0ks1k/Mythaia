@@ -785,7 +785,7 @@ private fun GroupPickerSheet(
                     val isPinned = groupIsActive && pinned == config.id
                     PickerRow(
                         title = config.name,
-                        subtitle = config.displayEndpoint,
+                        subtitle = config.description ?: config.displayEndpoint,
                         selected = isPinned,
                         leading = {
                             Icon(

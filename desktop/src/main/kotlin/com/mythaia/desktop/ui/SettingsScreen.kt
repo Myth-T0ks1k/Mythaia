@@ -138,6 +138,32 @@ fun SettingsScreen(state: AppState) {
                         hours.toIntOrNull()?.takeIf { it in 0..720 }?.let { h -> state.updateSettings { it.copy(subscriptionUpdateHours = h) } }
                     }) { Text(tr("save")) }
                 }
+                SwitchRow(tr("let_subscriptions_change_settings"), settings.subscriptionSettingsAllowed) { v ->
+                    state.setSubscriptionSettingsAllowed(v)
+                }
+                Text(
+                    tr("let_subscriptions_change_settings_desc"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
+                )
+                if (settings.managedSettings.isNotEmpty()) {
+                    val source = settings.managedSettings["source"] ?: ""
+                    val keys = settings.managedSettings.keys.filter { it != "source" }.joinToString(", ")
+                    if (keys.isNotEmpty()) {
+                        Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                tr("settings_managed_by", source, keys),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { state.resetManagedSettings() }) {
+                                Text(tr("settings_managed_reset"))
+                            }
+                        }
+                    }
+                }
             }
 
             Section(tr("settings_system")) {
@@ -153,12 +179,56 @@ fun SettingsScreen(state: AppState) {
             }
 
             Section(tr("settings_routing")) {
+                val routingProfiles by state.routingProfiles.collectAsState()
+                val routingFilesFetching by state.routingFilesFetching.collectAsState()
                 Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("route_mode"), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                     ModePill(settings.isGlobal) { g -> state.updateSettings { it.copy(routeMode = if (g) "global" else "rule") } }
                 }
                 if (!settings.isGlobal) {
                     SwitchRow(tr("bypass_tm"), settings.bypassTurkmenistan) { v -> state.updateSettings { it.copy(bypassTurkmenistan = v) } }
+                }
+                if (settings.excludedRoutes.isNotEmpty()) {
+                    Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            tr("excluded_routes", settings.excludedRoutes.joinToString(", ")),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { state.updateSettings { it.copy(excludedRoutes = emptyList()) } }) {
+                            Text(tr("settings_managed_reset"))
+                        }
+                    }
+                }
+                if (routingProfiles.entries.isNotEmpty()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(horizontal = 18.dp))
+                    val selectedProfile = routingProfiles.active ?: routingProfiles.pending ?: ""
+                    Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        DropdownField(
+                            tr("routing_profile"),
+                            selectedProfile,
+                            listOf("" to tr("none")) + routingProfiles.entries.map { it.name to it.name },
+                            modifier = Modifier.weight(1f)
+                        ) { v -> state.selectRoutingProfile(v.ifEmpty { null }) }
+                        selectedProfile.takeIf { it.isNotEmpty() }?.let { activeName ->
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = { state.selectRoutingProfile(null) }) {
+                                Text(tr("routing_profile_turn_off"))
+                            }
+                            IconButton(onClick = { state.removeRoutingProfile(activeName) }) {
+                                Icon(Icons.Default.Delete, tr("delete"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    routingFilesFetching?.let { fetching ->
+                        Text(
+                            tr("routing_profile_fetching_geo", fetching),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
+                        )
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(horizontal = 18.dp))
                 var geoLoaded by remember { mutableStateOf(GeoIpDatabase.isLoaded) }

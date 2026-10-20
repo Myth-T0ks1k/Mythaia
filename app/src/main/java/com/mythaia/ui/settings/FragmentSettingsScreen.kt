@@ -55,6 +55,9 @@ fun FragmentSettingsScreen(
     onBack: () -> Unit
 ) {
     val stored = remember { viewModel.fragmentSettings }
+    var managedBy by remember {
+        mutableStateOf(viewModel.managedSettings()[com.mythaia.data.network.ProviderKeys.AppSettings.GROUP_FRAGMENT])
+    }
 
     var enabled by remember { mutableStateOf(stored.isEnabled) }
     var minLength by remember { mutableStateOf(stored.minLength.toString()) }
@@ -73,6 +76,7 @@ fun FragmentSettingsScreen(
             minInterval = minInterval.toIntOrNull() ?: FragmentSettings.DEFAULT_MIN_INTERVAL,
             maxInterval = maxInterval.toIntOrNull() ?: FragmentSettings.DEFAULT_MAX_INTERVAL
         )
+        managedBy = null
     }
 
     Scaffold(
@@ -105,6 +109,14 @@ fun FragmentSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            managedBy?.let { providerName ->
+                Text(
+                    text = stringResource(R.string.settings_managed_by, providerName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
             GroupCard {
                 Row(
                     modifier = Modifier

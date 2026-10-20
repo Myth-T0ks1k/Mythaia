@@ -153,8 +153,19 @@ vless://…
 | `fronting-target` (or `resolve-address`) | Адреса, к которым подключаться вместо панели, через запятую; `off` выключает фронтинг |
 | `fronting-sni` | SNI, который отправлять |
 | `host` | Вместе с `resolve-address`: настоящий хост панели, как у Happ |
+| `routing` (`happ://routing/add/…`, `happ://routing/onadd/…`, `happ://routing/off`), `routing-enable` | Профиль маршрутизации (списки Напрямую, Прокси, Блокировать и файлы `geosite.dat` / `geoip.dat`); ссылки `happ://routing/…` также работают при открытии или вставке |
+| `subscription-autoconnect`, `subscription-autoconnect-type` (`lastused`, `lowestdelay`, `random`) | Автоподключение при запуске к выбранному серверу этой подписки |
+| `subscription-ping-onopen-enabled`, `ping-type` (`proxy`, `proxy-head`, `tcp`, `icmp`), `check-url-via-proxy` | Проверка задержки при открытии приложения; способ измерения и проверочный URL |
+| `change-user-agent` | Заголовок `User-Agent` для следующих обновлений этой подписки |
+| `fragmentation-enable`, `fragmentation-packets`, `fragmentation-length`, `fragmentation-interval`, `fragmentation-maxsplit` | Настройки фрагментации TLS-записей и TCP |
+| `exclude-routes`, `exclude-routes-set` | Дополнительные подсети CIDR в обход туннеля (`off` очищает список) |
+| `per-app-proxy-mode` (`off`, `bypass`, `only`), `per-app-proxy-list` | Раздельное туннелирование по пакетам приложений на Android |
+| `app-auto-start` | Запуск VPN при включении Android или автозапуск Mythaia при входе в Windows |
+| `subscriptions-sort-type` (`ping`, `alphabet`, `off`), `subscription-pin`, `subscriptions-collapse`, `subscriptions-expand-now` | Сортировка серверов, закрепление и сворачивание группы |
+| `hide-settings` | Скрыть редактор параметров сервера и сырые ссылки для серверов этой подписки |
+| `serverDescription` (или `description`) | Короткая подпись в параметрах ссылки или JSON-объекте сервера, показывается под именем сервера |
 
-`new-url`, `new-domain`, `fallback-url` и ключи фронтинга берутся только из ответа, пришедшего по проверенному HTTPS: у панели на простом HTTP подписку мог бы перенаправить любой на пути.
+`new-url`, `new-domain`, `fallback-url`, ключи фронтинга, профили маршрутизации и ключи, меняющие настройки приложения, берутся только из ответа, пришедшего по проверенному HTTPS: у панели на простом HTTP любой на пути мог бы перенаправить подписку или подменить настройки. Переключатель в настройках (**Разрешить подпискам менять настройки**) отключает удалённое изменение настроек, сохраняя списки серверов и уведомления. Когда обновление приносит новый `announce` или `sub-info-text`, либо до `sub-expire` остаётся меньше трёх дней, приложение один раз показывает системное уведомление.
 
 Если обновление не удалось, внизу появляется полоска с кнопкой **Через рабочий сервер**: подписка скачивается через подключённый сервер или самый быстрый из ответивших на короткую проверку — так она обновляется, даже когда панель заблокирована совсем. Полоска исчезает сама.
 

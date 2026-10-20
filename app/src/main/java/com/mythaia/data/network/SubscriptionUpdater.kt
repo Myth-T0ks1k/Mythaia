@@ -24,6 +24,8 @@ object SubscriptionUpdater {
      * @param remnawaveHWID the `x-hwid` header value, or null not to send one.
      * @param via a server to fetch through when the panel cannot be reached directly.
      * @param timeoutMs overrides how long the panel gets.
+     * @param context for what the provider says besides servers ([ProviderKeys]):
+     *   its app settings, routing profile and messages; null to skip them.
      * @return the subscription as it should now be stored.
      */
     suspend fun update(
@@ -32,7 +34,8 @@ object SubscriptionUpdater {
         configRepository: ConfigRepository,
         remnawaveHWID: String?,
         via: ProxyConfiguration? = null,
-        timeoutMs: Int? = null
+        timeoutMs: Int? = null,
+        context: android.content.Context? = null
     ): Subscription {
         val result = try {
             SubscriptionFetcher.fetch(subscription, remnawaveHWID = remnawaveHWID, via = via, timeoutMs = timeoutMs)
@@ -74,9 +77,12 @@ object SubscriptionUpdater {
 
         // What the panel said, folded in: a moved URL, fronting, messages.
         // A key it left out keeps its value; a customised name is kept.
-        val updated = SubscriptionMetadata.applyTo(current, result)
+        val allowed = context?.let { ProviderKeys.allowed(it) } ?: true
+        val folded = SubscriptionMetadata.applyTo(current, result, settingsAllowed = allowed)
+        val updated = context?.let { ProviderKeys.afterRefresh(it, current, folded, result.panel) } ?: folded
         subscriptionRepository.update(updated)
         return updated
+
     }
 
     /** What identifies a server across a refresh, independent of its name. */

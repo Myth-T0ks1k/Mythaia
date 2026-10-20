@@ -48,6 +48,28 @@ All notable changes to Mythaia are recorded here. The format follows
   host route for the peer on the physical gateway that follows network changes. Profiles can be
   added by pasting a `wg-quick` `.conf`, a `wg://` / `wireguard://` link, scanning a QR code, or
   filling in the form.
+- **Happ routing profiles.** Subscriptions can ship a routing profile in the `routing` header or
+  `#routing:` line (`happ://routing/add/{base64}`, `happ://routing/onadd/{base64}`,
+  `happ://routing/off`) and switch routing on or off with `routing-enable`; the same `happ://routing/…`
+  links work when opened as a deep link or pasted on Android and Windows. Direct, Proxy and Block
+  domain, CIDR and `geosite:` / `geoip:` rules run in the tunnel and local proxy alongside the
+  built-in rule sets, and custom `geosite.dat` / `geoip.dat` files named by the profile are
+  downloaded and refreshed on its schedule. The active profile is shown in Rule Sets / Settings
+  with a button to turn it off.
+- **Subscription-managed settings.** Over verified HTTPS, a subscription can set
+  `subscription-autoconnect` (`lastused`, `lowestdelay`, `random`),
+  `subscription-ping-onopen-enabled`, `ping-type` (`proxy`, `proxy-head`, `tcp`, `icmp`) and
+  `check-url-via-proxy`, `change-user-agent`, `fragmentation-*`, `exclude-routes` and
+  `exclude-routes-set`, `per-app-proxy-mode` and `per-app-proxy-list` (Android), `app-auto-start`
+  (Android boot or Windows sign-in), `subscriptions-sort-type`, `subscription-pin`,
+  `subscriptions-collapse` and `subscriptions-expand-now`, `hide-settings` (hides the raw config
+  editor and shareable links for that subscription's servers) and per-server `serverDescription`
+  (shown under the server name). Settings shows which subscription manages app settings and has a
+  **Let subscriptions change app settings** switch to turn remote changes off.
+- **Provider notifications.** When a refresh brings a new `announce` or `sub-info-text`, or when
+  `sub-expire` is within three days, the app raises a system notification once per message on
+  Android (`Provider messages` channel) and Windows (tray notification), without Firebase or Google
+  Play services.
 
 ## [1.3.1] — 2026-10-18
 

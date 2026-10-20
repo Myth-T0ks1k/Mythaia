@@ -2,11 +2,16 @@ package com.mythaia.desktop.engine
 
 import com.mythaia.data.model.DomainRule
 import com.mythaia.data.model.DomainRuleType
+import com.mythaia.data.routing.AddressCheck
+import com.mythaia.data.routing.RoutingMatcher
+import com.mythaia.data.routing.RoutingProfile
 import com.mythaia.data.rules.CountryBypassExtras
+import com.mythaia.desktop.model.DesktopSettings
 import com.mythaia.desktop.model.RouteRule
 import com.mythaia.desktop.model.RouteTarget
 import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.GeoIpDatabase
+import java.io.File
 import java.net.InetAddress
 
 /**
@@ -19,7 +24,9 @@ import java.net.InetAddress
 class Router(
     private val rules: List<RouteRule>,
     private val global: Boolean,
-    bypassCountries: List<String>
+    bypassCountries: List<String>,
+    private val profileMatcher: RoutingMatcher? = null,
+    private val addressCheck: AddressCheck? = profileMatcher?.let { AddressCheck(it).takeIf { c -> c.enabled } }
 ) {
     /** The country bypass applies in rule mode only, as on Android. */
     private val bypassExtras: List<DomainRule> =
@@ -58,6 +65,13 @@ class Router(
             for ((keyword, action) in keywordRules) {
                 if (keyword.isNotEmpty() && domain.contains(keyword)) return action
             }
+            profileMatcher?.let { matcher ->
+                matcher.matchDomain(domain)?.toRouteTarget()?.let { return it }
+                if (addressCheck != null) {
+                    (addressCheck.check(domain) as? AddressCheck.Verdict.Matched)?.let { return it.action.toRouteTarget() }
+                }
+                return matcher.defaultAction.toRouteTarget()
+            }
         }
         return RouteTarget.PROXY
     }
@@ -82,11 +96,58 @@ class Router(
                 val code = GeoIpDatabase.countryCode(ip)?.uppercase()
                 if (code != null) geoRules.firstOrNull { it.first == code }?.let { return it.second }
             }
+            profileMatcher?.let { matcher ->
+                matcher.matchAddress(ip)?.toRouteTarget()?.let { return it }
+                return matcher.defaultAction.toRouteTarget()
+            }
         }
         return RouteTarget.PROXY
     }
 
     companion object {
+        private data class MatcherCacheKey(
+            val profile: RoutingProfile,
+            val geositePath: String?,
+            val geositeMtime: Long,
+            val geoipPath: String?,
+            val geoipMtime: Long
+        )
+
+        @Volatile
+        private var cachedMatcher: Pair<MatcherCacheKey, RoutingMatcher>? = null
+
+        fun from(rules: List<RouteRule>, settings: DesktopSettings): Router {
+            val profile = settings.activeRoutingProfile
+            val matcher = if (profile == null || settings.isGlobal) null else {
+                val siteFile = settings.activeGeositePath?.let { File(it) }?.takeIf { it.isFile }
+                val ipFile = settings.activeGeoipPath?.let { File(it) }?.takeIf { it.isFile }
+                val key = MatcherCacheKey(
+                    profile = profile,
+                    geositePath = siteFile?.absolutePath,
+                    geositeMtime = siteFile?.lastModified() ?: 0L,
+                    geoipPath = ipFile?.absolutePath,
+                    geoipMtime = ipFile?.lastModified() ?: 0L
+                )
+                val cached = cachedMatcher
+                if (cached != null && cached.first == key) cached.second
+                else RoutingMatcher.compile(profile, siteFile, ipFile) { address ->
+                    runCatching { InetAddress.getByAddress(address).hostAddress }.getOrNull()?.let { GeoIpDatabase.countryCode(it) }
+                }.also { cachedMatcher = key to it }
+            }
+            return Router(
+                rules = rules,
+                global = settings.isGlobal,
+                bypassCountries = if (settings.bypassTurkmenistan) listOf("TM") else emptyList(),
+                profileMatcher = matcher
+            )
+        }
+
+        private fun RoutingMatcher.Action.toRouteTarget(): RouteTarget = when (this) {
+            RoutingMatcher.Action.PROXY -> RouteTarget.PROXY
+            RoutingMatcher.Action.DIRECT -> RouteTarget.DIRECT
+            RoutingMatcher.Action.BLOCK -> RouteTarget.BLOCK
+        }
+
         /**
          * Whether [host], taken literally, is this machine: loopback,
          * link-local or the unspecified address, or `localhost` and the

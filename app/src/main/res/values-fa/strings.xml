@@ -508,4 +508,26 @@
     <string name="country_expanded">باز</string>
     <string name="country_ping">تست سرعت: %1$s</string>
     <string name="auto_in_country">خودکار · فقط %1$s</string>
+    <string name="allow_subscription_settings">اجازه تغییر تنظیمات برنامه به اشتراک‌ها</string>
+    <string name="check_latency">بررسی تأخیر</string>
+    <string name="excluded_routes">مسیرهای مستثنی‌شده</string>
+    <string name="managed_auto_connect">اتصال خودکار</string>
+    <string name="managed_hide_settings">جزئیات سرور پنهان است</string>
+    <string name="managed_no_collapse">همیشه باز</string>
+    <string name="managed_ping_on_open">بررسی تأخیر هنگام باز شدن</string>
+    <string name="managed_sort">ترتیب سرورها</string>
+    <string name="managed_user_agent">User-Agent: %1$s</string>
+    <string name="open_link">باز کردن</string>
+    <string name="provider_messages_channel">پیام‌های ارائه‌دهنده</string>
+    <string name="provider_messages_channel_description">اطلاعیه‌ها و یادآوری انقضای اشتراک‌های شما</string>
+    <string name="routing_profile_added">نمایه مسیریابی اضافه شد: %1$s</string>
+    <string name="routing_profile_fetching">در حال دریافت فایل‌های قواعد…</string>
+    <string name="routing_profile_turn_off">خاموش کردن</string>
+    <string name="routing_profile_turned_on">نمایه مسیریابی فعال شد: %1$s</string>
+    <string name="routing_profile_unreadable">نمایه مسیریابی خوانده نشد</string>
+    <string name="routing_profiles">نمایه‌های مسیریابی</string>
+    <string name="routing_profiles_turned_off">نمایه مسیریابی خاموش شد</string>
+    <string name="settings_managed_by">تنظیمات تحت مدیریت %1$s</string>
+    <string name="start_on_boot">اتصال هنگام روشن شدن گوشی</string>
+    <string name="subscription_pin_top">سنجاق در بالا</string>
 </resources>

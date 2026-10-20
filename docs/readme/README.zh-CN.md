@@ -144,8 +144,19 @@ vless://…
 | `fronting-target` (or `resolve-address`) | 代替面板去连接的地址，逗号分隔；`off` 关闭域前置 |
 | `fronting-sni` | 要发送的 SNI |
 | `host` | 与 `resolve-address` 一起使用：面板的真实主机，与 Happ 写法相同 |
+| `routing` (`happ://routing/add/…`, `happ://routing/onadd/…`, `happ://routing/off`), `routing-enable` | 路由配置（直连、代理、拦截列表及 `geosite.dat` / `geoip.dat` 文件）；直接打开或粘贴 `happ://routing/…` 链接同样生效 |
+| `subscription-autoconnect`, `subscription-autoconnect-type` (`lastused`, `lowestdelay`, `random`) | 启动时自动连接此订阅中的指定服务器 |
+| `subscription-ping-onopen-enabled`, `ping-type` (`proxy`, `proxy-head`, `tcp`, `icmp`), `check-url-via-proxy` | 打开应用时测速；延迟测量方式与检测 URL |
+| `change-user-agent` | 后续更新此订阅时发送的 `User-Agent` |
+| `fragmentation-enable`, `fragmentation-packets`, `fragmentation-length`, `fragmentation-interval`, `fragmentation-maxsplit` | TLS 记录 / TCP 分片设置 |
+| `exclude-routes`, `exclude-routes-set` | 排除在隧道外的额外 CIDR 网段（`off` 清空） |
+| `per-app-proxy-mode` (`off`, `bypass`, `only`), `per-app-proxy-list` | Android 上按应用包名分应用代理 |
+| `app-auto-start` | Android 开机启动 VPN 或 Windows 登录时启动 Mythaia |
+| `subscriptions-sort-type` (`ping`, `alphabet`, `off`), `subscription-pin`, `subscriptions-collapse`, `subscriptions-expand-now` | 服务器排序方式、分组置顶与折叠状态 |
+| `hide-settings` | 隐藏此订阅下服务器的配置编辑器和原始分享链接 |
+| `serverDescription`（或 `description`） | 服务器链接参数或 JSON 对象中的简短说明，显示在服务器名称下方 |
 
-`new-url`、`new-domain`、`fallback-url` 和域前置相关的键只在响应经由已验证的 HTTPS 到达时才生效：对于明文 HTTP 面板，路径上的任何人都可能把订阅重定向到别处。
+`new-url`、`new-domain`、`fallback-url`、域前置相关键、路由配置以及修改应用设置的键，只在响应经由已验证的 HTTPS 到达时才生效：对于明文 HTTP 面板，路径上的任何人都可能重定向订阅或篡改设置。设置中的开关（**允许订阅更改应用设置**）可关闭远程设置修改，同时保留服务器列表和通知。当更新带来新的 `announce` 或 `sub-info-text`，或 `sub-expire` 进入三天提醒期时，应用还会为每条新消息发送一次系统通知。
 
 更新失败时，底部会出现提示条，并提供 **通过可用服务器重试**：通过已连接的服务器或快速检测中响应最快的服务器下载订阅，即使面板被完全封锁也能更新。提示条会自动消失。
 

@@ -55,6 +55,9 @@ object DnsCache {
         underlyingNetwork = network
     }
 
+    /** The physical network lookups go out on, when the tunnel set one. */
+    val network: UnderlyingNetwork? get() = underlyingNetwork
+
     fun resolveAll(host: String): List<String> {
         val bare = stripBrackets(host)
         if (isIpAddress(bare)) return listOf(bare)

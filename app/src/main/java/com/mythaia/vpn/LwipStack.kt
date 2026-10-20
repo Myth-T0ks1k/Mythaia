@@ -96,6 +96,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
      */
     var splitTunnel: SplitTunnelSettings = SplitTunnelSettings()
         private set
+
+    /** The provider's excluded routes as stored, to tell when the TUN must be rebuilt. */
+    private var excludedRoutes: String = ""
+
     @Volatile
     private var running = false
     @Volatile
@@ -231,6 +235,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             "blockQuicEnabled",
             "splitTunnelMode",
             "splitTunnelPackages",
+            "excludedRoutes",
             "proxyMode" -> settingsThrottler.submit(::handleSettingsChanged)
             // `routingChanged` restarts the lwIP stack so all in-flight connections re-evaluate
             // against the new rules (matching iOS LWIPStack+Lifecycle.swift:325-331).
@@ -256,8 +261,17 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             null -> null
             RouteAction.Direct -> LwipDomainRoute.Direct
             RouteAction.Reject -> LwipDomainRoute.Reject
+            RouteAction.DefaultProxy -> LwipDomainRoute.Proxy(configuration)
             is RouteAction.Proxy -> LwipDomainRoute.Proxy(domainRouter.resolveConfiguration(action))
         }
+
+    /**
+     * The routing profile's default for a destination no rule names, except
+     * the tunnel's own DNS address, whose queries are answered here whatever
+     * the profile says.
+     */
+    private fun defaultRouteFor(ip: String): RouteAction? =
+        if (ip == TunnelConstants.dnsSentinelV4 || ip == TunnelConstants.dnsSentinelV6) null else domainRouter.defaultAction
 
     override fun removeUdpFlow(flowKey: String) {
         udpFlows.remove(flowKey)
@@ -396,6 +410,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
     private fun loadSplitTunnelSetting() {
         splitTunnel = SplitTunnelSettings.read(prefs)
+        excludedRoutes = prefs.getString("excludedRoutes", "") ?: ""
     }
 
     private fun loadRoutingConfigurationForMode() {
@@ -935,6 +950,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             val newBlockQuicEnabled = prefs.getBoolean("blockQuicEnabled", true)
             val newProxyMode = prefs.getString("proxyMode", "rule") ?: "rule"
             val newSplitTunnel = SplitTunnelSettings.read(prefs)
+            val newExcludedRoutes = prefs.getString("excludedRoutes", "") ?: ""
 
             val ipv6DnsChanged = newIpv6Dns != ipv6DNSEnabled
             val bypassChanged = newBypassCode != bypassCountryCode
@@ -944,6 +960,7 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             val blockQuicChanged = newBlockQuicEnabled != blockQuicEnabled
             val proxyModeChanged = newProxyMode != proxyMode
             val splitTunnelChanged = newSplitTunnel != splitTunnel
+            val excludedRoutesChanged = newExcludedRoutes != excludedRoutes
 
             if (!ipv6DnsChanged &&
                 !bypassChanged &&
@@ -952,7 +969,8 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 !encryptedDnsServerChanged &&
                 !blockQuicChanged &&
                 !proxyModeChanged &&
-                !splitTunnelChanged
+                !splitTunnelChanged &&
+                !excludedRoutesChanged
             ) return@execute
 
             // Re-apply the tunnel network settings whenever IPv6 changes
@@ -964,9 +982,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 encryptedDnsEnabledChanged ||
                 encryptedDnsProtocolChanged ||
                 encryptedDnsServerChanged ||
-                splitTunnelChanged
+                splitTunnelChanged ||
+                excludedRoutesChanged
             ) {
                 splitTunnel = newSplitTunnel
+                excludedRoutes = newExcludedRoutes
                 onTunnelSettingsNeedReapply?.invoke()
             }
 
@@ -1125,18 +1145,20 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 // Global mode skips IP routing rules and the country bypass:
                 // all traffic goes through the proxy.
                 if (proxyMode != "global") {
-                    if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
+                    val ipAction = domainRouter.matchIP(dstIpString)
+                    if (isBypassAddress(dstIpString) && ipAction == null) {
                         // A bypass name answered with its real address: no rule names
                         // this IP, but the name it came from goes direct.
                         forceBypass = true
                     } else {
-                        domainRouter.matchIP(dstIpString)?.let { action ->
+                        (ipAction ?: defaultRouteFor(dstIpString))?.let { action ->
                             when (action) {
                                 RouteAction.Direct -> forceBypass = true
                                 RouteAction.Reject -> {
                                     logger.debug("[TCP] IP rejected by routing rule: $dstIpString:$dstPort")
                                     return 0L
                                 }
+                                RouteAction.DefaultProxy -> Unit
                                 is RouteAction.Proxy -> {
                                     val resolved = domainRouter.resolveConfiguration(action)
                                     if (resolved != null) {
@@ -1258,18 +1280,20 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
                 // Global mode skips IP routing rules and the country bypass:
                 // all traffic goes through the proxy.
                 if (proxyMode != "global") {
-                    if (isBypassAddress(dstIpString) && domainRouter.matchIP(dstIpString) == null) {
+                    val ipAction = domainRouter.matchIP(dstIpString)
+                    if (isBypassAddress(dstIpString) && ipAction == null) {
                         // A bypass name answered with its real address: no rule names
                         // this IP, but the name it came from goes direct.
                         forceBypass = true
                     } else {
-                        domainRouter.matchIP(dstIpString)?.let { action ->
+                        (ipAction ?: defaultRouteFor(dstIpString))?.let { action ->
                             when (action) {
                                 RouteAction.Direct -> forceBypass = true
                                 RouteAction.Reject -> {
                                     sendIcmpPortUnreachable(srcIp, srcPort, dstIp, dstPort, isIpv6, data.size)
                                     return
                                 }
+                                RouteAction.DefaultProxy -> Unit
                                 is RouteAction.Proxy -> {
                                     val resolved = domainRouter.resolveConfiguration(action)
                                     if (resolved != null) {
@@ -1333,8 +1357,14 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             return FakeIpResolution.Resolved(entry.domain, null, false)
         }
 
-        return when (val action = domainRouter.matchDomain(entry.domain)) {
+        // A name no rule speaks of: what its address said when the profile
+        // asked (IPIfNonMatch), else the profile's default.
+        val action = domainRouter.matchDomain(entry.domain)
+            ?: domainRouter.addressVerdict(entry.domain)
+            ?: domainRouter.defaultAction
+        return when (action) {
             RouteAction.Direct -> FakeIpResolution.Resolved(entry.domain, null, true)
+            RouteAction.DefaultProxy -> FakeIpResolution.Resolved(entry.domain, null, false)
             RouteAction.Reject -> {
                 logger.debug("[FakeIP] $proto to ${entry.domain}:$dstPort — REJECT")
                 FakeIpResolution.Drop
@@ -1384,6 +1414,26 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
             return true
         }
 
+        // The routing profile wants this name's address checked against its
+        // address rules first; the answer waits for the check, so the
+        // connection that follows finds the verdict.
+        if (parsed != null && (parsed.qtype == 1 || parsed.qtype == 28) && proxyMode != "global" &&
+            domainRouter.wantsAddressCheck(parsed.domain.lowercase())
+        ) {
+            checkAddressThenAnswer(payload, parsed.domain.lowercase(), srcIp, srcPort, dstIp, dstPort, isIpv6)
+            return true
+        }
+
+        return answerWithFakeIp(payload, srcIp, srcPort, dstIp, dstPort, isIpv6)
+    }
+
+    /** The usual answer: a fake address from the pool, or a refusal [FakeIpDns] decides on. */
+    private fun answerWithFakeIp(
+        payload: ByteArray,
+        srcIp: ByteArray, srcPort: Int,
+        dstIp: ByteArray, dstPort: Int,
+        isIpv6: Boolean
+    ): Boolean {
         val answer = FakeIpDns.answer(payload, fakeIpPool, ipv6DNSEnabled, encryptedDnsEnabled)
         val reply = answer as? FakeIpDns.Answer.Reply ?: return false
 
@@ -1397,6 +1447,28 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         reply.reason?.let { logger.debug("[FakeIP] Blocked $it query") }
         return true
     }
+
+    /**
+     * Resolves [domain] off the lwIP thread for the routing profile's address
+     * rules, then answers as usual. A saturated resolver answers at once
+     * without the check: the name then takes the profile's default.
+     */
+    private fun checkAddressThenAnswer(
+        payload: ByteArray, domain: String,
+        srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int, isIpv6: Boolean
+    ) {
+        val submitted = runCatching {
+            dnsResolver.execute {
+                runCatching { domainRouter.checkAddress(domain) }
+                lwipExecutor.execute {
+                    if (!running) return@execute
+                    if (answerWithFakeIp(payload, srcIp, srcPort, dstIp, dstPort, isIpv6)) flushOutputInline()
+                }
+            }
+        }.isSuccess
+        if (!submitted) answerWithFakeIp(payload, srcIp, srcPort, dstIp, dstPort, isIpv6)
+    }
+
 
     /** Names that must resolve to their real address, never a fake IP. [domain] is lower-case. */
     private fun isRealAnswerDomain(domain: String): Boolean {

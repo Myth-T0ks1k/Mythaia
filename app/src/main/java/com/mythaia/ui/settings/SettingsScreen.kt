@@ -111,6 +111,7 @@ fun SettingsScreen(viewModel: VpnViewModel, onClose: (() -> Unit)? = null) {
     var bypassCountryCode by remember { mutableStateOf(viewModel.bypassCountryCode) }
     var allowInsecure by remember { mutableStateOf(viewModel.allowInsecure) }
     val themeMode by viewModel.themeMode.collectAsState()
+    val routingProfiles by viewModel.routingProfiles.collectAsState()
 
     // Derived from the live rule-set list rather than read once: the Routing
     // Rules sub-screen can reassign ADBlock, and the switch here has to follow.
@@ -176,6 +177,8 @@ fun SettingsScreen(viewModel: VpnViewModel, onClose: (() -> Unit)? = null) {
                         viewModel.syncRoutingConfigurationToNE()
                     }
                 },
+                activeRoutingProfile = routingProfiles.active ?: routingProfiles.pending,
+                onTurnOffRoutingProfile = { viewModel.routingProfilesOff() },
                 allowInsecure = allowInsecure,
                 onAllowInsecureChange = { newValue ->
                     if (newValue) {
@@ -244,6 +247,8 @@ private fun SettingsRoot(
     adBlockVisible: Boolean,
     adBlockEnabled: Boolean,
     onAdBlockChange: (Boolean) -> Unit,
+    activeRoutingProfile: String?,
+    onTurnOffRoutingProfile: () -> Unit,
     allowInsecure: Boolean,
     onAllowInsecureChange: (Boolean) -> Unit,
     themeMode: ThemeMode,
@@ -327,6 +332,37 @@ private fun SettingsRoot(
                         label = stringResource(R.string.routing_rules),
                         onClick = onOpenRoutingRules
                     )
+                    if (activeRoutingProfile != null) {
+                        SettingsRowDivider()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            SettingsIcon(
+                                icon = Icons.AutoMirrored.Filled.AltRoute,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = activeRoutingProfile,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = stringResource(R.string.routing_profiles),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = onTurnOffRoutingProfile) {
+                                Text(stringResource(R.string.routing_profile_turn_off))
+                            }
+                        }
+                    }
                 }
             }
 

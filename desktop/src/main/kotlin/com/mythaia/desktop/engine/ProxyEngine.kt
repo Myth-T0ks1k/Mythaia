@@ -39,7 +39,7 @@ class ProxyEngine(val stats: TrafficStats) : Dialer {
     val isRunning: Boolean get() = server.isRunning
 
     fun updateRouting(rules: List<RouteRule>, settings: DesktopSettings) {
-        router = Router(rules, settings.isGlobal, if (settings.bypassTurkmenistan) listOf("TM") else emptyList())
+        router = Router.from(rules, settings)
     }
 
     /** Starts the listeners for [configuration]; throws when a port is taken or [configuration] is layer 3. */

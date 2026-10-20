@@ -65,6 +65,48 @@ object LatencyTester {
     private const val LATENCY_HOST = "captive.apple.com"
     private const val LATENCY_PORT = 80
 
+    /** Where the HTTP check goes: host, port, and the path asked for. */
+    private class CheckTarget(val host: String, val port: Int, val path: String) {
+        /** The Host header: the port only when it is not the default. */
+        val hostHeader: String get() = if (port == 80) host else "$host:$port"
+    }
+
+    @Volatile
+    private var target = CheckTarget(LATENCY_HOST, LATENCY_PORT, "/")
+
+    /**
+     * The page the check fetches through a server — a provider's
+     * `check-url-via-proxy` — or null for the default. The request is plain
+     * HTTP whatever the scheme: an `https://` URL is asked of the same host
+     * on port 80, since the check times the round trip through the server and
+     * a TLS handshake with the destination would only add noise to it.
+     */
+    var checkUrl: String? = null
+        set(value) {
+            field = value
+            target = value?.let { parseTarget(it) } ?: CheckTarget(LATENCY_HOST, LATENCY_PORT, "/")
+        }
+
+    private fun parseTarget(url: String): CheckTarget? {
+        val uri = runCatching { java.net.URI(url.trim()) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        val host = uri.host?.takeIf { it.isNotEmpty() && it.all { c -> c.isLetterOrDigit() || c == '.' || c == '-' || c == ':' || c == '[' || c == ']' } } ?: return null
+        val port = when {
+            scheme == "http" && uri.port > 0 -> uri.port
+            scheme == "http" || scheme == "https" -> 80
+            else -> return null
+        }
+        val path = (uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/") + (uri.rawQuery?.let { "?$it" } ?: "")
+        if (path.any { it <= ' ' || it.code > 0x7E }) return null
+        return CheckTarget(host.removePrefix("[").removeSuffix("]"), port, path)
+    }
+
+    /** Whether an HTTP status line is an answer: 2xx, or a redirect, which a captive check may give. */
+    private fun answered(statusLine: String?): Boolean {
+        val code = statusLine?.split(' ')?.getOrNull(1)?.toIntOrNull() ?: return false
+        return code in 200..399
+    }
+
     /** Maximum number of latency tests running at the same time. */
     private const val MAX_CONCURRENT_TESTS = 6
 
@@ -263,8 +305,9 @@ object LatencyTester {
                     connections.add(tunnelConnection)
                 }
             }
+            val check = target
             val proxyConnection = ProxyClientFactory.connect(
-                config, LATENCY_HOST, LATENCY_PORT, tunnel = tunnelConnection
+                config, check.host, check.port, tunnel = tunnelConnection
             )
             connections.add(proxyConnection)
             val elapsed = ((System.nanoTime() - started) / 1_000_000L).toInt()
@@ -337,25 +380,26 @@ object LatencyTester {
                 }
             }
 
+            val check = target
             val proxyConnection = ProxyClientFactory.connect(
-                config, LATENCY_HOST, LATENCY_PORT, tunnel = tunnelConnection
+                config, check.host, check.port, tunnel = tunnelConnection
             )
             connections.add(proxyConnection)
 
             // Phase 2 (untimed warmup): Drain proxy-side buffers.
-            val warmupRequest = "HEAD / HTTP/1.1\r\nHost: $LATENCY_HOST\r\n\r\n"
+            val warmupRequest = "HEAD ${check.path} HTTP/1.1\r\nHost: ${check.hostHeader}\r\n\r\n"
                 .toByteArray(Charsets.US_ASCII)
             proxyConnection.send(warmupRequest)
             val warmupData = proxyConnection.receive()
 
             val warmupStatus = warmupData?.let { String(it, Charsets.US_ASCII) }
                 ?.split("\r\n", limit = 2)?.firstOrNull()
-            if (warmupStatus == null || !warmupStatus.contains("200")) {
+            if (!answered(warmupStatus)) {
                 throw LatencyTestError("Unexpected warmup status: ${warmupStatus ?: "no response"}")
             }
 
             // Phase 3 (untimed): Send the timed HTTP request.
-            val httpRequest = "HEAD / HTTP/1.1\r\nHost: $LATENCY_HOST\r\nConnection: close\r\n\r\n"
+            val httpRequest = "HEAD ${check.path} HTTP/1.1\r\nHost: ${check.hostHeader}\r\nConnection: close\r\n\r\n"
                 .toByteArray(Charsets.US_ASCII)
             proxyConnection.send(httpRequest)
 
@@ -366,7 +410,8 @@ object LatencyTester {
 
             val statusLine = responseData?.let { String(it, Charsets.US_ASCII) }
                 ?.split("\r\n", limit = 2)?.firstOrNull()
-            if (statusLine == null || !statusLine.contains("200")) {
+            if (!answered(statusLine)) {
+
                 throw LatencyTestError("Unexpected status: ${statusLine ?: "no response"}")
             }
 

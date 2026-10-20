@@ -46,10 +46,24 @@ fun SubscriptionNoticeBar(viewModel: VpnViewModel) {
                 message = resources.getString(R.string.subscription_updated_through, shown.name, shown.server),
                 duration = SnackbarDuration.Short
             )
+            is SubscriptionNotice.Routing -> hostState.showSnackbar(
+                message = when {
+                    shown.profile == null -> resources.getString(R.string.routing_profiles_turned_off)
+                    shown.active -> resources.getString(R.string.routing_profile_turned_on, shown.profile)
+                    else -> resources.getString(R.string.routing_profile_added, shown.profile)
+                },
+                actionLabel = if (shown.profile != null && shown.active) resources.getString(R.string.routing_profile_turn_off) else null,
+                withDismissAction = true,
+                duration = SnackbarDuration.Long
+            )
         }
         when {
             result == SnackbarResult.ActionPerformed && shown is SubscriptionNotice.Failed ->
                 viewModel.refreshSubscriptionThroughServer(shown.subscriptionId)
+            result == SnackbarResult.ActionPerformed && shown is SubscriptionNotice.Routing -> {
+                viewModel.routingProfilesOff()
+                viewModel.dismissSubscriptionNotice()
+            }
             // Timed out or closed: gone for good, unless something newer took its place.
             viewModel.subscriptionNotice.value == shown -> viewModel.dismissSubscriptionNotice()
         }

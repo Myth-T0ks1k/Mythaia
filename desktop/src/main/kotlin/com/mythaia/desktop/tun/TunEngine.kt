@@ -101,7 +101,7 @@ class TunEngine(val stats: TrafficStats) {
     /** Same contract as `ProxyEngine.updateRouting`: new flows use the new rules, open ones finish as they were. */
     fun updateRouting(rules: List<RouteRule>, settings: DesktopSettings) {
         this.settings = settings
-        router = Router(rules, settings.isGlobal, if (settings.bypassTurkmenistan) listOf("TM") else emptyList())
+        router = Router.from(rules, settings)
         stack?.updateSettings(tunSettings(settings, configuration))
     }
 
@@ -240,6 +240,12 @@ class TunEngine(val stats: TrafficStats) {
         excluded += path.dnsServers
         excluded += FALLBACK_DNS
         EncryptedDnsPolicy.upstream.bootstrapHost?.let { excluded += WindowsNet.resolveV4(it) }
+        val extraNetworks = ArrayList<String>()
+        for (cidr in settings.excludedRoutes) {
+            RoutePlan.splitCidr(cidr)?.let { (net, prefix) ->
+                if (prefix == 32) excluded += net else extraNetworks += "$net/$prefix"
+            }
+        }
         excluded.removeAll { ip -> runCatching { path.isOnLink(java.net.InetAddress.getByName(ip)) }.getOrDefault(false) }
 
         val created = WintunAdapter.create(dll, ADAPTER_NAME, TUNNEL_TYPE, ADAPTER_GUID)
@@ -250,13 +256,14 @@ class TunEngine(val stats: TrafficStats) {
 
         val networks = ArrayList(TunNetConfig.PRIVATE_NETWORKS)
         if (settings.bypassTurkmenistan) networks += turkmenNetworks()
+        networks += extraNetworks
         routes.apply(
             TunNetConfig(
                 interfaceIndex = ifIndex,
                 physicalInterfaceIndex = path.interfaceIndex,
                 physicalGateway = path.gateway,
                 excludedHosts = excluded.toList(),
-                excludedNetworks = networks
+                excludedNetworks = networks.distinct()
             )
         )
 

@@ -508,4 +508,26 @@
     <string name="country_expanded">Açylan</string>
     <string name="country_ping">Tizlik synagy: %1$s</string>
     <string name="auto_in_country">Awto · diňe %1$s</string>
+    <string name="allow_subscription_settings">Abunalyklara programma sazlamalaryny üýtgetmäge rugsat ber</string>
+    <string name="check_latency">Gijikmäni barlamak</string>
+    <string name="excluded_routes">Çykarylan ugurlar</string>
+    <string name="managed_auto_connect">Awto-birikme</string>
+    <string name="managed_hide_settings">Serwer maglumatlary gizlin</string>
+    <string name="managed_no_collapse">Hemişe açyk</string>
+    <string name="managed_ping_on_open">Açylanda gijikmäni barla</string>
+    <string name="managed_sort">Serwer tertibi</string>
+    <string name="managed_user_agent">User-Agent: %1$s</string>
+    <string name="open_link">Aç</string>
+    <string name="provider_messages_channel">Üpjünçiniň habarlary</string>
+    <string name="provider_messages_channel_description">Abunalyklaryňyzdan bildirişler we möhlet ýatlatmalary</string>
+    <string name="routing_profile_added">Ugur profili goşuldy: %1$s</string>
+    <string name="routing_profile_fetching">Düzgün faýllary ýüklenýär…</string>
+    <string name="routing_profile_turn_off">Öçür</string>
+    <string name="routing_profile_turned_on">Ugur profili işjeň: %1$s</string>
+    <string name="routing_profile_unreadable">Ugur profilini okap bolmady</string>
+    <string name="routing_profiles">Ugur profilleri</string>
+    <string name="routing_profiles_turned_off">Ugur profili öçürildi</string>
+    <string name="settings_managed_by">Sazlamalar %1$s tarapyndan dolandyrylýar</string>
+    <string name="start_on_boot">Telefon açylanda birik</string>
+    <string name="subscription_pin_top">Ýokarda berkit</string>
 </resources>

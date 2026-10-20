@@ -137,7 +137,19 @@ fun main(args: Array<String>) {
             }
         }
 
+        val trayState = androidx.compose.ui.window.rememberTrayState()
+        val trayNotice by state.trayNotice.collectAsState()
+        androidx.compose.runtime.LaunchedEffect(trayNotice) {
+            trayNotice?.let { notice ->
+                runCatching {
+                    trayState.sendNotification(androidx.compose.ui.window.Notification(notice.title, notice.body))
+                }
+                state.consumeTrayNotice()
+            }
+        }
+
         Tray(
+            state = trayState,
             icon = trayIcon,
             tooltip = tr("app_name"),
             onAction = { state.windowVisible.value = true },
@@ -184,7 +196,7 @@ fun main(args: Array<String>) {
                         if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@Window false
                         when {
                             event.isCtrlPressed && event.key == androidx.compose.ui.input.key.Key.V && !com.mythaia.desktop.ui.UiFocus.textField.value -> { state.importFromClipboard(); true }
-                            event.key == androidx.compose.ui.input.key.Key.F5 -> { state.pingGroup(state.activeGroupId, com.mythaia.data.network.LatencyKind.HTTP); true }
+                            event.key == androidx.compose.ui.input.key.Key.F5 -> { state.pingGroup(state.activeGroupId); true }
                             else -> false
                         }
                     }
@@ -371,7 +383,7 @@ private fun watchShowRequests(state: AppState) {
  * import request file.
  */
 private object DeepLinks {
-    private val schemes = listOf("mythaia", "vless", "vmess", "trojan", "ss", "socks5", "hysteria2", "hy2", "anytls", "tuic")
+    private val schemes = listOf("mythaia", "happ", "vless", "vmess", "trojan", "ss", "socks5", "hysteria2", "hy2", "anytls", "tuic")
 
     fun isLink(arg: String): Boolean = schemes.any { arg.startsWith("$it://", ignoreCase = true) }
 
@@ -387,15 +399,17 @@ private object DeepLinks {
     fun register() {
         if (!com.mythaia.desktop.engine.SystemProxy.isWindows) return
         val exe = AppPaths.launcherExe() ?: return
-        runCatching {
-            val key = "Software\\Classes\\mythaia"
-            com.sun.jna.platform.win32.Advapi32Util.registryCreateKey(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key)
-            com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key, "", "URL:Mythaia")
-            com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key, "URL Protocol", "")
-            com.sun.jna.platform.win32.Advapi32Util.registryCreateKey(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, "$key\\shell\\open\\command")
-            com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(
-                com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, "$key\\shell\\open\\command", "", "\"${exe.absolutePath}\" \"%1\""
-            )
+        for ((scheme, label) in listOf("mythaia" to "URL:Mythaia", "happ" to "URL:Happ")) {
+            runCatching {
+                val key = "Software\\Classes\\$scheme"
+                com.sun.jna.platform.win32.Advapi32Util.registryCreateKey(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key)
+                com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key, "", label)
+                com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, key, "URL Protocol", "")
+                com.sun.jna.platform.win32.Advapi32Util.registryCreateKey(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, "$key\\shell\\open\\command")
+                com.sun.jna.platform.win32.Advapi32Util.registrySetStringValue(
+                    com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, "$key\\shell\\open\\command", "", "\"${exe.absolutePath}\" \"%1\""
+                )
+            }
         }
     }
 }

@@ -501,4 +501,26 @@
     <string name="country_expanded">ဖြန့်ထားသည်</string>
     <string name="country_ping">အမြန်နှုန်းစစ်ရန်: %1$s</string>
     <string name="auto_in_country">အလိုအလျောက် · %1$s သာ</string>
+    <string name="allow_subscription_settings">စာရင်းသွင်းမှုများကို အက်ပ်ဆက်တင်ပြောင်းခွင့်ပြုရန်</string>
+    <string name="check_latency">Latency စစ်ဆေးခြင်း</string>
+    <string name="excluded_routes">ချန်လှပ်ထားသော လမ်းကြောင်းများ</string>
+    <string name="managed_auto_connect">အလိုအလျောက်ချိတ်ဆက်မှု</string>
+    <string name="managed_hide_settings">ဆာဗာအသေးစိတ် ဖျောက်ထားသည်</string>
+    <string name="managed_no_collapse">အမြဲဖြန့်ထားမည်</string>
+    <string name="managed_ping_on_open">ဖွင့်ချိန်တွင် Latency စစ်ဆေးရန်</string>
+    <string name="managed_sort">ဆာဗာအစီအစဉ်</string>
+    <string name="managed_user_agent">User-Agent: %1$s</string>
+    <string name="open_link">ဖွင့်ရန်</string>
+    <string name="provider_messages_channel">ဝန်ဆောင်မှုပေးသူ မက်ဆေ့ချ်များ</string>
+    <string name="provider_messages_channel_description">သင့်စာရင်းသွင်းမှုများမှ ကြေညာချက်များနှင့် သက်တမ်းကုန်သတိပေးချက်များ</string>
+    <string name="routing_profile_added">လမ်းကြောင်းပရိုဖိုင် ထည့်ပြီးပါပြီ: %1$s</string>
+    <string name="routing_profile_fetching">စည်းမျဉ်းဖိုင်များ ဒေါင်းလုဒ်ဆွဲနေသည်…</string>
+    <string name="routing_profile_turn_off">ပိတ်ရန်</string>
+    <string name="routing_profile_turned_on">လမ်းကြောင်းပရိုဖိုင် ဖွင့်ထားသည်: %1$s</string>
+    <string name="routing_profile_unreadable">လမ်းကြောင်းပရိုဖိုင်ကို ဖတ်၍မရပါ</string>
+    <string name="routing_profiles">လမ်းကြောင်းပရိုဖိုင်များ</string>
+    <string name="routing_profiles_turned_off">လမ်းကြောင်းပရိုဖိုင် ပိတ်ထားသည်</string>
+    <string name="settings_managed_by">ဆက်တင်များကို %1$s က စီမံထားသည်</string>
+    <string name="start_on_boot">ဖုန်းစတင်ဖွင့်ချိန်တွင် ချိတ်ဆက်ရန်</string>
+    <string name="subscription_pin_top">ထိပ်ဆုံးတွင် ပင်ထိုးရန်</string>
 </resources>

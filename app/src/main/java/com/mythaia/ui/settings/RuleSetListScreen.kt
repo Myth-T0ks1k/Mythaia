@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -111,6 +112,8 @@ private fun RuleSetListRoot(
     val customRuleSets by viewModel.ruleSetRepository.customRuleSets.collectAsState()
     val configurations by viewModel.configRepository.configurations.collectAsState()
     val subscriptions by viewModel.subscriptionRepository.subscriptions.collectAsState()
+    val routingProfiles by viewModel.routingProfiles.collectAsState()
+    val fetchingProfile by viewModel.routingFilesFetching.collectAsState()
 
     val builtInServiceRuleSets = remember(ruleSets) {
         ruleSets.filter { !it.isCustom && it.name != "ADBlock" && it.id != "Direct" }
@@ -181,6 +184,92 @@ private fun RuleSetListRoot(
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(top = 8.dp)
         ) {
+            if (routingProfiles.entries.isNotEmpty()) {
+                item(key = "profiles-header") {
+                    Text(
+                        text = stringResource(R.string.routing_profiles),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 8.dp)
+                    )
+                }
+                item(key = "profiles-card") {
+                    PaperCard {
+                        routingProfiles.entries.forEachIndexed { index, entry ->
+                            key(entry.name) {
+                                val active = routingProfiles.active.equals(entry.name, ignoreCase = true)
+                                val pending = routingProfiles.pending.equals(entry.name, ignoreCase = true)
+                                val fetching = fetchingProfile.equals(entry.name, ignoreCase = true)
+                                val subtitle = when {
+                                    entry.filesError != null -> entry.filesError
+                                    fetching || pending -> stringResource(R.string.routing_profile_fetching)
+                                    !entry.subscriptionName.isNullOrBlank() -> entry.subscriptionName
+                                    else -> null
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RuleSetIconTile(Icons.AutoMirrored.Filled.Rule)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = entry.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (subtitle != null) {
+                                            Text(
+                                                text = subtitle,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (entry.filesError != null) MaterialTheme.colorScheme.error
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    if (entry.filesError != null) {
+                                        IconButton(onClick = { viewModel.retryRoutingFiles(entry.name) }) {
+                                            Icon(
+                                                Icons.Filled.Refresh,
+                                                contentDescription = stringResource(R.string.reset),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = active || pending,
+                                        onCheckedChange = { on ->
+                                            if (on) viewModel.activateRoutingProfile(entry.name)
+                                            else viewModel.routingProfilesOff()
+                                        }
+                                    )
+                                    IconButton(onClick = { viewModel.removeRoutingProfile(entry.name) }) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = stringResource(R.string.delete),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                            if (index < routingProfiles.entries.lastIndex) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+
             item(key = "built-in-card") {
                 PaperCard {
                     builtInServiceRuleSets.forEachIndexed { index, ruleSet ->

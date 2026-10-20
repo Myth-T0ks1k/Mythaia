@@ -73,7 +73,8 @@ class SubscriptionRefreshWorker(
                     configRepository = configRepository,
                     remnawaveHWID = if (SubscriptionDomainHelper
                             .shouldRequireRemnawaveHWID(subscription.url)
-                    ) hwid else null
+                    ) hwid else null,
+                    context = context
                 )
             } catch (e: Exception) {
                 // One dead panel must not stop the others, and it must not
@@ -84,6 +85,10 @@ class SubscriptionRefreshWorker(
         }
 
         logger.info("[Sub] Background refresh: ${subscriptions.size - failed}/${subscriptions.size} updated")
+
+        // Routing profile files go stale weekly, or when a profile says it changed.
+        runCatching { com.mythaia.data.repository.RoutingProfileRepository.get(context).refreshDue() }
+            .onFailure { logger.warning("[Sub] Routing files refresh failed: ${it.message ?: it}") }
 
         // routing.json embeds the full server records, so a panel that moved a
         // server to a new address has to reach the running tunnel too.

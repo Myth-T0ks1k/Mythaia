@@ -27,4 +27,13 @@ sealed class SubscriptionNotice {
         override val name: String,
         val server: String
     ) : SubscriptionNotice()
+
+    /**
+     * A Happ routing link was opened or pasted: profile [profile] added (and
+     * turned on with [active]), or routing profiles turned off when it is null.
+     */
+    data class Routing(val profile: String?, val active: Boolean) : SubscriptionNotice() {
+        override val subscriptionId: UUID get() = UUID(0, 0)
+        override val name: String get() = profile ?: ""
+    }
 }

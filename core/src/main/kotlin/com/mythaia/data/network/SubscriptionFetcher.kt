@@ -46,7 +46,13 @@ object SubscriptionFetcher {
         val frontHost: String? = null,
         val subInfo: Subscription.SubInfo? = null,
         val expireNotice: Boolean? = null,
-        val expireButtonLink: String? = null
+        val expireButtonLink: String? = null,
+        /** [RemoteSettings]: the provider's app settings; empty unless the response was verified TLS. */
+        val settings: Map<String, String> = emptyMap(),
+        /** The `routing` value: a Happ routing link; null unless the response was verified TLS. */
+        val routing: String? = null,
+        /** `routing-enable`: false turns routing profiles off. */
+        val routingEnable: Boolean? = null
     )
 
     data class Result(
@@ -84,6 +90,7 @@ object SubscriptionFetcher {
         via: ProxyConfiguration? = null,
         timeoutMs: Int? = null
     ): Result {
+        val userAgent = subscription.userAgent ?: DEFAULT_USER_AGENT
         val fallback = subscription.fallbackUrl?.takeIf { it != subscription.url }?.let { SubscriptionLink.parse(it) }
         val mainTimeoutMs = timeoutMs
             ?: subscription.requestTimeoutSeconds?.let { it * 1000 }
@@ -95,7 +102,8 @@ object SubscriptionFetcher {
                 frontSni = subscription.frontSni,
                 frontTargets = subscription.frontTargets,
                 via = via,
-                timeoutMs = mainTimeoutMs
+                timeoutMs = mainTimeoutMs,
+                userAgent = userAgent
             )
         } catch (e: FetchError.NetworkError) {
             if (fallback == null) throw e
@@ -106,7 +114,8 @@ object SubscriptionFetcher {
                     frontSni = fallback.frontSni,
                     frontTargets = fallback.frontTargets,
                     via = via,
-                    timeoutMs = timeoutMs ?: DEFAULT_TIMEOUT_MS
+                    timeoutMs = timeoutMs ?: DEFAULT_TIMEOUT_MS,
+                    userAgent = userAgent
                 )
             } catch (fallbackError: FetchError) {
                 val why = (fallbackError as? FetchError.NetworkError)?.detail ?: fallbackError.message
@@ -121,6 +130,7 @@ object SubscriptionFetcher {
      *   user's own self-signed server, whereas an unverified subscription
      *   download lets anyone on the path replace every server in the list.
      * @param via see the overload above.
+     * @param userAgent the panel's `change-user-agent`, or Mythaia's own.
      */
     suspend fun fetch(
         urlString: String,
@@ -129,7 +139,8 @@ object SubscriptionFetcher {
         frontSni: String? = null,
         frontTargets: List<String> = emptyList(),
         via: ProxyConfiguration? = null,
-        timeoutMs: Int = DEFAULT_TIMEOUT_MS
+        timeoutMs: Int = DEFAULT_TIMEOUT_MS,
+        userAgent: String = DEFAULT_USER_AGENT
     ): Result = withContext(Dispatchers.IO) {
         val url = runCatching { URL(urlString) }.getOrNull()
             ?: throw FetchError.InvalidUrl()
@@ -143,17 +154,17 @@ object SubscriptionFetcher {
         val targets = frontTargets.map { it.trim() }.filter { it.isNotEmpty() }
         if (targets.isNotEmpty() && https) {
             return@withContext fetchFronted(url, frontSni?.trim()?.takeIf { it.isNotEmpty() } ?: url.host,
-                targets, allowInsecure, remnawaveHWID, via, timeoutMs)
+                targets, allowInsecure, remnawaveHWID, via, timeoutMs, userAgent)
         }
         if (via != null) {
             // The server dials the panel itself; nothing else changes.
             val target = if (url.port > 0) "${url.host}:${url.port}" else url.host
-            return@withContext fetchFronted(url, url.host, listOf(target), allowInsecure, remnawaveHWID, via, timeoutMs)
+            return@withContext fetchFronted(url, url.host, listOf(target), allowInsecure, remnawaveHWID, via, timeoutMs, userAgent)
         }
 
         val connection = url.openConnection() as HttpURLConnection
         try {
-            connection.setRequestProperty("User-Agent", "Mythaia")
+            connection.setRequestProperty("User-Agent", userAgent)
             if (remnawaveHWID != null) {
                 connection.setRequestProperty("x-hwid", remnawaveHWID)
             }
@@ -202,6 +213,9 @@ object SubscriptionFetcher {
         }
     }
 
+    /** What Mythaia calls itself to a panel unless the panel asked for another name. */
+    const val DEFAULT_USER_AGENT = "Mythaia"
+
     /** Panels do not serve lists this large; anything bigger is a misconfiguration, not a subscription. */
     private const val MAX_BODY_BYTES = 16 * 1024 * 1024
 
@@ -240,7 +254,8 @@ object SubscriptionFetcher {
         allowInsecure: Boolean,
         remnawaveHWID: String?,
         via: ProxyConfiguration?,
-        timeoutMs: Int
+        timeoutMs: Int,
+        userAgent: String
     ): Result {
         val extra = buildMap {
             if (remnawaveHWID != null) put("x-hwid", remnawaveHWID)
@@ -248,7 +263,7 @@ object SubscriptionFetcher {
         var lastError: String? = null
         for (target in targets) {
             val response = try {
-                FrontedHttpClient.get(url, sni, target, extra, allowInsecure, MAX_BODY_BYTES, via, timeoutMs.toLong())
+                FrontedHttpClient.get(url, sni, target, extra, allowInsecure, MAX_BODY_BYTES, via, timeoutMs.toLong(), userAgent)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 // withTimeout's own: this front was slow, the caller was not cancelled.
                 lastError = FrontedHttpClient.describe(target, Exception("timed out"))
@@ -286,7 +301,14 @@ object SubscriptionFetcher {
         val fields = SubscriptionMetadata.bodyFields(bodyString).let { inner ->
             if (raw === bodyString) inner else SubscriptionMetadata.bodyFields(raw) + inner
         }
-        val panel = SubscriptionMetadata.read(header, fields, secure)
+        // Happ also takes a routing link standing on a line of its own.
+        val routingLine = if (secure && fields["routing"] == null) {
+            (bodyString.lineSequence() + raw.lineSequence())
+                .map { it.trim() }
+                .firstOrNull { com.mythaia.data.routing.HappRouting.isLink(it) }
+        } else null
+        val panel = SubscriptionMetadata.read(header, if (routingLine != null) fields + ("routing" to routingLine) else fields, secure)
+
         val profileTitle = panel.title
         val userInfo = parseUserInfoValue(panel.userInfo)
 

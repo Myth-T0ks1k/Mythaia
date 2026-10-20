@@ -22,6 +22,8 @@ import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.network.LatencyKind
 import com.mythaia.data.network.LatencyResult
 import com.mythaia.data.network.LatencyTester
+import com.mythaia.data.network.ProviderKeys
+import com.mythaia.data.network.RemoteSettings
 import com.mythaia.data.network.SubscriptionDomainHelper
 import com.mythaia.data.network.SubscriptionFetcher
 import com.mythaia.data.network.SubscriptionRefreshScheduler
@@ -31,8 +33,11 @@ import com.mythaia.data.repository.CertificateRepository
 import com.mythaia.data.repository.ChainRepository
 import com.mythaia.data.repository.ConfigRepository
 import com.mythaia.data.repository.MitmRepository
+import com.mythaia.data.repository.RoutingProfileRepository
 import com.mythaia.data.repository.RuleSetRepository
 import com.mythaia.data.repository.SubscriptionRepository
+import com.mythaia.data.routing.HappRouting
+import com.mythaia.data.routing.RoutingProfiles
 import com.mythaia.vpn.protocol.tls.CertificatePolicy
 import com.mythaia.vpn.protocol.tls.FragmentPolicy
 import com.mythaia.vpn.MythaiaVpnService
@@ -183,8 +188,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     val autoChoice: StateFlow<Map<String, UUID>> = _autoChoice.asStateFlow()
     private val autoChoiceAt = HashMap<String, Long>()
 
-    /** What the numbers in [latencyResults] measure right now. */
-    private val _latencyKind = MutableStateFlow(LatencyKind.HANDSHAKE)
+    /** What the numbers in [latencyResults] measure right now; a provider's `ping-type` sets the first. */
+    private val _latencyKind = MutableStateFlow(ProviderKeys.AppSettings.latencyKind(application) ?: LatencyKind.HANDSHAKE)
     val latencyKind: StateFlow<LatencyKind> = _latencyKind.asStateFlow()
 
     private val _latencyResults = MutableStateFlow<Map<UUID, LatencyResult>>(emptyMap())
@@ -213,6 +218,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** True while a subscription link is being downloaded for import. */
     private val _subscriptionImporting = MutableStateFlow(false)
     val subscriptionImporting: StateFlow<Boolean> = _subscriptionImporting.asStateFlow()
+
+    /** Happ routing profiles: which there are, which is in force or waiting for its files. */
+    val routingProfileRepository = RoutingProfileRepository.get(application)
+    val routingProfiles: StateFlow<RoutingProfiles> = routingProfileRepository.state
+    /** The profile whose rule files are being fetched; null when none is. */
+    val routingFilesFetching: StateFlow<String?> = routingProfileRepository.fetching
 
     /**
      * Which palette to draw in.
@@ -305,6 +316,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             "tuic", "wireguard", "wg" -> {
                 _pendingDeepLinkUrl.value = uri.toString()
             }
+            // happ://routing/add|onadd/{base64}, happ://routing/off
+            "happ" -> if (uri.host == "routing") importRoutingLink(uri.toString())
             else -> {}
         }
     }
@@ -497,6 +510,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun onBecameVisible() {
         refreshSubscriptionsOnOpen()
+        autoConnectOnOpen()
+
         if (_vpnStatus.value != VpnStatus.CONNECTED) return
         if (statsJob != null && !statsTick()) stopStatsPolling()
         if (_vpnStatus.value != VpnStatus.CONNECTED) return
@@ -626,6 +641,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        ProviderKeys.AppSettings.load(application)
+        routingProfileRepository.servers = { routingServers() }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { routingProfileRepository.refreshDue() }
+        }
         migrateStoredAddresses()
         restoreLatencyCache()
         startLatencyCachePersistence()
@@ -725,7 +745,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun groupIdOf(config: ProxyConfiguration): String =
         config.subscriptionId?.toString() ?: ProxyGroup.DEFAULT_ID
 
-    /** Every group, Default first, in subscription order. Empty groups are kept. */
+    /**
+     * Every group: pinned subscriptions (`subscription-pin`) first, then
+     * Default, then the other subscriptions in their order. Empty groups are kept.
+     */
     fun groups(): List<ProxyGroup> {
         val all = configRepository.getAll()
         val default = ProxyGroup(
@@ -734,10 +757,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             subscriptionId = null,
             configs = all.filter { it.subscriptionId == null }
         )
-        val subs = subscriptionRepository.getAll().map { sub ->
+        val (pinned, rest) = subscriptionRepository.getAll().partition { it.pinned }
+        fun group(sub: Subscription) =
             ProxyGroup(sub.id.toString(), sub.name, sub.id, all.filter { it.subscriptionId == sub.id })
-        }
-        return listOf(default) + subs
+        return pinned.map(::group) + default + rest.map(::group)
     }
 
     fun groupConfigs(groupId: String): List<ProxyConfiguration> {
@@ -1163,10 +1186,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // Android 13+ hides the tunnel notification (and its Disconnect
         // action) until the user allows notifications. Asked once, here,
         // where the reason is obvious; the connect goes ahead either way.
-        if (!prefs.getBoolean("notificationsAsked", false)) {
-            prefs.edit { putBoolean("notificationsAsked", true) }
-            onRequestNotificationPermission?.invoke()
-        }
+        askNotificationsOnce()
 
         // The permission prompt comes first either way: asking for it after a
         // measurement round would leave the user staring at a spinner before
@@ -1666,7 +1686,19 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         return configRepository.getAll().filter { it.subscriptionId == forSubscription.id }
     }
 
+    /**
+     * Asks for POST_NOTIFICATIONS the first time it matters: the first
+     * connect (the tunnel's own notification) or the first subscription
+     * (its provider's messages). Never again after that, whatever the answer.
+     */
+    private fun askNotificationsOnce() {
+        if (prefs.getBoolean("notificationsAsked", false)) return
+        prefs.edit { putBoolean("notificationsAsked", true) }
+        onRequestNotificationPermission?.invoke()
+    }
+
     fun addSubscription(configurations: List<ProxyConfiguration>, subscription: Subscription) {
+        askNotificationsOnce()
         subscriptionRepository.add(subscription)
         configRepository.addAll(configurations.map { it.copy(subscriptionId = subscription.id) })
         // A first subscription on an empty app becomes the active group, on Auto.
@@ -1708,6 +1740,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _selectedChainId.value == null &&
             _activeGroupId.value == subscription.id.toString()
         subscriptionRepository.delete(subscription.id, configRepository)
+        routingProfileRepository.removeFrom(subscription.id.toString())
         _pinnedByGroup.value = _pinnedByGroup.value - subscription.id.toString()
         savePins()
         recomputeSelection()
@@ -1740,7 +1773,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             configRepository = configRepository,
             remnawaveHWID = hwid,
             via = via,
-            timeoutMs = timeoutMs
+            timeoutMs = timeoutMs,
+            context = getApplication()
         )
 
         recomputeSelection()
@@ -1875,6 +1909,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     _updatingSubscriptionId.value = null
                 }
             }
+            // `subscription-ping-onopen-enabled`: measure them while the user looks.
+            val kind = ProviderKeys.AppSettings.latencyKind(getApplication()) ?: _latencyKind.value
+            for (subscription in subscriptionRepository.getAll().filter { it.pingOnOpen }) {
+                testLatencies(configurations(subscription).filter { it.outboundProtocol.isImplemented }, kind)
+            }
             if (_subscriptionNotice.value != null) return@launch
             val failing = subscriptionRepository.getAll().firstOrNull { it.isFailing && it.id !in failuresShown }
                 ?: return@launch
@@ -1918,17 +1957,23 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                     ?: result.name
                     ?: runCatching { URL(url).host }.getOrNull()
                     ?: getApplication<Application>().getString(R.string.subscription)
-                // Everything else the panel said, as a refresh would record it.
-                val subscription = com.mythaia.data.network.SubscriptionMetadata.applyTo(
-                    Subscription(
-                        name = groupName,
-                        url = url,
-                        isNameCustomized = linkName != null,
-                        frontSni = frontSni,
-                        frontTargets = frontTargets
-                    ),
-                    result
-                )
+                // Everything else the panel said, as a refresh would record it:
+                // its settings and routing too, its messages as already seen.
+                val app = getApplication<Application>()
+                val subscription = withContext(Dispatchers.Default) {
+                    val folded = com.mythaia.data.network.SubscriptionMetadata.applyTo(
+                        Subscription(
+                            name = groupName,
+                            url = url,
+                            isNameCustomized = linkName != null,
+                            frontSni = frontSni,
+                            frontTargets = frontTargets
+                        ),
+                        result,
+                        settingsAllowed = ProviderKeys.allowed(app)
+                    )
+                    ProviderKeys.afterImport(app, folded, result.panel)
+                }
                 onImported(result.configurations, subscription)
             } catch (e: CancellationException) {
                 throw e
@@ -2282,7 +2327,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     var fragmentSettings: FragmentSettings
         get() = FragmentPolicy.read(prefs)
-        set(value) = FragmentPolicy.write(prefs, value)
+        set(value) {
+            FragmentPolicy.write(prefs, value)
+            ProviderKeys.AppSettings.release(getApplication(), ProviderKeys.AppSettings.GROUP_FRAGMENT)
+        }
 
     /**
      * Which apps the tunnel carries. Writing it makes LwipStack re-establish the
@@ -2290,7 +2338,120 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
      */
     var splitTunnelSettings: SplitTunnelSettings
         get() = SplitTunnelSettings.read(prefs)
-        set(value) = SplitTunnelSettings.write(prefs, value)
+        set(value) {
+            SplitTunnelSettings.write(prefs, value)
+            ProviderKeys.AppSettings.release(getApplication(), ProviderKeys.AppSettings.GROUP_PER_APP)
+        }
+
+    /** "Let subscriptions change app settings": on unless the user turns it off. */
+    var subscriptionSettingsAllowed: Boolean
+        get() = ProviderKeys.allowed(getApplication())
+        set(value) = prefs.edit { putBoolean(ProviderKeys.KEY_ALLOWED, value) }
+
+    /** "Connect when the phone starts" (a provider's `app-auto-start` too). */
+    var startOnBoot: Boolean
+        get() = prefs.getBoolean(ProviderKeys.AppSettings.KEY_START_ON_BOOT, false)
+        set(value) {
+            prefs.edit { putBoolean(ProviderKeys.AppSettings.KEY_START_ON_BOOT, value) }
+            ProviderKeys.AppSettings.release(getApplication(), ProviderKeys.AppSettings.GROUP_AUTO_START)
+        }
+
+    /** Which settings a subscription set last, group to subscription name. */
+    fun managedSettings(): Map<String, String> = ProviderKeys.AppSettings.managed(getApplication())
+
+    /** Addresses a provider keeps out of the tunnel (`exclude-routes`). */
+    fun excludedRoutes(): List<String> = ProviderKeys.AppSettings.excludedRoutes(getApplication())
+
+    fun clearExcludedRoutes() {
+        ProviderKeys.AppSettings.setExcludedRoutes(getApplication(), emptyList())
+        ProviderKeys.AppSettings.release(getApplication(), ProviderKeys.AppSettings.GROUP_ROUTES)
+    }
+
+    /** The provider's `ping-type` and `check-url-via-proxy`, as stored; null when none set them. */
+    fun latencySettings(): Pair<LatencyKind?, String?>? {
+        val app = getApplication<Application>()
+        val kind = ProviderKeys.AppSettings.latencyKind(app)
+        val url = ProviderKeys.AppSettings.checkUrl(app)
+        return if (kind == null && url == null) null else kind to url
+    }
+
+    /** Back to Mythaia's own check: the handshake time, against its own page. */
+    fun resetLatencySettings() {
+        prefs.edit {
+            remove(ProviderKeys.AppSettings.KEY_PING_KIND)
+            remove(ProviderKeys.AppSettings.KEY_CHECK_URL)
+        }
+        LatencyTester.checkUrl = null
+        ProviderKeys.AppSettings.release(getApplication(), ProviderKeys.AppSettings.GROUP_PING)
+    }
+
+    /** Pins or unpins a subscription's group at the top of the list. */
+    fun setSubscriptionPinned(subscription: Subscription, pinned: Boolean) {
+        subscriptionRepository.get(subscription.id)?.let { subscriptionRepository.update(it.copy(pinned = pinned)) }
+    }
+
+    /**
+     * A Happ routing link opened, pasted or scanned. Returns false when it is
+     * not one or its profile does not parse.
+     */
+    fun importRoutingLink(link: String): Boolean {
+        val command = HappRouting.parseLink(link) ?: return false
+        routingProfileRepository.handle(command)
+        _subscriptionNotice.value = when (command) {
+            HappRouting.Command.Off -> SubscriptionNotice.Routing(null, active = false)
+            is HappRouting.Command.Add -> SubscriptionNotice.Routing(command.profile.name, active = command.activate)
+        }
+        return true
+    }
+
+    fun activateRoutingProfile(name: String) = routingProfileRepository.activate(name)
+
+    fun routingProfilesOff() = routingProfileRepository.off()
+
+    fun removeRoutingProfile(name: String) = routingProfileRepository.remove(name)
+
+    fun retryRoutingFiles(name: String) = routingProfileRepository.retry(name)
+
+    /** Servers to fetch routing files through when GitHub cannot be reached directly. */
+    private suspend fun routingServers(): List<ProxyConfiguration> {
+        val all = configRepository.getAll()
+        val live = if (_vpnStatus.value == VpnStatus.CONNECTED && _connectivityOk.value != false) {
+            MythaiaVpnService.activeConfigId?.let { id -> all.firstOrNull { it.id == id } }
+        } else null
+        return WorkingServers.find(
+            live = live,
+            candidates = WorkingServers.candidates(all, UUID(0, 0), _latencyResults.value),
+            prepare = { applyGlobalAllowInsecure(it) }
+        )
+    }
+
+    /** Whether the provider's auto-connect has had its one chance this process. */
+    private var autoConnectTried = false
+
+    /**
+     * `subscription-autoconnect`: on the first open, connect to that
+     * subscription's servers — the last used, the fastest (Auto) or one at
+     * random. Only with the VPN permission already granted (an open is no
+     * moment for a system dialog) and the user's leave for provider settings.
+     */
+    private fun autoConnectOnOpen() {
+        if (autoConnectTried) return
+        autoConnectTried = true
+        if (_vpnStatus.value != VpnStatus.DISCONNECTED || MythaiaVpnService.isActive) return
+        if (!subscriptionSettingsAllowed) return
+        val subscription = subscriptionRepository.getAll().firstOrNull { it.autoConnect != null } ?: return
+        if (VpnService.prepare(getApplication()) != null) return
+        val groupId = subscription.id.toString()
+        val candidates = autoCandidates(groupId)
+        if (candidates.isEmpty()) return
+        logger.info("[Sub] Auto-connect to ${subscription.name} (${subscription.autoConnect})")
+        when (subscription.autoConnect) {
+            RemoteSettings.AUTO_RANDOM -> pinConfiguration(candidates.random())
+            RemoteSettings.AUTO_LOWEST_DELAY -> useAuto(groupId)
+            else -> if (_activeGroupId.value != groupId || _selectedChainId.value != null) selectGroup(groupId)
+        }
+        connect()
+    }
 
     /** UI-only flag gating experimental features (e.g. custom rule set creation). */
     var experimentalEnabled: Boolean

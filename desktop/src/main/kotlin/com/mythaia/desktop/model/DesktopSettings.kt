@@ -56,6 +56,14 @@ data class DesktopSettings(
 
     /** Hours between automatic subscription refreshes; 0 turns them off. */
     val subscriptionUpdateHours: Int = 12,
+    val subscriptionSettingsAllowed: Boolean = true,
+    val latencyKind: String? = null,
+    val latencyCheckUrl: String? = null,
+    val excludedRoutes: List<String> = emptyList(),
+    val managedSettings: Map<String, String> = emptyMap(),
+    val activeRoutingProfile: com.mythaia.data.routing.RoutingProfile? = null,
+    val activeGeositePath: String? = null,
+    val activeGeoipPath: String? = null,
 
     /** Asks GitHub for a new release once a day. Off until the user turns it on. */
     val updateAutoCheck: Boolean = false,

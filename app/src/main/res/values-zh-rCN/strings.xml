@@ -501,4 +501,26 @@
     <string name="country_expanded">已展开</string>
     <string name="country_ping">测速：%1$s</string>
     <string name="auto_in_country">自动 · 仅限%1$s</string>
+    <string name="allow_subscription_settings">允许订阅更改应用设置</string>
+    <string name="check_latency">延迟检测</string>
+    <string name="excluded_routes">排除路由</string>
+    <string name="managed_auto_connect">自动连接</string>
+    <string name="managed_hide_settings">服务器详情已隐藏</string>
+    <string name="managed_no_collapse">始终展开</string>
+    <string name="managed_ping_on_open">打开时检测延迟</string>
+    <string name="managed_sort">服务器排序</string>
+    <string name="managed_user_agent">User-Agent: %1$s</string>
+    <string name="open_link">打开</string>
+    <string name="provider_messages_channel">服务商消息</string>
+    <string name="provider_messages_channel_description">来自订阅的公告与到期提醒</string>
+    <string name="routing_profile_added">已添加路由配置：%1$s</string>
+    <string name="routing_profile_fetching">正在下载规则文件…</string>
+    <string name="routing_profile_turn_off">关闭</string>
+    <string name="routing_profile_turned_on">已启用路由配置：%1$s</string>
+    <string name="routing_profile_unreadable">无法读取路由配置</string>
+    <string name="routing_profiles">路由配置</string>
+    <string name="routing_profiles_turned_off">已关闭路由配置</string>
+    <string name="settings_managed_by">设置由 %1$s 管理</string>
+    <string name="start_on_boot">开机时自动连接</string>
+    <string name="subscription_pin_top">置顶</string>
 </resources>

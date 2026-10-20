@@ -870,7 +870,12 @@ data class ProxyConfiguration(
     val sudokuHttpMaskTls: Boolean = false,
     val sudokuHttpMaskHost: String? = null,
     val sudokuHttpMaskPathRoot: String? = null,
-    val chain: List<ProxyConfiguration>? = null
+    val chain: List<ProxyConfiguration>? = null,
+    /**
+     * Happ's `serverDescription`: a line the provider shows under the name,
+     * carried in the link's fragment as `#name?serverDescription=<base64>`.
+     */
+    val description: String? = null
 ) {
     val connectAddress: String get() = resolvedIP ?: serverAddress
 
@@ -985,7 +990,8 @@ data class ProxyConfiguration(
                 sudokuHttpMaskTls == other.sudokuHttpMaskTls &&
                 sudokuHttpMaskHost == other.sudokuHttpMaskHost &&
                 sudokuHttpMaskPathRoot == other.sudokuHttpMaskPathRoot &&
-                chain == other.chain
+                chain == other.chain &&
+                description == other.description
 
     fun withChain(chain: List<ProxyConfiguration>?): ProxyConfiguration = copy(chain = chain)
 
@@ -1459,7 +1465,21 @@ data class ProxyConfiguration(
         fun canParseUrl(url: String): Boolean =
             parsableUrlPrefixes.any { url.startsWith(it) }
 
-        fun fromUrl(url: String, naiveProtocol: OutboundProtocol? = null): ProxyConfiguration = when {
+        /**
+         * Parses a share link. Happ's `?serverDescription=<base64>` after the
+         * name is taken off the fragment first, so no parser mistakes it for
+         * part of the name, and lands in [description].
+         */
+        fun fromUrl(url: String, naiveProtocol: OutboundProtocol? = null): ProxyConfiguration {
+            val (link, description) = ServerDescription.split(url)
+            val parsed = parseUrl(link, naiveProtocol)
+            // VMess carries its name inside the JSON, where the marker can sit too.
+            val (name, inName) = ServerDescription.splitName(parsed.name)
+            val text = description ?: inName
+            return if (text == null && name == parsed.name) parsed else parsed.copy(name = name, description = text)
+        }
+
+        private fun parseUrl(url: String, naiveProtocol: OutboundProtocol?): ProxyConfiguration = when {
             url.startsWith("ss://") -> fromShadowsocksUrl(url)
             url.startsWith("socks5://") || url.startsWith("socks://") -> fromSocks5Url(url)
             url.startsWith("https://") -> fromNaiveUrl(url, naiveProtocol)

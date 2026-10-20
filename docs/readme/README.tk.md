@@ -153,8 +153,19 @@ vless://…
 | `fronting-target` (or `resolve-address`) | Paneliň deregine birikilýän salgylar, otur bilen; `off` frontingi öçürýär |
 | `fronting-sni` | Iberilýän SNI |
 | `host` | `resolve-address` bilen: paneliň hakyky hosty, Happ-daky ýaly |
+| `routing` (`happ://routing/add/…`, `happ://routing/onadd/…`, `happ://routing/off`), `routing-enable` | Ugur profili (Göni, Proksi, Petiklemek sanawlary we `geosite.dat` / `geoip.dat` faýllary); `happ://routing/…` salgylary açylanda ýa-da goýlanda hem işleýär |
+| `subscription-autoconnect`, `subscription-autoconnect-type` (`lastused`, `lowestdelay`, `random`) | Başlanda şu abunanyň saýlanan serwerine awtomatiki birikmek |
+| `subscription-ping-onopen-enabled`, `ping-type` (`proxy`, `proxy-head`, `tcp`, `icmp`), `check-url-via-proxy` | Programma açylanda serwerleri ölçemek; gijikmäni ölçemegiň usuly we barlag URL-i |
+| `change-user-agent` | Şu abunanyň indiki täzelenmeleri üçin `User-Agent` |
+| `fragmentation-enable`, `fragmentation-packets`, `fragmentation-length`, `fragmentation-interval`, `fragmentation-maxsplit` | TLS ýazgy / TCP bölekleme sazlamalary |
+| `exclude-routes`, `exclude-routes-set` | Tonelden daşary goşmaça CIDR torlary (`off` olary arassalaýar) |
+| `per-app-proxy-mode` (`off`, `bypass`, `only`), `per-app-proxy-list` | Android-de programma paketleri boýunça bölekleýin tonelleme |
+| `app-auto-start` | Android açylanda VPN-i işletmek ýa-da Windows-a girende Mythaia-ny başlatmak |
+| `subscriptions-sort-type` (`ping`, `alphabet`, `off`), `subscription-pin`, `subscriptions-collapse`, `subscriptions-expand-now` | Serwerleri tertiplemek, topary berkitmek we ýygnamak |
+| `hide-settings` | Şu abunanyň serwerleri üçin sazlama redaktoryny we çig salgylary gizlemek |
+| `serverDescription` (ýa-da `description`) | Serwer salgysynyň parametrlerinde ýa-da JSON obýektinde gysga bellik, serweriň adynyň aşagynda görkezilýär |
 
-`new-url`, `new-domain`, `fallback-url` we fronting açarlary diňe barlanan HTTPS arkaly gelen jogapdan alynýar: ýönekeý HTTP paneliň abunasyny ýoldaky islendik biri başga ýere ugrukdyryp bilerdi.
+`new-url`, `new-domain`, `fallback-url`, fronting açarlary, ugur profilleri we programma sazlamalaryny üýtgedýän açarlar diňe barlanan HTTPS arkaly gelen jogapdan alynýar: ýönekeý HTTP panelde ýoldaky islendik biri abunany başga ýere ugrukdyryp ýa-da sazlamalary üýtgedip bilerdi. Sazlamalardaky (**Abunalara sazlamalary üýtgetmäge rugsat ber**) wyklýuçateli serwer sanawlaryny we habarlary saklap, uzakdan sazlama üýtgetmelerini öçürýär. Täzelenme täze `announce` ýa-da `sub-info-text` getirende ýa-da `sub-expire` üç günlük aralyga girende, programma her habar üçin bir gezek ulgam bildirişini görkezýär.
 
 Täzelenme başartmasa, aşakda **Işleýän serwer arkaly** düwmeli zolak çykýar: abuna birikdirilen serwer ýa-da gysga barlaga jogap beren iň çalt serwer arkaly ýüklenýär — panel doly petiklenende-de täzelenýär. Zolak özi ýitýär.
 

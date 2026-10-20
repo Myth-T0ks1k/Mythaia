@@ -74,6 +74,9 @@ data class Speed(val up: Long, val down: Long)
 /** What a link handed to the app would add, parsed but not stored: the window asks first. */
 data class PendingImport(val text: String, val names: List<String>)
 
+/** One-shot provider notification to show in the system tray. */
+data class TrayNotice(val title: String, val body: String)
+
 /** What the bar at the bottom of the window says, and the one thing it offers to do. */
 class Notice(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
 
@@ -124,8 +127,16 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     private val stateLock = Any()
 
+    private val geoFiles = com.mythaia.data.routing.GeoFileStore(AppPaths.geoDir)
+
     private val _settings = MutableStateFlow(store.loadSettings())
     val settings: StateFlow<DesktopSettings> = _settings.asStateFlow()
+
+    private val _routingProfiles = MutableStateFlow(store.loadRoutingProfiles())
+    val routingProfiles: StateFlow<com.mythaia.data.routing.RoutingProfiles> = _routingProfiles.asStateFlow()
+
+    private val _routingFilesFetching = MutableStateFlow<String?>(null)
+    val routingFilesFetching: StateFlow<String?> = _routingFilesFetching.asStateFlow()
 
     private val _configurations = MutableStateFlow(store.loadConfigurations())
     val configurations: StateFlow<List<ProxyConfiguration>> = _configurations.asStateFlow()
@@ -160,6 +171,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     private val _message = MutableStateFlow<Notice?>(null)
     val message: StateFlow<Notice?> = _message.asStateFlow()
+
+    private val _trayNotice = MutableStateFlow<TrayNotice?>(null)
+    val trayNotice: StateFlow<TrayNotice?> = _trayNotice.asStateFlow()
+
+    fun consumeTrayNotice() {
+        _trayNotice.value = null
+    }
 
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList())
     val logs: StateFlow<List<LogLine>> = _logs.asStateFlow()
@@ -201,12 +219,16 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 (lines + LogLine(System.currentTimeMillis(), level, text)).takeLast(MAX_LOG_LINES)
             }
         }
+        syncActiveRoutingProfile(notifyEngine = false)
         applyPolicies(_settings.value)
         engine.updateRouting(_rules.value, _settings.value)
         GeoIpDatabase.load(AppPaths.geoIp)
         S.apply(_settings.value.language)
         // Sanity: a pin or an Auto choice may point at a server that is gone.
         pruneSelection()
+        for (entry in listOfNotNull(_routingProfiles.value.activeEntry, _routingProfiles.value.pendingEntry)) {
+            scope.launch { ensureGeoFiles(entry.profile) }
+        }
         scope.launch { speedLoop() }
         scope.launch { refreshSubscriptionsOnOpen() }
         scope.launch { subscriptionRefreshLoop() }
@@ -334,8 +356,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     // ------------------------------------------------------------- groups
 
     fun groups(): List<ServerGroup> = buildList {
+        _subscriptions.value.filter { it.pinned }.forEach { add(ServerGroup(it.id.toString(), it.name, it)) }
         add(ServerGroup(DEFAULT_GROUP, tr("group_default"), null))
-        _subscriptions.value.forEach { add(ServerGroup(it.id.toString(), it.name, it)) }
+        _subscriptions.value.filterNot { it.pinned }.forEach { add(ServerGroup(it.id.toString(), it.name, it)) }
+    }
+
+    fun setSubscriptionPinned(id: UUID, pinned: Boolean) {
+        mutateSubscriptions { list -> list.map { if (it.id == id) it.copy(pinned = pinned) else it } }
     }
 
     fun groupIdOf(config: ProxyConfiguration): String = config.subscriptionId?.toString() ?: DEFAULT_GROUP
@@ -876,10 +903,13 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     // ---------------------------------------------------------- latency
 
-    fun pingGroup(groupId: String, kind: LatencyKind) = pingConfigs(groupConfigs(groupId), kind)
+    fun defaultLatencyKind(): LatencyKind =
+        if (_settings.value.latencyKind == "tcp") LatencyKind.TCP else LatencyKind.HTTP
+
+    fun pingGroup(groupId: String, kind: LatencyKind = defaultLatencyKind()) = pingConfigs(groupConfigs(groupId), kind)
 
     /** Measures [configs] — a group, or one country of it. */
-    fun pingConfigs(configs: List<ProxyConfiguration>, kind: LatencyKind) {
+    fun pingConfigs(configs: List<ProxyConfiguration>, kind: LatencyKind = defaultLatencyKind()) {
         if (configs.isEmpty()) return
         pingJob?.cancel()
         pingJob = scope.launch {
@@ -902,13 +932,80 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
     }
 
-    fun pingOne(config: ProxyConfiguration, kind: LatencyKind = LatencyKind.HTTP) {
+    fun pingOne(config: ProxyConfiguration, kind: LatencyKind = defaultLatencyKind()) {
         scope.launch {
             _latencies.update { it + (config.id to LatencyResult.Testing) }
             val result = safeTest(config, kind)
             _latencies.update { it + (config.id to result) }
             if (kind == LatencyKind.HTTP) httpLatencies.update { it + (config.id to result) }
         }
+    }
+
+    // --------------------------------------------------- routing profiles
+
+    fun selectRoutingProfile(name: String?) {
+        mutateRoutingProfiles { if (name == null) it.off() else it.activate(name, geoFiles::ready) }
+        syncActiveRoutingProfile()
+        val target = _routingProfiles.value.activeEntry ?: _routingProfiles.value.pendingEntry
+        if (target != null) scope.launch { ensureGeoFiles(target.profile) }
+    }
+
+    fun removeRoutingProfile(name: String) {
+        mutateRoutingProfiles { it.remove(name) }
+        geoFiles.prune(_routingProfiles.value.fileUrls)
+        syncActiveRoutingProfile()
+    }
+
+    fun importRoutingLink(link: String, source: com.mythaia.data.routing.RoutingProfiles.Source? = null, quiet: Boolean = false): Boolean {
+        val command = com.mythaia.data.routing.HappRouting.parseLink(link) ?: return false
+        val now = System.currentTimeMillis()
+        mutateRoutingProfiles { it.apply(command, now, geoFiles::ready, source) }
+        syncActiveRoutingProfile()
+        when (command) {
+            is com.mythaia.data.routing.HappRouting.Command.Add -> {
+                scope.launch { ensureGeoFiles(command.profile) }
+                if (!quiet) notify(tr(if (command.activate) "routing_profile_enabled" else "routing_profile_added", command.profile.name))
+            }
+            com.mythaia.data.routing.HappRouting.Command.Off -> {
+                if (!quiet) notify(tr("routing_profile_off"))
+            }
+        }
+        return true
+    }
+
+    private fun syncActiveRoutingProfile(notifyEngine: Boolean = true) {
+        val active = _routingProfiles.value.activeEntry?.profile
+        val geositePath = active?.let { geoFiles.geosite(it) }?.absolutePath
+        val geoipPath = active?.let { geoFiles.geoip(it) }?.absolutePath
+        val after = mutateSettings {
+            it.copy(
+                activeRoutingProfile = active,
+                activeGeositePath = geositePath,
+                activeGeoipPath = geoipPath
+            )
+        }
+        if (notifyEngine) {
+            engine.updateRouting(_rules.value, after)
+            tun.updateRouting(_rules.value, after)
+            if (remoteTun != null) scope.launch { runCatching { com.mythaia.desktop.service.ServiceClient.updateRouting(after, _rules.value) } }
+        }
+    }
+
+    private suspend fun ensureGeoFiles(profile: com.mythaia.data.routing.RoutingProfile) {
+        val entry = _routingProfiles.value.find(profile.name) ?: return
+        if (!_routingProfiles.value.filesDue(entry, System.currentTimeMillis())) return
+        _routingFilesFetching.value = profile.name
+        try {
+            val error = geoFiles.fetch(profile) {
+                val subId = entry.subscriptionId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                if (subId != null) serversThatWork(subId) else emptyList()
+            }
+            mutateRoutingProfiles { it.filesFetched(profile.name, System.currentTimeMillis(), error) }
+            if (error == null) geoFiles.prune(_routingProfiles.value.fileUrls)
+        } finally {
+            if (_routingFilesFetching.value == profile.name) _routingFilesFetching.value = null
+        }
+        syncActiveRoutingProfile()
     }
 
     // ------------------------------------------------------------ servers
@@ -941,7 +1038,32 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     /** What [addText] would make of [text]: one line per server (name and host) or subscription (host). */
-    private fun describeImport(text: String): List<String> = describeImportText(text)
+    private fun describeImport(text: String): List<String> {
+        val parsed = parseImportChunks(listOf(text))
+        val out = ArrayList<String>()
+        parsed.configurations.forEach { out += "${it.name} · ${it.serverAddress}" }
+        for (line in parsed.routingLinks) {
+            when (val a = com.mythaia.data.routing.HappRouting.parseLink(line)) {
+                is com.mythaia.data.routing.HappRouting.Command.Add -> {
+                    val summary = (a.profile.directSites + a.profile.proxySites + a.profile.blockSites +
+                        a.profile.directIp + a.profile.proxyIp + a.profile.blockIp)
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .take(6)
+                        .joinToString(", ")
+                    out += if (summary.isEmpty()) "${tr("routing_profile")}: ${a.profile.name}"
+                    else "${tr("routing_profile")}: ${a.profile.name} ($summary)"
+                }
+                com.mythaia.data.routing.HappRouting.Command.Off -> out += tr("routing_profile_off")
+                null -> Unit
+            }
+        }
+        parsed.subscriptions.forEach { sub ->
+            val host = sub.url.substringAfter("://").substringBefore('/')
+            out += if (!sub.name.isNullOrBlank()) "${sub.name} · $host" else host
+        }
+        return out
+    }
 
     /**
      * Adds every link in [text]; an https:// line without credentials is a
@@ -952,11 +1074,19 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         scope.launch { addTextsNow(listOf(text), subscriptionName, frontSni, frontTargets) }
     }
 
+    internal fun addTextNow(text: String, subscriptionName: String? = null, frontSni: String? = null, frontTargets: List<String> = emptyList()) {
+        addTextsNow(listOf(text), subscriptionName, frontSni, frontTargets)
+    }
+
     private fun addTextsNow(chunks: List<String>, subscriptionName: String?, frontSni: String?, frontTargets: List<String>) {
         val parsed = parseImportChunks(chunks, subscriptionName)
         if (parsed.configurations.isNotEmpty()) {
             mutateConfigurations { it + parsed.configurations }
             notify(tr("added_n", parsed.configurations.size))
+        }
+        var handledRouting = false
+        for (line in parsed.routingLinks) {
+            if (importRoutingLink(line)) handledRouting = true
         }
         // What the dialog's fields say wins; the link fills what they leave empty.
         parsed.subscriptions.forEach { link ->
@@ -967,7 +1097,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
                 frontTargets = frontTargets.ifEmpty { link.frontTargets }
             )
         }
-        if (parsed.configurations.isEmpty() && parsed.subscriptions.isEmpty()) {
+        if (parsed.configurations.isEmpty() && parsed.subscriptions.isEmpty() && !handledRouting) {
             notify(parsed.error ?: tr("nothing_parsed"))
         }
     }
@@ -1071,7 +1201,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         _updating.update { it + id }
         scope.launch {
             try {
-                val count = fetchSubscription(subscription)
+                val count = fetchSubscription(subscription, announceAdded = announceAdded)
                 val name = _subscriptions.value.firstOrNull { it.id == id }?.name ?: subscription.name
                 notify(if (announceAdded) tr("subscription_added", name) else tr("subscription_updated", name, count))
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1093,9 +1223,11 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private suspend fun fetchSubscription(
         subscription: Subscription,
         via: ProxyConfiguration? = null,
-        timeoutMs: Int? = null
+        timeoutMs: Int? = null,
+        announceAdded: Boolean = false
     ): Int {
         val id = subscription.id
+        val before = _subscriptions.value.firstOrNull { it.id == id } ?: subscription
         val result = try {
             SubscriptionFetcher.fetch(subscription, via = via, timeoutMs = timeoutMs)
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1123,12 +1255,154 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
             }
             list.filterNot { it.subscriptionId == id } + merged
         }
+        val settingsAllowed = _settings.value.subscriptionSettingsAllowed
         // What the panel said, as the phone records it: a moved URL, fronting, messages.
-        mutateSubscriptions { list -> list.map { if (it.id == id) SubscriptionMetadata.applyTo(it, result) else it } }
+        mutateSubscriptions { list ->
+            list.map { if (it.id == id) SubscriptionMetadata.applyTo(it, result, settingsAllowed = settingsAllowed) else it }
+        }
+        val recorded = LinkedHashMap<String, String>()
+        val subName = _subscriptions.value.firstOrNull { it.id == id }?.name ?: subscription.name
+        if (settingsAllowed) {
+            recorded += applyRemoteSettings(before, result, subName)
+        }
+        recorded += applyRemoteRouting(before, result, subName, settingsAllowed)
+        val updatedSub = _subscriptions.value.firstOrNull { it.id == id }?.let {
+            if (recorded.isEmpty()) it else it.copy(appliedSettings = it.appliedSettings + recorded)
+        }
+        if (updatedSub != null) {
+            val nextSub = if (announceAdded) {
+                com.mythaia.data.network.ProviderMessages.markSeen(updatedSub)
+            } else {
+                val (messages, marked) = com.mythaia.data.network.ProviderMessages.due(updatedSub)
+                if (messages.isNotEmpty()) {
+                    val body = messages.mapNotNull { m ->
+                        when (m.kind) {
+                            com.mythaia.data.network.ProviderMessages.Kind.ANNOUNCE,
+                            com.mythaia.data.network.ProviderMessages.Kind.INFO -> m.text
+                            com.mythaia.data.network.ProviderMessages.Kind.EXPIRY -> when (val w = m.expiry) {
+                                is Subscription.ExpiryWarning.Expired -> tr("sub_expired")
+                                is Subscription.ExpiryWarning.Soon -> if (w.days <= 1) tr("sub_expires_1") else tr("sub_expires_n", w.days)
+                                null -> null
+                            }
+                        }
+                    }.joinToString("\n")
+                    if (body.isNotEmpty()) _trayNotice.value = TrayNotice(updatedSub.name, body)
+                }
+                marked
+            }
+            if (nextSub != updatedSub || recorded.isNotEmpty()) {
+                mutateSubscriptions { list -> list.map { if (it.id == id) nextSub else it } }
+            }
+        }
         pruneSelection()
         val live = liveConfiguration
         if (live?.subscriptionId == id && _configurations.value.none { it.id == live.id }) reconnectIfNeeded()
         return fresh.size
+    }
+
+    private fun applyRemoteSettings(before: Subscription, result: SubscriptionFetcher.Result, subName: String): Map<String, String> {
+        val changed = com.mythaia.data.network.RemoteSettings.changedAppKeys(before.appliedSettings, result.panel.settings)
+        if (changed.isEmpty()) return emptyMap()
+        val touched = LinkedHashMap<String, String>()
+        updateSettings { current ->
+            var next = current
+            changed["ping-type"]?.let { raw ->
+                com.mythaia.data.network.RemoteSettings.latencyKind(raw)?.let { kind ->
+                    next = next.copy(latencyKind = kind.name.lowercase())
+                    touched["ping-type"] = raw
+                }
+            }
+            if ("check-url-via-proxy" in changed) {
+                com.mythaia.data.network.RemoteSettings.checkUrl(changed["check-url-via-proxy"])?.let { url ->
+                    next = next.copy(latencyCheckUrl = url)
+                    touched["check-url-via-proxy"] = url
+                }
+            }
+            if (changed.keys.any { it.startsWith("fragmentation-") }) {
+                val curFrag = FragmentSettings(
+                    isEnabled = next.fragmentEnabled,
+                    minLength = next.fragmentMinLength, maxLength = next.fragmentMaxLength,
+                    minInterval = next.fragmentMinInterval, maxInterval = next.fragmentMaxInterval
+                )
+                com.mythaia.data.network.RemoteSettings.fragment(curFrag, result.panel.settings)?.let { frag ->
+                    next = next.copy(
+                        fragmentEnabled = frag.isEnabled,
+                        fragmentMinLength = frag.minLength, fragmentMaxLength = frag.maxLength,
+                        fragmentMinInterval = frag.minInterval, fragmentMaxInterval = frag.maxInterval
+                    )
+                    touched["fragmentation"] = if (frag.isEnabled) "1" else "0"
+                }
+            }
+            com.mythaia.data.network.RemoteSettings.excludeRoutes(next.excludedRoutes, changed)?.let { cidrs ->
+                next = next.copy(excludedRoutes = cidrs)
+                touched["exclude-routes"] = cidrs.joinToString(",")
+            }
+            com.mythaia.data.network.RemoteSettings.flag(changed["app-auto-start"])?.let { on ->
+                next = next.copy(launchAtLogin = on)
+                touched["app-auto-start"] = if (on) "1" else "0"
+            }
+            if (touched.isNotEmpty()) {
+                next = next.copy(managedSettings = next.managedSettings + touched + ("source" to subName))
+            }
+            next
+        }
+        return changed
+    }
+
+    private suspend fun applyRemoteRouting(
+        before: Subscription,
+        result: SubscriptionFetcher.Result,
+        subName: String,
+        allowed: Boolean
+    ): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        val source = com.mythaia.data.routing.RoutingProfiles.Source(before.id.toString(), subName)
+        result.panel.routing?.let { value ->
+            val key = value.hashCode().toString(16) + ":" + value.length
+            if (before.appliedSettings["routing"] != key) {
+                when (val cmd = com.mythaia.data.routing.HappRouting.parseSubscriptionValue(value, subName)) {
+                    null -> logger.warning("Subscription $subName: routing value not understood")
+                    is com.mythaia.data.routing.HappRouting.Command.Add -> {
+                        val effective = if (allowed) cmd else cmd.copy(activate = false)
+                        mutateRoutingProfiles { it.apply(effective, System.currentTimeMillis(), geoFiles::ready, source) }
+                        syncActiveRoutingProfile()
+                        if (effective.activate) ensureGeoFiles(cmd.profile)
+                    }
+                    com.mythaia.data.routing.HappRouting.Command.Off -> if (allowed) {
+                        mutateRoutingProfiles { it.off() }
+                        syncActiveRoutingProfile()
+                    }
+                }
+                out["routing"] = key
+            }
+        }
+        result.panel.routingEnable?.let { enabled ->
+            val v = enabled.toString()
+            if (before.appliedSettings["routing-enable"] != v) {
+                if (!enabled && allowed) {
+                    mutateRoutingProfiles { it.off() }
+                    syncActiveRoutingProfile()
+                }
+                out["routing-enable"] = v
+            }
+        }
+        return out
+    }
+
+    fun setSubscriptionSettingsAllowed(allowed: Boolean) {
+        updateSettings { it.copy(subscriptionSettingsAllowed = allowed) }
+        if (!allowed) resetManagedSettings()
+    }
+
+    fun resetManagedSettings() {
+        updateSettings {
+            it.copy(
+                latencyKind = null,
+                latencyCheckUrl = null,
+                excludedRoutes = emptyList(),
+                managedSettings = emptyMap()
+            )
+        }
     }
 
     /** A panel that answered with nothing usable would say the same through any server. */
@@ -1197,14 +1471,37 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     /**
      * On start: refresh what the panel asked to have refreshed on every open
-     * (`subscription-auto-update-open-enable`), and speak up for one that
-     * kept failing last time.
+     * (`subscription-auto-update-open-enable`), run open-time pings and
+     * auto-connect if allowed, and speak up for one that kept failing last time.
      */
     private suspend fun refreshSubscriptionsOnOpen() {
         // Let the window come up first.
         delay(3_000)
         val subscriptions = _subscriptions.value
         subscriptions.filter { it.updateOnOpen }.forEach { updateSubscription(it.id) }
+        if (_settings.value.subscriptionSettingsAllowed) {
+            val currentSubs = _subscriptions.value
+            currentSubs.firstOrNull { it.pingOnOpen }?.let { sub ->
+                pingGroup(sub.id.toString(), defaultLatencyKind())
+            }
+            if (!isTunnelRunning && !_settings.value.autoConnect) {
+                currentSubs.firstOrNull { it.autoConnect != null }?.let { sub ->
+                    val gid = sub.id.toString()
+                    val pool = dialable(groupConfigs(gid))
+                    if (pool.isNotEmpty()) {
+                        when (sub.autoConnect) {
+                            com.mythaia.data.network.RemoteSettings.AUTO_RANDOM -> pin(pool.random())
+                            com.mythaia.data.network.RemoteSettings.AUTO_LOWEST_DELAY -> {
+                                val pick = bestKnown(pool)
+                                if (pick != null) pin(pick) else useAuto(gid)
+                            }
+                            else -> selectGroup(gid)
+                        }
+                        startConnection()
+                    }
+                }
+            }
+        }
         val failing = subscriptions.firstOrNull { it.isFailing && !it.updateOnOpen } ?: return
         notifySubscriptionFailure(failing, failing.lastFailureMessage ?: tr("unknown_error"), canRetry = true)
     }
@@ -1212,6 +1509,9 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     fun deleteSubscription(id: UUID) {
         mutateSubscriptions { list -> list.filterNot { it.id == id } }
         mutateConfigurations { list -> list.filterNot { it.subscriptionId == id } }
+        mutateRoutingProfiles { it.removeFrom(id.toString()) }
+        geoFiles.prune(_routingProfiles.value.fileUrls)
+        syncActiveRoutingProfile()
         pruneSelection()
         if (liveConfiguration?.subscriptionId == id) reconnectIfNeeded()
     }
@@ -1239,6 +1539,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         if (after == old) return
         applyPolicies(after)
         engine.updateRouting(_rules.value, after)
+        tun.updateRouting(_rules.value, after)
+        if (remoteTun != null) scope.launch { runCatching { com.mythaia.desktop.service.ServiceClient.updateRouting(after, _rules.value) } }
         if (after.language != old.language) S.apply(after.language)
         if (after.launchAtLogin != old.launchAtLogin) {
             if (!LaunchAtLogin.set(after.launchAtLogin) && after.launchAtLogin) {
@@ -1251,7 +1553,8 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         if (modeChanged) needsElevation.value = false
         if (isTunnelRunning) {
             val tunUp = tun.isRunning || remoteTun != null
-            if (portsChanged || modeChanged || (tunUp && after.bypassTurkmenistan != old.bypassTurkmenistan)) {
+            val tunRoutesChanged = after.bypassTurkmenistan != old.bypassTurkmenistan || after.excludedRoutes != old.excludedRoutes
+            if (portsChanged || modeChanged || (tunUp && tunRoutesChanged)) {
                 scope.launch {
                     connectLock.withLock {
                         if (remoteTun != null) { remoteTun = null; runCatching { com.mythaia.desktop.service.ServiceClient.stop() } }
@@ -1293,6 +1596,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     fun clearGeoIp() = GeoIpDatabase.clear(AppPaths.geoIp)
 
     private fun applyPolicies(s: DesktopSettings) {
+        LatencyTester.checkUrl = s.latencyCheckUrl
         FragmentPolicy.set(
             FragmentSettings(
                 isEnabled = s.fragmentEnabled,
@@ -1307,6 +1611,16 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     // ------------------------------------------------------------- persist
+
+    private fun mutateRoutingProfiles(transform: (com.mythaia.data.routing.RoutingProfiles) -> com.mythaia.data.routing.RoutingProfiles) {
+        synchronized(stateLock) {
+            val next = transform(_routingProfiles.value)
+            if (next != _routingProfiles.value) {
+                _routingProfiles.value = next
+                store.saveRoutingProfiles(next)
+            }
+        }
+    }
 
     private fun mutateSettings(transform: (DesktopSettings) -> DesktopSettings): DesktopSettings =
         synchronized(stateLock) {
@@ -1431,6 +1745,7 @@ internal fun OutboundProtocol.needsNative(): Boolean = when (this) {
 internal data class ParsedImport(
     val configurations: List<ProxyConfiguration>,
     val subscriptions: List<com.mythaia.data.network.SubscriptionLink>,
+    val routingLinks: List<String> = emptyList(),
     val error: String? = null
 )
 
@@ -1449,11 +1764,12 @@ internal fun isSubscriptionUrl(line: String): Boolean =
 /**
  * Parses one or more imported text chunks (clipboard text, dialog paste, or QR
  * payloads): each chunk may be an Xray JSON document, a `wg-quick` INI, or
- * newline-separated proxy/subscription links.
+ * newline-separated proxy/subscription/routing links.
  */
 internal fun parseImportChunks(chunks: List<String>, name: String? = null): ParsedImport {
     val added = mutableListOf<ProxyConfiguration>()
     val subscriptions = mutableListOf<com.mythaia.data.network.SubscriptionLink>()
+    val routingLinks = mutableListOf<String>()
     var lastError: String? = null
     val customName = name?.trim()?.takeIf { it.isNotEmpty() }
     for (chunk in chunks) {
@@ -1469,8 +1785,22 @@ internal fun parseImportChunks(chunks: List<String>, name: String? = null): Pars
                 .onFailure { lastError = it.message }
             continue
         }
-        val lines = chunk.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        for (line in lines) {
+        val extracted = LinkedHashSet<String>()
+        for (rawLine in chunk.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) continue
+            if (com.mythaia.data.routing.HappRouting.isLink(line)) {
+                extracted += line
+                continue
+            }
+            val found = com.mythaia.data.network.LinkExtractor.extract(line)
+            if (found.isNotEmpty()) extracted += found else extracted += line
+        }
+        for (line in extracted) {
+            if (com.mythaia.data.routing.HappRouting.isLink(line)) {
+                routingLinks += line
+                continue
+            }
             // A subscription, possibly with its fronting written in
             // (`…#front=…&sni=…` or mythaia://import?url=…&front=…).
             if (isSubscriptionUrl(line) || line.startsWith("mythaia://import?", ignoreCase = true)) {
@@ -1485,6 +1815,6 @@ internal fun parseImportChunks(chunks: List<String>, name: String? = null): Pars
                 .onFailure { lastError = it.message }
         }
     }
-    return ParsedImport(added, subscriptions, lastError)
+    return ParsedImport(added, subscriptions, routingLinks, lastError)
 }
 

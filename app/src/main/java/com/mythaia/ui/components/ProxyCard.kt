@@ -91,6 +91,16 @@ fun ProxyCardContent(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                // The provider's serverDescription, under the name as Happ shows it.
+                configuration.description?.let { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = configuration.displayEndpoint,

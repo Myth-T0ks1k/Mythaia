@@ -81,6 +81,12 @@ class DesktopStore {
     fun saveRules(rules: List<RouteRule>) =
         save(AppPaths.rules) { json.encodeToString(ListSerializer(RouteRule.serializer()), rules) }
 
+    fun loadRoutingProfiles(): com.mythaia.data.routing.RoutingProfiles =
+        read(AppPaths.routingProfiles, com.mythaia.data.routing.RoutingProfiles.serializer()) ?: com.mythaia.data.routing.RoutingProfiles()
+
+    fun saveRoutingProfiles(profiles: com.mythaia.data.routing.RoutingProfiles) =
+        save(AppPaths.routingProfiles) { json.encodeToString(com.mythaia.data.routing.RoutingProfiles.serializer(), profiles) }
+
     // ------------------------------------------------------------ writer
 
     /** Saves not yet started, newest per file; guarded by [queueLock]. */

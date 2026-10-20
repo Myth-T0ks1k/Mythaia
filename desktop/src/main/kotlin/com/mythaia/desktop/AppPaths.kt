@@ -23,6 +23,8 @@ object AppPaths {
     val subscriptions: File get() = File(dataDir, "subscriptions.json")
     val settings: File get() = File(dataDir, "settings.json")
     val rules: File get() = File(dataDir, "rules.json")
+    val routingProfiles: File get() = File(dataDir, "routing-profiles.json")
+    val geoDir: File get() = File(dataDir, "geo").apply { mkdirs() }
     val chains: File get() = File(dataDir, "chains.json")
     val importRequest: File get() = File(dataDir, "import.request")
     val proxySnapshot: File get() = File(dataDir, "system-proxy-before.json")

@@ -28,11 +28,14 @@ import com.mythaia.vpn.util.decodeBase64Lenient
  * | `fronting-target` (or `resolve-address`) | hosts to dial instead of the panel; `off` stops fronting |
  * | `fronting-sni` | the name sent in the TLS handshake |
  * | `host` | with a target, Happ's name for the panel's real host |
+ * | `routing`, `routing-enable` | a Happ routing profile; `0` turns profiles off |
+ * | the [RemoteSettings] keys | app settings the provider chooses |
  *
  * The keys that send the subscription elsewhere — `new-url`, `new-domain`,
  * `fallback-url` and the fronting ones — count only in a response that came
  * over verified TLS. From a plain-HTTP panel anyone on the path could move
- * the subscription for good.
+ * the subscription for good. So do the routing profile and the app settings,
+ * which decide what leaves the tunnel.
  */
 object SubscriptionMetadata {
 
@@ -99,7 +102,10 @@ object SubscriptionMetadata {
                 )
             },
             expireNotice = flag("sub-expire") ?: flag("notification-subs-expire"),
-            expireButtonLink = link("sub-expire-button-link")
+            expireButtonLink = link("sub-expire-button-link"),
+            settings = RemoteSettings.read(::raw, secure),
+            routing = if (secure) raw("routing")?.takeIf { it.length <= 2 * 1024 * 1024 } else null,
+            routingEnable = if (secure) flag("routing-enable") else null
         )
     }
 
@@ -108,9 +114,28 @@ object SubscriptionMetadata {
      * the subscription moved where the panel says it now lives. A key the
      * panel leaves out keeps its old value, except the messages, which a panel
      * that stops sending them has withdrawn.
+     *
+     * The subscription's own [RemoteSettings] land here too, when
+     * [settingsAllowed] (the user's "let subscriptions change app settings"):
+     * the ones that restrict or choose for the user count only while the
+     * panel keeps sending them; `subscription-pin` only when it changes, so
+     * the user can unpin. The app-wide keys are recorded in
+     * [Subscription.appliedSettings] once the platform has acted on them.
      */
-    fun applyTo(current: Subscription, result: SubscriptionFetcher.Result, now: Long = System.currentTimeMillis()): Subscription {
+    fun applyTo(
+        current: Subscription,
+        result: SubscriptionFetcher.Result,
+        now: Long = System.currentTimeMillis(),
+        settingsAllowed: Boolean = true
+    ): Subscription {
         val panel = result.panel
+        val settings = if (settingsAllowed) panel.settings else emptyMap()
+        val pinValue = settings["subscription-pin"]
+        val pinned = if (pinValue != null && pinValue != current.appliedSettings["subscription-pin"]) {
+            RemoteSettings.flag(pinValue) == true
+        } else current.pinned
+        val collapsible = settings["subscriptions-collapse"]?.lowercase().let { it != "false" && it != "0" }
+        val expandNow = RemoteSettings.flag(settings["subscriptions-expand-now"]) == true
 
         // new-url may carry fronting of its own, in either link form.
         val newLink = panel.newUrl?.let { SubscriptionLink.parse(it) }
@@ -164,9 +189,19 @@ object SubscriptionMetadata {
             frontSni = sni,
             frontTargets = targets,
             lastFailure = null,
-            lastFailureMessage = null
+            lastFailureMessage = null,
+            userAgent = RemoteSettings.userAgent(settings),
+            pinned = pinned,
+            collapsible = collapsible,
+            collapsed = current.collapsed && collapsible && !expandNow,
+            serverSort = RemoteSettings.serverSort(settings),
+            hideSettings = RemoteSettings.flag(settings["hide-settings"]) == true,
+            pingOnOpen = RemoteSettings.flag(settings["subscription-ping-onopen-enabled"]) == true,
+            autoConnect = RemoteSettings.autoConnect(settings),
+            appliedSettings = if (pinValue != null) current.appliedSettings + ("subscription-pin" to pinValue) else current.appliedSettings
         )
     }
+
 
     /**
      * [url] with its host replaced by [host] (`name` or `name:port`). The

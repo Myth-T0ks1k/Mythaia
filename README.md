@@ -154,8 +154,19 @@ vless://…
 | `fronting-target` (or `resolve-address`) | Hosts to dial instead of the panel, comma-separated; `off` turns fronting off |
 | `fronting-sni` | The SNI to send |
 | `host` | With `resolve-address`: the panel’s real host, as Happ writes it |
+| `routing` (`happ://routing/add/…`, `happ://routing/onadd/…`, `happ://routing/off`), `routing-enable` | Routing profile (Direct, Proxy, Block lists and `geosite.dat` / `geoip.dat` files); `happ://routing/…` links also work when opened or pasted |
+| `subscription-autoconnect`, `subscription-autoconnect-type` (`lastused`, `lowestdelay`, `random`) | Connect on start using the chosen server from this subscription |
+| `subscription-ping-onopen-enabled`, `ping-type` (`proxy`, `proxy-head`, `tcp`, `icmp`), `check-url-via-proxy` | Measure servers when the app opens; how latency is measured and against which URL |
+| `change-user-agent` | `User-Agent` sent on future refreshes of this subscription |
+| `fragmentation-enable`, `fragmentation-packets`, `fragmentation-length`, `fragmentation-interval`, `fragmentation-maxsplit` | TLS record/TCP fragmentation settings |
+| `exclude-routes`, `exclude-routes-set` | Extra CIDRs excluded from the tunnel (`off` clears them) |
+| `per-app-proxy-mode` (`off`, `bypass`, `only`), `per-app-proxy-list` | Split tunnelling by app package on Android |
+| `app-auto-start` | Start the VPN on Android boot or launch Mythaia at Windows sign-in |
+| `subscriptions-sort-type` (`ping`, `alphabet`, `off`), `subscription-pin`, `subscriptions-collapse`, `subscriptions-expand-now` | Server sort order, group pin and collapsed state |
+| `hide-settings` | Hide the raw server configuration editor and shareable links for this subscription’s servers |
+| `serverDescription` (or `description`) | Short note on a server link’s query or JSON object, shown under the server name |
 
-`new-url`, `new-domain`, `fallback-url` and the fronting keys are taken only from a response that came over verified HTTPS: from a plain-HTTP panel, anyone on the path could redirect the subscription.
+`new-url`, `new-domain`, `fallback-url`, the fronting keys, routing profiles and the keys that change app settings are taken only from a response that came over verified HTTPS: from a plain-HTTP panel, anyone on the path could redirect the subscription or rewrite settings. A switch in Settings (**Let subscriptions change app settings**) turns remote setting changes off while keeping server lists and notices. When a refresh brings a new `announce` or `sub-info-text`, or when `sub-expire` enters the three-day window, the app also raises a system notification once per message.
 
 When a refresh fails, a bar at the bottom says so and offers **Try through a working server**: the subscription is downloaded through the connected server or the fastest one that answers a quick check, which gets it past a panel blocked outright. The bar goes away on its own.
 

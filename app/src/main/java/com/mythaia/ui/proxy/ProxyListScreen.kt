@@ -170,8 +170,10 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     }
     val group = groups.firstOrNull { it.id == browsingGroupId } ?: groups.first()
     val subscription = group.subscriptionId?.let { id -> subscriptions.firstOrNull { it.id == id } }
+    // The provider's hide-settings also keeps its servers' links to itself.
+    val linksHidden = subscription?.hideSettings == true
     val editingDisabled = subscription != null &&
-        SubscriptionDomainHelper.shouldDisableProxyEditing(subscription.url)
+        (SubscriptionDomainHelper.shouldDisableProxyEditing(subscription.url) || linksHidden)
     val defaultGroupName = stringResource(R.string.group_default)
 
     fun matchesQuery(config: ProxyConfiguration): Boolean {
@@ -180,13 +182,19 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             config.serverAddress.contains(searchQuery, ignoreCase = true)
     }
 
+    // The provider's subscriptions-sort-type is the order until the user sorts.
+    val providerSort = subscription?.serverSort
     val filtered = remember(group, searchQuery) {
         if (searchQuery.isBlank()) group.configs else group.configs.filter { matchesQuery(it) }
     }
-
-    val visible = remember(filtered, sortByLatency, if (sortByLatency) latencyResults else null) {
-        if (!sortByLatency) filtered else filtered.sortedBy { config ->
-            (latencyResults[config.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
+    val sortByPing = sortByLatency || providerSort == com.mythaia.data.network.RemoteSettings.SORT_PING
+    val visible = remember(filtered, sortByLatency, providerSort, if (sortByPing) latencyResults else null) {
+        when {
+            sortByPing -> filtered.sortedBy { config ->
+                (latencyResults[config.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
+            }
+            providerSort == com.mythaia.data.network.RemoteSettings.SORT_ALPHABET -> filtered.sortedBy { it.name.lowercase() }
+            else -> filtered
         }
     }
 
@@ -322,7 +330,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.export_links)) },
                                     leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                                    enabled = group.configs.isNotEmpty(),
+                                    enabled = group.configs.isNotEmpty() && !linksHidden,
                                     onClick = { menuOpen = false; exportGroup() }
                                 )
                                 DropdownMenuItem(
@@ -665,8 +673,9 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
         SubscriptionSettingsDialog(
             subscription = sub,
             onDismiss = { subscriptionToConfigureId = null },
-            onSave = { name, sni, targets ->
+            onSave = { name, sni, targets, pinned ->
                 viewModel.updateSubscriptionSettings(sub, name, sni, targets)
+                if (pinned != sub.pinned) viewModel.setSubscriptionPinned(sub, pinned)
                 subscriptionToConfigureId = null
             }
         )

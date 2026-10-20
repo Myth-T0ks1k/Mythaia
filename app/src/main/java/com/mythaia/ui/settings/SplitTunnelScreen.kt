@@ -73,6 +73,9 @@ fun SplitTunnelScreen(
     val context = LocalContext.current
 
     val stored = remember { viewModel.splitTunnelSettings }
+    val managedBy = remember {
+        viewModel.managedSettings()[com.mythaia.data.network.ProviderKeys.AppSettings.GROUP_PER_APP]
+    }
     var mode by remember { mutableStateOf(stored.mode) }
     var selected by remember { mutableStateOf(stored.packages) }
     var query by remember { mutableStateOf("") }
@@ -141,6 +144,14 @@ fun SplitTunnelScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            if (managedBy != null) {
+                Text(
+                    text = stringResource(R.string.settings_managed_by, managedBy),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

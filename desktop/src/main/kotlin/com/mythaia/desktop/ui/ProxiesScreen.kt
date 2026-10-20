@@ -144,13 +144,19 @@ private fun ServersTab(state: AppState) {
     val present = configs.map { it.id }.toSet()
     if (selected.any { it !in present }) selected = selected.filter { it in present }.toSet()
 
-    val base = remember(configs, sortKey, sortAscending, search) {
+    val hideSettings = group.subscription?.hideSettings == true
+    val providerSort = group.subscription?.serverSort
+
+    val base = remember(configs, sortKey, sortAscending, search, hideSettings, providerSort) {
         val filtered = if (search.isBlank()) configs else configs.filter {
-            it.name.contains(search, ignoreCase = true) || it.displayEndpoint.contains(search, ignoreCase = true) ||
-                it.outboundProtocol.displayName.contains(search, ignoreCase = true)
+            it.name.contains(search, ignoreCase = true) ||
+                (!hideSettings && it.displayEndpoint.contains(search, ignoreCase = true)) ||
+                it.outboundProtocol.displayName.contains(search, ignoreCase = true) ||
+                (it.description?.contains(search, ignoreCase = true) == true)
         }
         val sorted = when (sortKey) {
-            SortKey.NONE, SortKey.LATENCY -> filtered
+            SortKey.NONE -> if (providerSort == "alphabet") filtered.sortedBy { it.name.lowercase() } else filtered
+            SortKey.LATENCY -> filtered
             SortKey.NAME -> filtered.sortedBy { it.name.lowercase() }
             SortKey.PROTOCOL -> filtered.sortedBy { it.outboundProtocol.displayName }
             SortKey.TRANSPORT -> filtered.sortedBy { transportLabel(it) }
@@ -159,13 +165,14 @@ private fun ServersTab(state: AppState) {
         if (sortAscending || sortKey == SortKey.NONE || sortKey == SortKey.LATENCY) sorted else sorted.reversed()
     }
 
+    val sortByPing = sortKey == SortKey.LATENCY || (sortKey == SortKey.NONE && providerSort == "ping")
     fun latencyRank(id: UUID): Int {
         val ms = (latencies[id] as? LatencyResult.Success)?.ms ?: return Int.MAX_VALUE
-        return if (sortAscending) ms else -ms
+        return if (sortAscending || sortKey == SortKey.NONE) ms else -ms
     }
 
-    val visible = remember(base, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
-        if (sortKey != SortKey.LATENCY) base
+    val visible = remember(base, sortKey, sortAscending, providerSort, if (sortByPing) latencies else null) {
+        if (!sortByPing) base
         else base.sortedBy { latencyRank(it.id) }
     }
 
@@ -176,8 +183,8 @@ private fun ServersTab(state: AppState) {
         if (!settings.groupByCountry) null
         else CountryGrouping.sections(base, { state.countryOf(it) }, locale).takeIf { it.size >= 2 }
     }
-    val sections = remember(byCountry, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
-        if (byCountry == null || sortKey != SortKey.LATENCY) byCountry
+    val sections = remember(byCountry, sortKey, sortAscending, providerSort, if (sortByPing) latencies else null) {
+        if (byCountry == null || !sortByPing) byCountry
         else byCountry.map { section ->
             section.copy(items = section.items.sortedBy { latencyRank(it.id) })
         }.sortedBy { section ->
@@ -254,16 +261,25 @@ private fun ServersTab(state: AppState) {
                 )
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text(tr("select_fastest")) }, onClick = { menu = false; state.useAuto(shownGroup) })
-                DropdownMenuItem(text = { Text(tr("copy_all_links")) }, onClick = { menu = false; state.copyToClipboard(state.linksOf(configs)) })
-                DropdownMenuItem(text = { Text(tr("save_links_file")) }, onClick = { menu = false; state.saveLinksToFile(configs, group.name) })
+                if (!hideSettings) {
+                    DropdownMenuItem(text = { Text(tr("copy_all_links")) }, onClick = { menu = false; state.copyToClipboard(state.linksOf(configs)) })
+                    DropdownMenuItem(text = { Text(tr("save_links_file")) }, onClick = { menu = false; state.saveLinksToFile(configs, group.name) })
+                }
                 DropdownMenuItem(text = { Text(tr("remove_duplicates")) }, onClick = { menu = false; state.removeDuplicates(shownGroup) })
                 DropdownMenuItem(text = { Text(tr("remove_failed")) }, onClick = { menu = false; state.removeFailed(shownGroup) })
                 if (group.subscription != null) {
                     HorizontalDivider()
+                    val sub = group.subscription
+                    DropdownMenuItem(
+                        text = { Text(tr(if (sub.pinned) "unpin_subscription" else "pin_subscription")) },
+                        onClick = { menu = false; state.setSubscriptionPinned(sub.id, !sub.pinned) }
+                    )
                     DropdownMenuItem(text = { Text(tr("update_all")) }, onClick = { menu = false; state.updateAllSubscriptions() })
-                    DropdownMenuItem(text = { Text(tr("copy_subscription_url")) }, onClick = { menu = false; state.copyToClipboard(group.subscription.url) })
-                    DropdownMenuItem(text = { Text(tr("nav_settings")) }, onClick = { menu = false; editSubscription = group.subscription })
-                    DropdownMenuItem(text = { Text(tr("delete")) }, onClick = { menu = false; confirmDeleteSubscription = group.subscription })
+                    if (!hideSettings) {
+                        DropdownMenuItem(text = { Text(tr("copy_subscription_url")) }, onClick = { menu = false; state.copyToClipboard(sub.url) })
+                    }
+                    DropdownMenuItem(text = { Text(tr("nav_settings")) }, onClick = { menu = false; editSubscription = sub })
+                    DropdownMenuItem(text = { Text(tr("delete")) }, onClick = { menu = false; confirmDeleteSubscription = sub })
                 }
             }
         }
@@ -288,7 +304,9 @@ private fun ServersTab(state: AppState) {
         if (selected.isNotEmpty()) {
             Spacer(Modifier.width(10.dp))
             Text(tr("selected_n", selected.size), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { state.copyToClipboard(state.linksOf(configs.filter { it.id in selected })) }) { Text(tr("copy_link")) }
+            if (!hideSettings) {
+                TextButton(onClick = { state.copyToClipboard(state.linksOf(configs.filter { it.id in selected })) }) { Text(tr("copy_link")) }
+            }
             TextButton(onClick = { configs.filter { it.id in selected }.forEach { state.pingOne(it) } }) { Text(tr("ping")) }
             TextButton(onClick = { confirmDelete = selected }) { Text(tr("delete"), color = MaterialTheme.colorScheme.error) }
         }
@@ -352,6 +370,7 @@ private fun ServersTab(state: AppState) {
                     pinned = pinnedId == config.id,
                     live = liveId == config.id,
                     latency = latencies[config.id],
+                    hideSettings = hideSettings,
                     onClick = { state.pin(config) },
                     onPing = { state.pingOne(config) },
                     onCopy = { runCatching { config.toUrl() }.onSuccess { state.copyToClipboard(it) } },
@@ -378,7 +397,7 @@ private fun ServersTab(state: AppState) {
                                 autoActive = autoHere,
                                 locale = locale,
                                 onToggle = { state.toggleCountryCollapsed(shownGroup, code) },
-                                onPing = { state.pingConfigs(section.items, LatencyKind.HTTP) },
+                                onPing = { state.pingConfigs(section.items, state.defaultLatencyKind()) },
                                 onAuto = code?.let { c -> { if (autoHere) state.useAuto(shownGroup) else state.useAutoIn(shownGroup, c) } }
                             )
                         }
@@ -552,6 +571,7 @@ private fun ServerRow(
     pinned: Boolean,
     live: Boolean,
     latency: LatencyResult?,
+    hideSettings: Boolean,
     onClick: () -> Unit,
     onPing: () -> Unit,
     onCopy: () -> Unit,
@@ -572,12 +592,22 @@ private fun ServerRow(
         Checkbox(checked = checked, onCheckedChange = onCheck, modifier = Modifier.size(36.dp))
         Box(Modifier.width(4.dp).height(30.dp).clip(RoundedCornerShape(2.dp)).background(if (live) Azure else MaterialTheme.colorScheme.surfaceContainerLow))
         Spacer(Modifier.width(10.dp))
-        Text(
-            config.name,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (live) FontWeight.SemiBold else FontWeight.Normal),
-            color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(2.2f)
-        )
+        Column(modifier = Modifier.weight(2.2f).padding(vertical = 2.dp)) {
+            Text(
+                config.name,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (live) FontWeight.SemiBold else FontWeight.Normal),
+                color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            config.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                Text(
+                    desc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
         // A server whose certificate is not checked says so on its row.
         if (config.skipsCertificateCheck) {
             Text(
@@ -594,17 +624,28 @@ private fun ServerRow(
         }
         Text(config.outboundProtocol.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.weight(0.9f))
         Text(transportLabel(config), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.weight(1f))
-        Text(config.displayEndpoint, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.6f))
+        Text(
+            if (hideSettings) "—" else config.displayEndpoint,
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.6f)
+        )
         Box(modifier = Modifier.width(96.dp), contentAlignment = Alignment.CenterStart) { LatencyBadge(latency) }
         if (pinned) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.MoreVert, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(tr("ping_real")) }, onClick = { menu = false; onPing() })
-                DropdownMenuItem(text = { Text(tr("edit")) }, onClick = { menu = false; onEdit() })
+                if (!hideSettings) {
+                    DropdownMenuItem(text = { Text(tr("edit")) }, onClick = { menu = false; onEdit() })
+                }
                 DropdownMenuItem(text = { Text(tr("rename")) }, onClick = { menu = false; onRename() })
-                DropdownMenuItem(text = { Text(tr("copy_link")) }, onClick = { menu = false; onCopy() })
-                DropdownMenuItem(text = { Text(tr("show_qr")) }, onClick = { menu = false; onQr() })
+                if (!hideSettings) {
+                    DropdownMenuItem(text = { Text(tr("copy_link")) }, onClick = { menu = false; onCopy() })
+                    DropdownMenuItem(text = { Text(tr("show_qr")) }, onClick = { menu = false; onQr() })
+                }
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text(tr("delete")) }, onClick = { menu = false; onDelete() })
             }
@@ -787,14 +828,19 @@ private fun SubscriptionDialog(sub: Subscription, onDismiss: () -> Unit, onSave:
         title = { Text(sub.name) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(sub.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                Text(
+                    if (sub.hideSettings) tr("subscription_links_hidden") else sub.url,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2
+                )
                 WingField(name, { name = it }, tr("subscription_name"))
                 WingField(sni, { sni = it }, tr("front_sni"))
                 WingField(targets, { targets = it }, tr("front_targets"))
                 // One link with the fronting in it: opening or pasting it adds
                 // the subscription already fronted, here or on a phone.
                 val targetList = targets.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-                if (targetList.isNotEmpty() || sni.isNotBlank()) {
+                if (!sub.hideSettings && (targetList.isNotEmpty() || sni.isNotBlank())) {
                     TextButton(onClick = {
                         val link = com.mythaia.data.network.SubscriptionLink(
                             url = sub.url,

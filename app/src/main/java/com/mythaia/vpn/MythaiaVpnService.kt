@@ -481,6 +481,19 @@ class MythaiaVpnService : VpnService() {
     // Bypass routes — IP ranges excluded from VPN tunnel (sent directly)
     private data class BypassRoute(val address: String, val prefixLength: Int)
 
+    /** The provider's excluded routes, host bits cleared, as address bytes and prefix. */
+    private fun excludedRoutes(): List<Pair<ByteArray, Int>> =
+        com.mythaia.data.network.ProviderKeys.AppSettings.excludedRoutes(this).mapNotNull { text ->
+            val (bytes, prefix) = com.mythaia.data.routing.IpRanges.parseCidr(text) ?: return@mapNotNull null
+            val masked = bytes.copyOf()
+            for (i in masked.indices) {
+                val keep = (prefix - i * 8).coerceIn(0, 8)
+                masked[i] = (masked[i].toInt() and ((0xFF shl (8 - keep)) and 0xFF)).toByte()
+            }
+            masked to prefix
+        }
+
+
     /**
      * Brings up a WireGuard or AmneziaWG interface.
      *
@@ -717,8 +730,22 @@ class MythaiaVpnService : VpnService() {
         // The route list below covers 0.0.0.0/0 minus:
         //   10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
         // (standard private / CGNAT / loopback ranges from BYPASS_IPV4_ROUTES).
-        for (route in PUBLIC_IPV4_ROUTES) {
+        // A provider's `exclude-routes` widens the bypass; the complement is
+        // then computed for this build rather than taken from the constant.
+        val excluded = excludedRoutes()
+        val v4Excluded = excluded.filter { it.first.size == 4 }.map { (bytes, prefix) ->
+            BypassRoute(bytes.joinToString(".") { (it.toInt() and 0xFF).toString() }, prefix)
+        }
+        val ipv4Routes = if (v4Excluded.isEmpty()) PUBLIC_IPV4_ROUTES else computeIPv4SplitRoutes(BYPASS_IPV4_ROUTES + v4Excluded)
+        for (route in ipv4Routes) {
             builder.addRoute(route.address, route.prefixLength)
+        }
+        // IPv6 has the excluded-route call from Android 13; below it they stay in.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            for ((bytes, prefix) in excluded.filter { it.first.size == 16 }) {
+                runCatching { builder.excludeRoute(android.net.IpPrefix(java.net.InetAddress.getByAddress(bytes), prefix)) }
+                    .onFailure { logger.warning("[VPN] Excluded route refused: ${it.message ?: it}") }
+            }
         }
 
         applySplitTunnel(builder, prefs)

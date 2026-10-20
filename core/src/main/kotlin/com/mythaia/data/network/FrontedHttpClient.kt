@@ -55,7 +55,8 @@ object FrontedHttpClient {
         allowInsecure: Boolean,
         maxBody: Int,
         via: ProxyConfiguration? = null,
-        timeoutMs: Long = TIMEOUT_MS
+        timeoutMs: Long = TIMEOUT_MS,
+        userAgent: String = "Mythaia"
     ): Response = withTimeout(timeoutMs) {
         val https = url.protocol.equals("https", ignoreCase = true)
         require(https || via != null) { "plain HTTP needs a server to go through" }
@@ -88,7 +89,7 @@ object FrontedHttpClient {
             val request = buildString {
                 append("GET ").append(path).append(" HTTP/1.1\r\n")
                 append("Host: ").append(hostHeader).append("\r\n")
-                append("User-Agent: Mythaia\r\n")
+                append("User-Agent: ").append(userAgent).append("\r\n")
                 append("Accept: */*\r\n")
                 for ((k, v) in extraHeaders) append(k).append(": ").append(v).append("\r\n")
                 append("Connection: close\r\n\r\n")

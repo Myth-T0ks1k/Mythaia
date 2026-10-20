@@ -152,8 +152,19 @@ vless://…
 | `fronting-target` (or `resolve-address`) | آدرس‌هایی که به‌جای پنل به آن‌ها وصل می‌شود، جدا با ویرگول؛ `off` فرانتینگ را خاموش می‌کند |
 | `fronting-sni` | SNI ارسالی |
 | `host` | همراه `resolve-address`: هاست واقعی پنل، مانند Happ |
+| `routing` (`happ://routing/add/…`, `happ://routing/onadd/…`, `happ://routing/off`), `routing-enable` | پروفایل مسیریابی (فهرست‌های مستقیم، پروکسی، مسدود و فایل‌های `geosite.dat` / `geoip.dat`)؛ لینک‌های `happ://routing/…` هنگام باز شدن یا جای‌گذاری هم کار می‌کنند |
+| `subscription-autoconnect`, `subscription-autoconnect-type` (`lastused`, `lowestdelay`, `random`) | اتصال خودکار هنگام شروع به سرور انتخاب‌شده از این اشتراک |
+| `subscription-ping-onopen-enabled`, `ping-type` (`proxy`, `proxy-head`, `tcp`, `icmp`), `check-url-via-proxy` | اندازه‌گیری تأخیر سرورها هنگام باز شدن برنامه؛ روش سنجش و آدرس بررسی |
+| `change-user-agent` | هدر `User-Agent` در به‌روزرسانی‌های بعدی این اشتراک |
+| `fragmentation-enable`, `fragmentation-packets`, `fragmentation-length`, `fragmentation-interval`, `fragmentation-maxsplit` | تنظیمات تکه‌تکه‌سازی رکورد TLS و TCP |
+| `exclude-routes`, `exclude-routes-set` | زیرشبکه‌های CIDR اضافی خارج از تونل (`off` آن‌ها را پاک می‌کند) |
+| `per-app-proxy-mode` (`off`, `bypass`, `only`), `per-app-proxy-list` | تونل تفکیکی بر اساس نام بستهٔ برنامه‌ها در اندروید |
+| `app-auto-start` | روشن شدن VPN هنگام بالا آمدن اندروید یا اجرای Mythaia هنگام ورود به ویندوز |
+| `subscriptions-sort-type` (`ping`, `alphabet`, `off`), `subscription-pin`, `subscriptions-collapse`, `subscriptions-expand-now` | ترتیب مرتب‌سازی سرورها، سنجاق کردن گروه و وضعیت جمع‌شدن |
+| `hide-settings` | پنهان کردن ویرایشگر تنظیمات سرور و لینک‌های خام برای سرورهای این اشتراک |
+| `serverDescription` (یا `description`) | توضیح کوتاه در پارامترهای لینک سرور یا شیء JSON که زیر نام سرور نمایش داده می‌شود |
 
-`new-url`، `new-domain`، `fallback-url` و کلیدهای فرانتینگ فقط از پاسخی پذیرفته می‌شوند که از HTTPS تأییدشده آمده باشد: در پنل HTTP ساده، هر کسی در مسیر می‌توانست اشتراک را به جای دیگری ببرد.
+`new-url`، `new-domain`، `fallback-url`، کلیدهای فرانتینگ، پروفایل‌های مسیریابی و کلیدهایی که تنظیمات برنامه را تغییر می‌دهند فقط از پاسخی پذیرفته می‌شوند که از HTTPS تأییدشده آمده باشد: در پنل HTTP ساده، هر کسی در مسیر می‌توانست اشتراک را به جای دیگری ببرد یا تنظیمات را دستکاری کند. کلیدی در تنظیمات (**اجازه به اشتراک‌ها برای تغییر تنظیمات برنامه**) تغییرات راه‌دور تنظیمات را خاموش می‌کند و فهرست سرورها و اعلان‌ها را نگه می‌دارد. وقتی به‌روزرسانی یک `announce` یا `sub-info-text` تازه بیاورد، یا `sub-expire` وارد بازهٔ سه‌روزه شود، برنامه برای هر پیام یک اعلان سیستمی هم نمایش می‌دهد.
 
 اگر به‌روزرسانی ناموفق باشد، نواری در پایین با دکمهٔ **از طریق یک سرور فعال** ظاهر می‌شود: اشتراک از طریق سرور متصل یا سریع‌ترین سروری که به یک بررسی کوتاه پاسخ داده دانلود می‌شود — حتی وقتی پنل کاملاً مسدود است. نوار خودش ناپدید می‌شود.
 

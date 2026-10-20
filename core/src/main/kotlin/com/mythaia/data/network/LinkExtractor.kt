@@ -88,6 +88,8 @@ object LinkExtractor {
         if (lower.startsWith("mythaia://import?")) {
             SubscriptionLink.parse(link)?.let { return it.toFragmentLink() }
         }
+        // A Happ routing profile is a link of its own, not a wrapper around one.
+        if (com.mythaia.data.routing.HappRouting.isLink(link)) return link
         for (wrapper in WRAPPERS) {
             if (lower.startsWith(wrapper)) {
                 val inner = link.substring(wrapper.length).substringBefore("#name=")

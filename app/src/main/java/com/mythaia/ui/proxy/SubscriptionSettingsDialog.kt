@@ -3,6 +3,7 @@ package com.mythaia.ui.proxy
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -39,9 +42,10 @@ import com.mythaia.ui.components.wingTextFieldColors
 fun SubscriptionSettingsDialog(
     subscription: Subscription,
     onDismiss: () -> Unit,
-    onSave: (name: String, frontSni: String?, frontTargets: List<String>) -> Unit
+    onSave: (name: String, frontSni: String?, frontTargets: List<String>, pinned: Boolean) -> Unit
 ) {
     var name by remember(subscription.id) { mutableStateOf(subscription.name) }
+    var pinned by remember(subscription.id) { mutableStateOf(subscription.pinned) }
     var sni by remember(subscription.id) { mutableStateOf(subscription.frontSni ?: "") }
     var targets by remember(subscription.id) { mutableStateOf(subscription.frontTargets.joinToString("\n")) }
     val context = LocalContext.current
@@ -64,6 +68,36 @@ fun SubscriptionSettingsDialog(
                     colors = wingTextFieldColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.subscription_pin_top),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(checked = pinned, onCheckedChange = { pinned = it })
+                }
+                // What the provider decided for this subscription, so a hidden
+                // editor or a sort order the user did not pick has a reason.
+                val managed = buildList {
+                    if (subscription.hideSettings) add(stringResource(R.string.managed_hide_settings))
+                    if (subscription.serverSort != null) add(stringResource(R.string.managed_sort))
+                    subscription.userAgent?.let { add(stringResource(R.string.managed_user_agent, it)) }
+                    if (subscription.pingOnOpen) add(stringResource(R.string.managed_ping_on_open))
+                    if (subscription.autoConnect != null) add(stringResource(R.string.managed_auto_connect))
+                    if (!subscription.collapsible) add(stringResource(R.string.managed_no_collapse))
+                }
+                if (managed.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.settings_managed_by, subscription.name) + ": " + managed.joinToString(", "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = stringResource(R.string.fronting),
@@ -130,7 +164,8 @@ fun SubscriptionSettingsDialog(
                 onSave(
                     name,
                     sni.trim().takeIf { it.isNotEmpty() },
-                    targets.split('\n', ',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+                    targets.split('\n', ',', ';').map { it.trim() }.filter { it.isNotEmpty() },
+                    pinned
                 )
             }) { Text(stringResource(R.string.save)) }
         },

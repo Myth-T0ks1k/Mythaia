@@ -223,6 +223,18 @@ fun AddProxyScreen(
     fun importFromString(string: String, fromQr: Boolean) {
         val trimmed = string.trim()
 
+        // A Happ routing profile is added (and turned on) here and now; the
+        // bar at the bottom says which, with the way to turn it off.
+        if (com.mythaia.data.routing.HappRouting.isLink(trimmed)) {
+            if (viewModel.importRoutingLink(trimmed)) {
+                onDismiss()
+            } else {
+                linkErrorMessage = context.getString(R.string.routing_profile_unreadable)
+                showLinkError = true
+            }
+            return
+        }
+
         // Xray / v2ray JSON: a whole config or one outbound. Every proxy
         // outbound in it is imported.
         if (com.mythaia.data.network.XrayJsonImporter.looksLikeJson(trimmed)) {
@@ -249,7 +261,14 @@ fun AddProxyScreen(
 
         // Several links at once (a pasted list or message): every proxy link is
         // added, and the first subscription URL, if any, is fetched.
-        val extracted = com.mythaia.data.network.LinkExtractor.extract(trimmed)
+        val found = com.mythaia.data.network.LinkExtractor.extract(trimmed)
+        val routing = found.filter { com.mythaia.data.routing.HappRouting.isLink(it) }
+        routing.forEach { viewModel.importRoutingLink(it) }
+        val extracted = found - routing.toSet()
+        if (routing.isNotEmpty() && extracted.isEmpty()) {
+            onDismiss()
+            return
+        }
         if (extracted.size > 1) {
             val proxies = extracted.filter { !it.startsWith("http://") && !it.startsWith("https://") }
             val subscription = extracted.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }

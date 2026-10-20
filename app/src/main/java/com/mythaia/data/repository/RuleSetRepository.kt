@@ -288,7 +288,17 @@ class RuleSetRepository(private val context: Context) {
                     put("bypassRules", arr)
                 }
             }
+            // The Happ routing profile in force, read after the user's own
+            // rules: those win where both speak.
+            RoutingProfileRepository.get(context).activeRouting()?.let { (profile, geosite, geoip) ->
+                put("profile", JSONObject().apply {
+                    put("profile", JSONObject(Json.encodeToString(com.mythaia.data.routing.RoutingProfile.serializer(), profile)))
+                    geosite?.let { put("geosite", it.absolutePath) }
+                    geoip?.let { put("geoip", it.absolutePath) }
+                })
+            }
         }
+
 
         runCatching {
             routingFile.writeTextAtomic(routing.toString())

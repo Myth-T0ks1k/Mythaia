@@ -51,7 +51,32 @@ data class Subscription(
     val requestTimeoutSeconds: Int? = null,
     /** When the last refresh failed, and why; cleared by the next one that works. */
     val lastFailure: Long? = null,
-    val lastFailureMessage: String? = null
+    val lastFailureMessage: String? = null,
+    /** `change-user-agent`: the User-Agent this subscription is fetched with; null for Mythaia's own. */
+    val userAgent: String? = null,
+    /** `subscription-pin`: the group goes first in the list. */
+    val pinned: Boolean = false,
+    /** `subscriptions-collapse: 0`: the group may not be folded. */
+    val collapsible: Boolean = true,
+    /** `subscriptions-sort-type`: `ping`, `alphabet`, or null for the panel's order. */
+    val serverSort: String? = null,
+    /** `hide-settings`: no editor and no share links for this subscription's servers. */
+    val hideSettings: Boolean = false,
+    /** `subscription-ping-onopen-enabled`: measure the servers when the app opens. */
+    val pingOnOpen: Boolean = false,
+    /** `subscription-autoconnect` with its type (`lastused`, `lowestdelay`, `random`); null when off. */
+    val autoConnect: String? = null,
+    /**
+     * The app-wide keys ([com.mythaia.data.network.RemoteSettings.APP_KEYS])
+     * this subscription last sent and the app acted on, so the same value is
+     * not applied over the user's own choice on every refresh.
+     */
+    val appliedSettings: Map<String, String> = emptyMap(),
+    /** Hashes of the `announce` and `sub-info-text` last raised as a notification. */
+    val announceShown: String? = null,
+    val infoShown: String? = null,
+    /** The expiry warning last raised, as `<expire>:soon` or `<expire>:expired`. */
+    val expiryShown: String? = null
 ) {
     /** Whether the fetch goes through a front rather than straight to the URL. */
     val isFronted: Boolean get() = frontTargets.isNotEmpty()
@@ -65,7 +90,12 @@ data class Subscription(
         val buttonLink: String? = null
     )
 
+    /** Which provider-set restrictions or choices are in force, for the "managed by" note. */
+    val managedSettings: Boolean
+        get() = userAgent != null || pinned || !collapsible || serverSort != null || hideSettings || pingOnOpen || autoConnect != null
+
     /** Whether the last refresh failed, with no success since. */
+
     val isFailing: Boolean get() = lastFailure != null && lastFailure > (lastUpdate ?: 0L)
 
     /** The `sub-expire` warning due at [now], if any. */

@@ -91,7 +91,9 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
     val connecting = connection is ConnectionState.Connecting
     val groupId = settings.activeGroupId
     val groups = remember(subscriptions, configurations) { state.groups() }
+    val routingProfiles by state.routingProfiles.collectAsState()
     val shown = connection.configuration ?: state.effectiveConfig(groupId)
+    val shownHidden = shown?.subscriptionId?.let { sid -> subscriptions.firstOrNull { it.id == sid }?.hideSettings } == true
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 28.dp),
@@ -190,6 +192,29 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
             )
         }
 
+        routingProfiles.active?.takeIf { !settings.isGlobal }?.let { activeName ->
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .widthIn(max = 620.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    tr("routing_profile_active", activeName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                androidx.compose.material3.TextButton(onClick = { state.selectRoutingProfile(null) }) {
+                    Text(tr("routing_profile_turn_off"))
+                }
+            }
+        }
+
         Spacer(Modifier.height(12.dp))
 
         // The live (or would-be) server.
@@ -215,8 +240,16 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1
                         )
+                        shown.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                            Text(
+                                desc,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2
+                            )
+                        }
                         Text(
-                            "${shown.outboundProtocol.displayName} · ${shown.displayEndpoint}",
+                            if (shownHidden) shown.outboundProtocol.displayName else "${shown.outboundProtocol.displayName} · ${shown.displayEndpoint}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1

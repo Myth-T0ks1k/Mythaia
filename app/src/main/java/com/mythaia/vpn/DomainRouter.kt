@@ -4,6 +4,10 @@ import android.content.Context
 import com.mythaia.data.model.DomainRuleType
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.repository.MitmRepository
+import com.mythaia.data.routing.AddressCheck
+import com.mythaia.data.routing.RoutingMatcher
+import com.mythaia.data.routing.RoutingProfile
+
 import com.mythaia.vpn.util.GeoIpDatabase
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.runBlocking
@@ -19,6 +23,13 @@ sealed class RouteAction {
     data object Direct : RouteAction()
     data object Reject : RouteAction()
     data class Proxy(val configId: UUID) : RouteAction()
+
+    /**
+     * Through the tunnel's own server, said in so many words — a routing
+     * profile's proxy list — where a missing verdict would let the profile's
+     * default (which may be direct) decide instead.
+     */
+    data object DefaultProxy : RouteAction()
 }
 
 /**
@@ -31,6 +42,10 @@ sealed class RouteAction {
  *
  *  - Domain matching: reverse-label suffix trie — O(k) where k = label count.
  *  - IP matching: binary CIDR tries — O(32) IPv4 / O(128) IPv6, independent of rule count.
+ *
+ * A Happ routing profile in force ([RoutingMatcher]) is asked after the
+ * user's own rules, so the user's choices win where both speak, and its
+ * GlobalProxy decides what neither names ([defaultAction]).
  */
 class DomainRouter(private val context: Context) {
 
@@ -75,6 +90,15 @@ class DomainRouter(private val context: Context) {
     private var domainRuleCount = 0
     private var ipRuleCount = 0
 
+    /** The routing profile in force, compiled; null when none is. */
+    @Volatile
+    private var profile: RoutingMatcher? = null
+    @Volatile
+    private var addressCheck: AddressCheck? = null
+
+    /** The name of the routing profile in force, for logs. */
+    val profileName: String? get() = profile?.profile?.name
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Clears all routing rules and configurations. */
@@ -92,6 +116,8 @@ class DomainRouter(private val context: Context) {
         configurationMap.clear()
         domainRuleCount = 0
         ipRuleCount = 0
+        profile = null
+        addressCheck = null
     }
 
     /**
@@ -195,6 +221,8 @@ class DomainRouter(private val context: Context) {
             }
         }
 
+        jsonObj.optJSONObject("profile")?.let { loadProfile(it) }
+
         // User rules — these overwrite bypass rules on conflict.
         val rules = jsonObj.optJSONArray("rules") ?: run {
             logger.warning("[VPN] Routing data malformed: missing rules")
@@ -268,13 +296,74 @@ class DomainRouter(private val context: Context) {
         get() = domainRuleCount > 0 || ipRuleCount > 0
 
     /**
-     * Matches a domain in two tiers: suffix rules first, keyword rules second.
-     * Bypass entries present as [RouteAction.Direct].
+     * The routing profile from routing.json, compiled with its rule files.
+     * Compiling reads the geosite and geoip files, so the result is kept for
+     * as long as neither the profile nor the files change: routing.json is
+     * rewritten on every subscription refresh, the profile rarely.
+     */
+    private fun loadProfile(section: JSONObject) {
+        val text = section.optJSONObject("profile")?.toString() ?: return
+        val decoded = runCatching { json.decodeFromString(RoutingProfile.serializer(), text) }
+            .onFailure { logger.warning("[DomainRouter] Routing profile unreadable: ${it.message ?: it}") }
+            .getOrNull() ?: return
+        val geosite = section.optString("geosite", "").takeIf { it.isNotEmpty() }?.let(::File)
+        val geoip = section.optString("geoip", "").takeIf { it.isNotEmpty() }?.let(::File)
+        val key = listOf(text, geosite?.path, geosite?.lastModified(), geosite?.length(), geoip?.path, geoip?.lastModified(), geoip?.length())
+            .joinToString("|")
+        val matcher = synchronized(compiledLock) {
+            compiled?.takeIf { compiledKey == key } ?: RoutingMatcher.compile(decoded, geosite, geoip) { address ->
+                runCatching { InetAddress.getByAddress(address).hostAddress }.getOrNull()?.let { GeoIpDatabase.countryCode(it) }
+            }.also {
+                compiled = it
+                compiledKey = key
+            }
+        }
+        profile = matcher
+        addressCheck = AddressCheck(matcher).takeIf { it.enabled }
+        logger.debug("[DomainRouter] Routing profile ${decoded.name}: ${matcher.summary}, default ${matcher.defaultAction}, address check ${addressCheck != null}")
+    }
+
+    /**
+     * Matches a domain in two tiers: suffix rules first, keyword rules second,
+     * then the routing profile. Bypass entries present as [RouteAction.Direct].
+     * Null when nothing names it; see [defaultAction].
      */
     fun matchDomain(domain: String): RouteAction? {
         if (domain.isEmpty()) return null
         val lowered = domain.lowercase()
-        return trieLookup(lowered) ?: lookupKeywordRule(lowered)
+        return trieLookup(lowered) ?: lookupKeywordRule(lowered) ?: profile?.matchDomain(lowered)?.let(::profileAction)
+    }
+
+    /**
+     * What a destination no rule names gets: [RouteAction.Direct] under a
+     * profile whose GlobalProxy is false; null (the tunnel's server) otherwise.
+     */
+    val defaultAction: RouteAction?
+        get() = if (profile?.defaultAction == RoutingMatcher.Action.DIRECT) RouteAction.Direct else null
+
+    /**
+     * Whether [domain], which no rule names, should be resolved and tried
+     * against the profile's address rules before it is answered (the
+     * profile's `IPIfNonMatch`).
+     */
+    fun wantsAddressCheck(domain: String): Boolean {
+        val check = addressCheck ?: return false
+        return check.wants(domain) && matchDomain(domain) == null
+    }
+
+    /** Resolves [domain] for [wantsAddressCheck]. Blocking: never on the lwIP thread. */
+    fun checkAddress(domain: String) {
+        addressCheck?.check(domain)
+    }
+
+    /** The verdict an earlier [checkAddress] reached for [domain]; null when there is none or it matched nothing. */
+    fun addressVerdict(domain: String): RouteAction? =
+        (addressCheck?.known(domain) as? AddressCheck.Verdict.Matched)?.let { profileAction(it.action) }
+
+    private fun profileAction(action: RoutingMatcher.Action): RouteAction = when (action) {
+        RoutingMatcher.Action.DIRECT -> RouteAction.Direct
+        RoutingMatcher.Action.BLOCK -> RouteAction.Reject
+        RoutingMatcher.Action.PROXY -> RouteAction.DefaultProxy
     }
 
     /**
@@ -294,9 +383,10 @@ class DomainRouter(private val context: Context) {
         }
         if (cidrMatch != null) return cidrMatch
 
-        if (geoipRules.isEmpty()) return null
-        val country = GeoIpDatabase.countryCode(ip) ?: return null
-        return geoipRules[country]
+        if (geoipRules.isNotEmpty()) {
+            GeoIpDatabase.countryCode(ip)?.let { country -> geoipRules[country]?.let { return it } }
+        }
+        return profile?.matchAddress(ip)?.let(::profileAction)
     }
 
     /** Whether [domain] is in the country-bypass set, regardless of user rules. */
@@ -323,7 +413,7 @@ class DomainRouter(private val context: Context) {
 
     /** Resolves a [RouteAction.Proxy] to its [ProxyConfiguration]; null for Direct/Reject. */
     fun resolveConfiguration(action: RouteAction): ProxyConfiguration? = when (action) {
-        RouteAction.Direct, RouteAction.Reject -> null
+        RouteAction.Direct, RouteAction.Reject, RouteAction.DefaultProxy -> null
         is RouteAction.Proxy -> configurationMap[action.configId]
     }
 
@@ -461,6 +551,11 @@ class DomainRouter(private val context: Context) {
 
         /** Ensures the tunnel-side MITM store priming runs at most once per process. */
         private val mitmPrimed = AtomicBoolean(false)
+
+        /** The last compiled routing profile, and what it was compiled from. */
+        private val compiledLock = Any()
+        private var compiled: RoutingMatcher? = null
+        private var compiledKey: String? = null
     }
 }
 
