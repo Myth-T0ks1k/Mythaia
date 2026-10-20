@@ -151,4 +151,38 @@ class RoutingMatcherTest {
         assertEquals("9.9.9.9", m.hostAddress("DNS.example."))
         assertNull(m.hostAddress("other.example"))
     }
+
+    @Test
+    fun `RouteOrder changes rule precedence when specified`() {
+        val json = """
+            {
+                "Name": "ProxyFirst",
+                "RouteOrder": "block-proxy-direct",
+                "DirectSites": ["domain:example.com"],
+                "ProxySites": ["domain:example.com"],
+                "DirectIp": ["203.0.113.0/24"],
+                "ProxyIp": ["203.0.113.0/24"]
+            }
+        """.trimIndent()
+        val profile = HappRouting.parseJson(json)!!
+        assertEquals("block-proxy-direct", profile.routeOrder)
+        val m = compile(profile)
+        assertEquals(Action.PROXY, m.matchDomain("sub.example.com"))
+        assertEquals(Action.PROXY, m.matchAddress("203.0.113.5"))
+        val roundTrip = HappRouting.parseJson(HappRouting.toJson(profile))!!
+        assertEquals("block-proxy-direct", roundTrip.routeOrder)
+    }
+
+    @Test
+    fun `catastrophic backtracking regex aborts within step budget`() {
+        val m = compile(
+            RoutingProfile(
+                name = "t",
+                proxySites = listOf("regexp:^(a+)+$", "domain:example.com")
+            )
+        )
+        val hostile = "a".repeat(48) + "b.example.org"
+        assertNull(m.matchDomain(hostile))
+        assertEquals(Action.PROXY, m.matchDomain("example.com"))
+    }
 }

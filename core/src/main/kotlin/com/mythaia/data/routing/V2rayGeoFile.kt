@@ -84,18 +84,26 @@ object V2rayGeoFile {
         return out
     }
 
+    private val EMPTY_BUFFER = Buffer(ByteArray(0))
+
     /**
-     * Whether [input] starts like one of these files: its first field is
-     * entry 1, length-delimited, and the entry inside starts with a name.
-     * A downloaded HTML error page or a truncated file fails this.
+     * Whether [input] is a complete geosite/geoip file: starts with entry 1
+     * (length-delimited), every entry has a valid name and runs cleanly to
+     * EOF. An HTML error page or a truncated download fails this.
      */
     fun looksValid(input: InputStream): Boolean = try {
-        val reader = StreamReader(BufferedInputStream(input))
-        val tag = reader.readTagOrEnd()
-        if (tag != (1 shl 3 or WIRE_LENGTH)) false
+        val buffered = if (input is BufferedInputStream) input else BufferedInputStream(input, 64 * 1024)
+        buffered.mark(16)
+        val first = buffered.read()
+        buffered.reset()
+        if (first != (1 shl 3 or WIRE_LENGTH)) false
         else {
-            val length = reader.readVarint()
-            length in 2..MAX_ENTRY_BYTES.toLong() && reader.readVarint().toInt().let { it == (1 shl 3 or WIRE_LENGTH) || it == (5 shl 3 or WIRE_LENGTH) }
+            var any = false
+            forEachEntry(buffered, wanted = null) { code, _ ->
+                if (code.isNotEmpty()) any = true
+                false
+            }
+            any
         }
     } catch (_: IOException) {
         false
@@ -128,7 +136,10 @@ object V2rayGeoFile {
                 val nameLength = reader.readVarint()
                 if (nameLength < 0 || reader.position + nameLength > end) throw IOException("bad entry name")
                 code = String(reader.readBytes(nameLength.toInt()), Charsets.UTF_8).uppercase()
-                if (wanted == null || code in wanted) {
+                if (wanted == null) {
+                    reader.skip(end - reader.position)
+                    stop = visit(code, EMPTY_BUFFER)
+                } else if (code in wanted) {
                     val rest = reader.readBytes((end - reader.position).toInt())
                     stop = visit(code, Buffer(rest))
                 } else {
@@ -140,7 +151,11 @@ object V2rayGeoFile {
                 val rest = reader.readBytes((end - reader.position).toInt())
                 val whole = encodeVarint(innerTag.toLong()) + rest
                 code = findName(Buffer(whole)) ?: ""
-                stop = if (wanted == null || code in wanted) visit(code, Buffer(whole)) else false
+                stop = when {
+                    wanted == null -> visit(code, EMPTY_BUFFER)
+                    code in wanted -> visit(code, Buffer(whole))
+                    else -> false
+                }
             }
             if (stop) return
         }

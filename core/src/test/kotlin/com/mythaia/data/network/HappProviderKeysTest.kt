@@ -129,6 +129,22 @@ class HappProviderKeysTest {
     }
 
     @Test
+    fun `exclude-routes refuses full-tunnel and sentinel exclusions`() {
+        val raw = listOf(
+            "0.0.0.0/0", "::/0", "::ffff:0.0.0.0/96",
+            "198.18.0.0/15", "198.18.0.0", "198.19.255.0/24", "198.0.0.0/8", "128.0.0.0/1",
+            "fd00::/8", "fd00::1", "fd12:3456::/32", "fc00::/7",
+            "198.17.0.0/16", "198.20.0.0/16", "fc00::/8", "2001:db8::/32"
+        ).joinToString(", ")
+        assertEquals(
+            listOf("198.17.0.0/16", "198.20.0.0/16", "fc00::/8", "2001:db8::/32"),
+            RemoteSettings.excludeRoutes(listOf("0.0.0.0/0", "198.18.0.1/32"), mapOf("exclude-routes" to raw))
+        )
+        val many = (1..300).joinToString(",") { "10.${it / 256}.${it % 256}.0/24" }
+        assertEquals(256, RemoteSettings.cidrs(many).size)
+    }
+
+    @Test
     fun `routing arrives in a header, a body line, or a line of its own`() {
         assertEquals("happ://routing/off", read(headers = mapOf("routing" to "happ://routing/off")).routing)
         assertEquals("happ://routing/off", read(body = "#routing: happ://routing/off").routing)

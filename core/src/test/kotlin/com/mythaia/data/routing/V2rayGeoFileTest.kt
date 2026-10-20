@@ -50,6 +50,34 @@ class V2rayGeoFileTest {
         assertTrue(V2rayGeoFile.looksValid(ByteArrayInputStream(GeoFixtures.ips)))
         assertFalse(V2rayGeoFile.looksValid(ByteArrayInputStream("<html>Not Found</html>".toByteArray())))
         assertFalse(V2rayGeoFile.looksValid(ByteArrayInputStream(ByteArray(0))))
+        val cut = GeoFixtures.sites.copyOf(GeoFixtures.sites.size - 5)
+        assertFalse(V2rayGeoFile.looksValid(ByteArrayInputStream(cut)))
+    }
+
+    @Test
+    fun `store keeps existing rule file when replacement is invalid or truncated`() {
+        val dir = java.nio.file.Files.createTempDirectory("geo-store-test").toFile()
+        try {
+            val store = GeoFileStore(dir)
+            val url = "https://example.com/geosite.dat"
+            val target = store.fileFor(url)
+            val temp = java.io.File(dir, target.name + ".tmp")
+
+            store.streamBounded(ByteArrayInputStream(GeoFixtures.sites), temp, GeoFixtures.sites.size.toLong())
+            store.installVerified(temp, target)
+            assertTrue(store.has(url))
+            assertEquals(GeoFixtures.sites.size.toLong(), target.length())
+
+            // Corrupt replacement must fail without deleting the good target file.
+            temp.writeBytes("<html>502 Bad Gateway</html>".toByteArray())
+            val failed = runCatching { store.installVerified(temp, target) }.exceptionOrNull()
+            assertTrue(failed is java.io.IOException)
+            assertFalse(temp.exists())
+            assertTrue(target.isFile)
+            assertEquals(GeoFixtures.sites.size.toLong(), target.length())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test(expected = java.io.IOException::class)

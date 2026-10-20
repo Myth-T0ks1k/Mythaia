@@ -44,29 +44,22 @@ class RoutingMatcher private constructor(
 
     private val domainCache = ConcurrentHashMap<String, Any>()
 
+    private val orderedRules: List<Pair<Action, Rules>> = buildOrder(profile.routeOrder, block, direct, proxy)
+
     /** The rule [domain] matches by name, or null when none does. */
     fun matchDomain(domain: String): Action? {
         val name = domain.trim().trimEnd('.').lowercase()
         if (name.isEmpty()) return null
         domainCache[name]?.let { return it as? Action }
-        val action = when {
-            block.domains.matches(name) -> Action.BLOCK
-            direct.domains.matches(name) -> Action.DIRECT
-            proxy.domains.matches(name) -> Action.PROXY
-            else -> null
-        }
+        val action = orderedRules.firstOrNull { (_, rules) -> rules.domains.matches(name) }?.first
         if (domainCache.size >= CACHE_SIZE) domainCache.clear()
         domainCache[name] = action ?: NO_MATCH
         return action
     }
 
     /** The rule [address] (4 or 16 bytes) matches, or null when none does. */
-    fun matchAddress(address: ByteArray): Action? = when {
-        block.ips.matches(address) -> Action.BLOCK
-        direct.ips.matches(address) -> Action.DIRECT
-        proxy.ips.matches(address) -> Action.PROXY
-        else -> null
-    }
+    fun matchAddress(address: ByteArray): Action? =
+        orderedRules.firstOrNull { (_, rules) -> rules.ips.matches(address) }?.first
 
     /** [matchAddress] for a literal; null for a name. */
     fun matchAddress(literal: String): Action? = IpRanges.parseAddress(literal)?.let { matchAddress(it) }
@@ -113,9 +106,30 @@ class RoutingMatcher private constructor(
                 }
             }
             for (keyword in keywords) if (name.contains(keyword)) return true
-            for (pattern in patterns) if (runCatching { pattern.containsMatchIn(name) }.getOrDefault(false)) return true
+            for (pattern in patterns) {
+                if (runCatching { pattern.containsMatchIn(BudgetedCharSequence(name)) }.getOrDefault(false)) return true
+            }
             return false
         }
+    }
+
+    /**
+     * Bounds `java.util.regex` backtracking on untrusted patterns from a
+     * profile or `geosite.dat`: each character access costs one step, so a
+     * runaway pattern aborts itself instead of pinning a tunnel thread.
+     */
+    private class BudgetedCharSequence(
+        private val text: String,
+        private val budget: IntArray = intArrayOf(REGEX_STEP_BUDGET)
+    ) : CharSequence {
+        override val length: Int get() = text.length
+        override fun get(index: Int): Char {
+            if (--budget[0] < 0) throw IllegalStateException("regex step budget exceeded")
+            return text[index]
+        }
+        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+            BudgetedCharSequence(text.substring(startIndex, endIndex), budget)
+        override fun toString(): String = text
     }
 
     /** Address ranges, countries looked up in the MaxMind database, and inverted lists. */
@@ -146,6 +160,30 @@ class RoutingMatcher private constructor(
         private val NO_MATCH = Any()
         private const val MAX_PATTERNS = 2000
         private const val MAX_PATTERN_LENGTH = 512
+        private const val REGEX_STEP_BUDGET = 10_000
+
+        private fun buildOrder(
+            routeOrder: String,
+            block: Rules,
+            direct: Rules,
+            proxy: Rules
+        ): List<Pair<Action, Rules>> {
+            val byAction = mapOf(
+                Action.BLOCK to block,
+                Action.DIRECT to direct,
+                Action.PROXY to proxy
+            )
+            val parsed = routeOrder.lowercase().split('-', ',', ' ').mapNotNull { token ->
+                when (token.trim()) {
+                    "block" -> Action.BLOCK
+                    "direct" -> Action.DIRECT
+                    "proxy" -> Action.PROXY
+                    else -> null
+                }
+            }
+            val actions = (parsed + listOf(Action.BLOCK, Action.DIRECT, Action.PROXY)).distinct()
+            return actions.map { it to byAction.getValue(it) }
+        }
 
         /**
          * Compiles [profile] with its rule files. Either file may be absent:

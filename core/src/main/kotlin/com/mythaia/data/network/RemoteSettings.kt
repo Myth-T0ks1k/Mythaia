@@ -168,17 +168,40 @@ object RemoteSettings {
         val set = settings["exclude-routes-set"]
         val add = settings["exclude-routes"]
         if (set == null && add == null) return null
-        val base = if (set != null) cidrs(set) else current
+        val base = if (set != null) cidrs(set) else current.flatMap { cidrs(it) }
         return (base + (add?.let { cidrs(it) } ?: emptyList())).distinct().take(MAX_ROUTES)
     }
 
     private const val MAX_ROUTES = 256
 
-    /** The valid CIDRs in [value], written as `address/prefix`. */
+    private val SENTINEL_V4 = byteArrayOf(198.toByte(), 18, 0, 0)
+    private val SENTINEL_V6 = byteArrayOf(0xFD.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+    private val SENTINEL_RANGES: IpRanges = IpRanges.Builder().apply {
+        add(SENTINEL_V4, 15)
+        add(SENTINEL_V6, 8)
+    }.build()
+
+    /**
+     * Refuses `/0` (which would empty the tunnel) and any prefix overlapping
+     * the internal DNS sentinel / fake-IP ranges (`198.18.0.0/15`, `fd00::/8`).
+     */
+    private fun isSafeExclusion(address: ByteArray, prefix: Int): Boolean {
+        if (prefix <= 0) return false
+        if (SENTINEL_RANGES.contains(address)) return false
+        val range = IpRanges.Builder().apply { add(address, prefix) }.build()
+        return !range.contains(SENTINEL_V4) && !range.contains(SENTINEL_V6)
+    }
+
+    /** The valid, safe CIDRs in [value], written as `address/prefix`. */
     fun cidrs(value: String): List<String> =
         value.split(',', ' ', '\n', ';').map { it.trim() }.filter { it.isNotEmpty() }
-            .mapNotNull { text -> IpRanges.parseCidr(text)?.let { text.substringBefore('/') + "/" + it.second } }
+            .mapNotNull { text ->
+                IpRanges.parseCidr(text)
+                    ?.takeIf { (address, prefix) -> isSafeExclusion(address, prefix) }
+                    ?.let { text.substringBefore('/') + "/" + it.second }
+            }
             .distinct()
+            .take(MAX_ROUTES)
 
     /** Android package names in [value], comma or space separated. */
     fun packages(value: String?): List<String> =

@@ -6,13 +6,18 @@ import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = MythaiaLogger("Routing")
 
@@ -21,6 +26,8 @@ private val logger = MythaiaLogger("Routing")
  * [dir], so two profiles naming the same release share one download.
  */
 class GeoFileStore(val dir: File) {
+
+    private val locks = ConcurrentHashMap<String, Mutex>()
 
     /** Where [url]'s file lives, whether or not it has been fetched. */
     fun fileFor(url: String): File = File(dir, "geo-" + sha256(url).take(16) + ".dat")
@@ -73,34 +80,34 @@ class GeoFileStore(val dir: File) {
     fun prune(keep: Collection<String>) {
         val wanted = keep.map { fileFor(it).name }.toSet()
         dir.listFiles()?.forEach { file ->
-            if (file.name.startsWith("geo-") && file.name !in wanted) runCatching { file.delete() }
+            if (file.name.startsWith("geo-") && !file.name.endsWith(".tmp") && file.name !in wanted) {
+                runCatching { file.delete() }
+            }
         }
     }
 
-    private suspend fun download(url: String, via: ProxyConfiguration?) = withContext(Dispatchers.IO) {
-        // A timeout is this fetch failing, not the caller being cancelled.
-        val bytes = withTimeoutOrNull(TIMEOUT_MS) {
-            if (via == null) runInterruptible { fetchDirect(url) } else fetchThrough(url, via)
-        } ?: throw IOException("no answer within ${TIMEOUT_MS / 60_000} minutes")
-        run {
-            if (!V2rayGeoFile.looksValid(bytes.inputStream())) throw IOException("not a geosite/geoip file")
-            dir.mkdirs()
-            val target = fileFor(url)
-            val temp = File(dir, target.name + ".tmp")
-            temp.writeBytes(bytes)
-            if (target.exists() && !target.delete()) {
-                temp.delete()
-                throw IOException("the old file is in use")
+    private suspend fun download(url: String, via: ProxyConfiguration?) {
+        val target = fileFor(url)
+        val mutex = locks.computeIfAbsent(target.name) { Mutex() }
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                dir.mkdirs()
+                val temp = File(dir, target.name + ".tmp")
+                try {
+                    // A timeout is this fetch failing, not the caller being cancelled.
+                    val size = withTimeoutOrNull(TIMEOUT_MS) {
+                        if (via == null) runInterruptible { fetchDirect(url, temp) } else fetchThrough(url, via, temp)
+                    } ?: throw IOException("no answer within ${TIMEOUT_MS / 60_000} minutes")
+                    installVerified(temp, target)
+                    logger.info("[Routing] Fetched ${url.substringAfterLast('/')} (${size / 1024} KiB)")
+                } finally {
+                    if (temp.exists()) runCatching { temp.delete() }
+                }
             }
-            if (!temp.renameTo(target)) {
-                temp.delete()
-                throw IOException("could not move the file into place")
-            }
-            logger.info("[Routing] Fetched ${url.substringAfterLast('/')} (${bytes.size / 1024} KiB)")
         }
     }
 
-    private fun fetchDirect(url: String): ByteArray {
+    private fun fetchDirect(url: String, dest: File): Long {
         var current = URL(url)
         repeat(MAX_REDIRECTS) {
             if (!current.protocol.equals("https", ignoreCase = true)) throw IOException("not HTTPS")
@@ -119,7 +126,7 @@ class GeoFileStore(val dir: File) {
                 if (status !in 200..299) throw IOException("HTTP $status")
                 val length = connection.contentLengthLong
                 if (length > MAX_BYTES) throw IOException("file of $length bytes")
-                return connection.inputStream.use { readBounded(it) }
+                return connection.inputStream.use { streamBounded(it, dest, length) }
             } finally {
                 connection.disconnect()
             }
@@ -127,7 +134,7 @@ class GeoFileStore(val dir: File) {
         throw IOException("too many redirects")
     }
 
-    private suspend fun fetchThrough(url: String, server: ProxyConfiguration): ByteArray {
+    private suspend fun fetchThrough(url: String, server: ProxyConfiguration, dest: File): Long {
         var current = URL(url)
         repeat(MAX_REDIRECTS) {
             if (!current.protocol.equals("https", ignoreCase = true)) throw IOException("not HTTPS")
@@ -146,23 +153,45 @@ class GeoFileStore(val dir: File) {
                 return@repeat
             }
             if (response.status !in 200..299) throw IOException("HTTP ${response.status}")
-            return response.body
+            return response.body.inputStream().use { streamBounded(it, dest) }
         }
         throw IOException("too many redirects")
     }
 
-    private fun readBounded(input: java.io.InputStream): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(64 * 1024)
-        var total = 0L
-        while (true) {
-            val n = input.read(buffer)
-            if (n < 0) break
-            total += n
-            if (total > MAX_BYTES) throw IOException("file larger than $MAX_BYTES bytes")
-            out.write(buffer, 0, n)
+    internal fun streamBounded(input: java.io.InputStream, dest: File, expectedLength: Long = -1L): Long {
+        dest.outputStream().use { out ->
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                total += n
+                if (total > MAX_BYTES) throw IOException("file larger than $MAX_BYTES bytes")
+                out.write(buffer, 0, n)
+            }
+            if (expectedLength > 0 && total != expectedLength) {
+                throw IOException("truncated download ($total of $expectedLength bytes)")
+            }
+            return total
         }
-        return out.toByteArray()
+    }
+
+    /**
+     * Checks that [temp] is a valid rule file and atomically replaces
+     * [target] with it, leaving an existing [target] untouched on failure.
+     */
+    internal fun installVerified(temp: File, target: File) {
+        if (!temp.isFile || !temp.inputStream().use { V2rayGeoFile.looksValid(it) }) {
+            temp.delete()
+            throw IOException("not a geosite/geoip file")
+        }
+        val src = temp.toPath()
+        val dst = target.toPath()
+        try {
+            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: IOException) {
+            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     companion object {

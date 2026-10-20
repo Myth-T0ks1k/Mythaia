@@ -37,7 +37,9 @@ data class RoutingProfile(
      * Happ's `LastUpdated`, in Unix seconds: the profile or its files changed
      * then, so files fetched before it are fetched again.
      */
-    val lastUpdated: Long? = null
+    val lastUpdated: Long? = null,
+    /** Rule precedence (`block-direct-proxy`, `block-proxy-direct`, etc.). */
+    val routeOrder: String = ORDER_BLOCK_DIRECT_PROXY
 ) {
     /** One of the profile's resolvers. [type] is `DoH` or `DoU`. */
     @Serializable
@@ -64,6 +66,7 @@ data class RoutingProfile(
         const val STRATEGY_AS_IS = "AsIs"
         const val STRATEGY_IP_IF_NON_MATCH = "IPIfNonMatch"
         const val STRATEGY_IP_ON_DEMAND = "IPOnDemand"
+        const val ORDER_BLOCK_DIRECT_PROXY = "block-direct-proxy"
         const val GEOSITE = "geosite:"
         const val GEOIP = "geoip:"
     }

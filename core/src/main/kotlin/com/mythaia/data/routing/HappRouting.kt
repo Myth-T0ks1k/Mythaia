@@ -149,6 +149,8 @@ object HappRouting {
             else -> RoutingProfile.STRATEGY_IP_IF_NON_MATCH
         }
 
+        val routeOrder = normalizeRouteOrder(string("RouteOrder"))
+
         return RoutingProfile(
             name = (string("Name") ?: fallbackName?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_NAME).take(MAX_NAME),
             globalProxy = flag("GlobalProxy", default = true),
@@ -165,8 +167,17 @@ object HappRouting {
             domesticDns = dns("Domestic"),
             geoipUrl = https("Geoipurl"),
             geositeUrl = https("Geositeurl"),
-            lastUpdated = string("LastUpdated")?.toLongOrNull()?.let { if (it > 100_000_000_000L) it / 1000 else it }?.takeIf { it > 0 }
+            lastUpdated = string("LastUpdated")?.toLongOrNull()?.let { if (it > 100_000_000_000L) it / 1000 else it }?.takeIf { it > 0 },
+            routeOrder = routeOrder
         )
+    }
+
+    private fun normalizeRouteOrder(raw: String?): String {
+        if (raw.isNullOrBlank()) return RoutingProfile.ORDER_BLOCK_DIRECT_PROXY
+        val known = listOf("block", "direct", "proxy")
+        val tokens = raw.lowercase().split('-', ',', ' ').map { it.trim() }.filter { it in known }
+        if (tokens.isEmpty()) return RoutingProfile.ORDER_BLOCK_DIRECT_PROXY
+        return (tokens + known).distinct().joinToString("-")
     }
 
     /** [profile] as Happ's JSON, the keys spelt as Happ spells them. */
@@ -196,6 +207,9 @@ object HappRouting {
             putJsonArray("BlockIp") { profile.blockIp.forEach { add(JsonPrimitive(it)) } }
             put("DomainStrategy", profile.domainStrategy)
             put("FakeDNS", profile.fakeDns.toString())
+            if (profile.routeOrder != RoutingProfile.ORDER_BLOCK_DIRECT_PROXY) {
+                put("RouteOrder", profile.routeOrder)
+            }
         }
         return obj.toString()
     }

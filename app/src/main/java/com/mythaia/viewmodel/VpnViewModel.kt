@@ -280,6 +280,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingDeepLinkUrl = MutableStateFlow<String?>(null)
     val pendingDeepLinkUrl: StateFlow<String?> = _pendingDeepLinkUrl.asStateFlow()
 
+    /**
+     * A `happ://routing/…` deep link from outside, held until the user confirms
+     * it in [com.mythaia.ui.navigation.AppNavigation]: a link on a web page
+     * must not silently switch or turn off routing rules.
+     */
+    data class PendingRoutingLink(val command: HappRouting.Command) {
+        val domainSummary: String?
+            get() = (command as? HappRouting.Command.Add)?.profile?.let { p ->
+                (p.directSites + p.proxySites + p.blockSites + p.directIp + p.proxyIp + p.blockIp)
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .take(6)
+                    .takeIf { it.isNotEmpty() }
+                    ?.joinToString(", ")
+            }
+    }
+
+    private val _pendingRoutingLink = MutableStateFlow<PendingRoutingLink?>(null)
+    val pendingRoutingLink: StateFlow<PendingRoutingLink?> = _pendingRoutingLink.asStateFlow()
+
     fun onDeepLink(uri: android.net.Uri) {
         val scheme = uri.scheme?.lowercase() ?: return
         when (scheme) {
@@ -316,8 +336,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             "tuic", "wireguard", "wg" -> {
                 _pendingDeepLinkUrl.value = uri.toString()
             }
-            // happ://routing/add|onadd/{base64}, happ://routing/off
-            "happ" -> if (uri.host == "routing") importRoutingLink(uri.toString())
+            // happ://routing/add|onadd/{base64}, happ://routing/off — held for
+            // confirmation so a web page cannot silently alter tunnel routing.
+            "happ" -> if (uri.host == "routing") {
+                HappRouting.parseLink(uri.toString())?.let {
+                    _pendingRoutingLink.value = PendingRoutingLink(it)
+                }
+            }
             else -> {}
         }
     }
@@ -2391,17 +2416,31 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * A Happ routing link opened, pasted or scanned. Returns false when it is
-     * not one or its profile does not parse.
+     * A Happ routing link pasted or scanned in the Add sheet. Returns false
+     * when it is not one or its profile does not parse.
      */
     fun importRoutingLink(link: String): Boolean {
         val command = HappRouting.parseLink(link) ?: return false
+        applyRoutingCommand(command)
+        return true
+    }
+
+    fun confirmPendingRoutingLink() {
+        val pending = _pendingRoutingLink.value ?: return
+        _pendingRoutingLink.value = null
+        applyRoutingCommand(pending.command)
+    }
+
+    fun dismissPendingRoutingLink() {
+        _pendingRoutingLink.value = null
+    }
+
+    private fun applyRoutingCommand(command: HappRouting.Command) {
         routingProfileRepository.handle(command)
         _subscriptionNotice.value = when (command) {
             HappRouting.Command.Off -> SubscriptionNotice.Routing(null, active = false)
             is HappRouting.Command.Add -> SubscriptionNotice.Routing(command.profile.name, active = command.activate)
         }
-        return true
     }
 
     fun activateRoutingProfile(name: String) = routingProfileRepository.activate(name)

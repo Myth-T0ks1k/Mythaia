@@ -1,7 +1,9 @@
 package com.mythaia.ui.navigation
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,6 +48,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.mythaia.R
+import com.mythaia.data.routing.HappRouting
 import com.mythaia.ui.components.SubscriptionNoticeBar
 import com.mythaia.ui.components.WingMark
 import com.mythaia.ui.home.HomeScreen
@@ -288,6 +291,45 @@ private fun AppNavHost(
             confirmButton = {
                 TextButton(onClick = { viewModel.clearOrphanedRuleSetNames() }) {
                     Text(stringResource(R.string.ok))
+                }
+            }
+        )
+    }
+
+    val pendingRouting by viewModel.pendingRoutingLink.collectAsState()
+    pendingRouting?.let { pending ->
+        val command = pending.command
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissPendingRoutingLink() },
+            title = { Text(stringResource(R.string.routing_profiles)) },
+            text = {
+                when (command) {
+                    HappRouting.Command.Off -> Text(stringResource(R.string.routing_profile_turn_off))
+                    is HappRouting.Command.Add -> Column {
+                        Text(command.profile.name, style = MaterialTheme.typography.bodyLarge)
+                        pending.domainSummary?.let { summary ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = summary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmPendingRoutingLink() }) {
+                    val labelRes = when (command) {
+                        HappRouting.Command.Off -> R.string.routing_profile_turn_off
+                        is HappRouting.Command.Add -> if (command.activate) R.string.enable else R.string.add
+                    }
+                    Text(stringResource(labelRes))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissPendingRoutingLink() }) {
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )
