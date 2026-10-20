@@ -17,6 +17,12 @@ import kotlin.math.max
  */
 object AutoPolicy {
 
+    /**
+     * Preferences key: group id to the country its Auto keeps to, written by
+     * the view model (Auto within one country) and read by the engine too.
+     */
+    const val COUNTRIES_KEY = "autoCountries"
+
     /** Between rounds while connected, and only while the screen is on. */
     const val RECHECK_MS = 10 * 60 * 1000L
 

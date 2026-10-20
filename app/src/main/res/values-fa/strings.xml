@@ -501,4 +501,10 @@
     <string name="update_wrong_signature">APK دانلودشده با کلید انتشار Mythaia امضا نشده است، پس حذف شد.</string>
     <string name="update_check_failed">بررسی به‌روزرسانی ممکن نشد: %1$s</string>
     <string name="update_download_failed">به‌روزرسانی ممکن نشد: %1$s</string>
+    <string name="group_by_country">گروه‌بندی بر اساس کشور</string>
+    <string name="country_other">سایر</string>
+    <string name="country_collapsed">بسته</string>
+    <string name="country_expanded">باز</string>
+    <string name="country_ping">تست سرعت: %1$s</string>
+    <string name="auto_in_country">خودکار · فقط %1$s</string>
 </resources>

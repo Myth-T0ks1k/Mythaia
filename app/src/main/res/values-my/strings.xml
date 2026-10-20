@@ -494,4 +494,10 @@
     <string name="update_wrong_signature">ဒေါင်းလုဒ်လုပ်ထားသော APK ကို Mythaia ထုတ်ဝေမှုသော့ဖြင့် လက်မှတ်ထိုးထားခြင်းမရှိသဖြင့် ဖျက်လိုက်ပါပြီ။</string>
     <string name="update_check_failed">အပ်ဒိတ်များ စစ်ဆေး၍မရပါ: %1$s</string>
     <string name="update_download_failed">အပ်ဒိတ်လုပ်၍မရပါ: %1$s</string>
+    <string name="group_by_country">နိုင်ငံအလိုက် အုပ်စုဖွဲ့ရန်</string>
+    <string name="country_other">အခြား</string>
+    <string name="country_collapsed">ခေါက်ထားသည်</string>
+    <string name="country_expanded">ဖြန့်ထားသည်</string>
+    <string name="country_ping">အမြန်နှုန်းစစ်ရန်: %1$s</string>
+    <string name="auto_in_country">အလိုအလျောက် · %1$s သာ</string>
 </resources>

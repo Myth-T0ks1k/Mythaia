@@ -17,6 +17,12 @@ All notable changes to Mythaia are recorded here. The format follows
   points to its store instead, and a copy signed with another key opens the release page.
 - **Windows:** the same check downloads the installer, or the zip for a portable copy, verifies its
   checksum, and on request runs the installer and restarts.
+- **Servers grouped by country.** The server list on Android and Windows falls into collapsible
+  country sections with the flag (or code) and the number of servers. The country comes from the
+  name — a flag, an ISO code, or the country or a city written out in English, Russian, Spanish,
+  Persian or Chinese — and otherwise from the GeoIP database for an address already known; the
+  list never sends a DNS query for it. Each section has its own speed test and an Auto that keeps
+  to that country's servers, also in the background. Grouping can be turned off in the list's menu.
 
 ## [1.3.1] — 2026-10-18
 

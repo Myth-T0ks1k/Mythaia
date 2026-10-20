@@ -199,7 +199,10 @@ object AutoSelectEngine {
         val all = ConfigRepository.get(app).getAll()
         val inGroup = if (gid == "default") all.filter { it.subscriptionId == null }
         else all.filter { it.subscriptionId?.toString() == gid }
-        return inGroup.filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }
+        val country = prefs(app).getString(AutoPolicy.COUNTRIES_KEY, null)?.let {
+            runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull()
+        }?.get(gid)
+        return com.mythaia.data.country.ServerCountry.keepTo(inGroup.filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }, country)
     }
 
     /** Auto's pick per group, so the UI can show it when it comes back. */

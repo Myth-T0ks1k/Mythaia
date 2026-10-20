@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NetworkPing
 import androidx.compose.material.icons.filled.Refresh
@@ -59,6 +61,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
+import com.mythaia.data.country.CountryGrouping
 import com.mythaia.data.model.ProxyChain
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.Subscription
@@ -157,6 +160,17 @@ private fun ServersTab(state: AppState) {
         if (sortAscending || sortKey == SortKey.NONE) sorted else sorted.reversed()
     }
 
+    // Country sections, unless they would show nothing new: off, or one country.
+    val sections = remember(visible, settings.groupByCountry, sortKey, sortAscending) {
+        if (!settings.groupByCountry) return@remember null
+        val byName = CountryGrouping.sections(visible, { state.countryOf(it) }).takeIf { it.size >= 2 }
+            ?: return@remember null
+        if (sortKey != SortKey.LATENCY) byName
+        else byName.sortedBy { section ->
+            section.items.minOfOrNull { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
+        }.let { if (sortAscending) it else it.reversed() }
+    }
+
     var showAdd by remember { mutableStateOf(false) }
     var editor by remember { mutableStateOf<Pair<Boolean, ProxyConfiguration?>?>(null) }
     var qrOf by remember { mutableStateOf<ProxyConfiguration?>(null) }
@@ -219,6 +233,11 @@ private fun ServersTab(state: AppState) {
                 DropdownMenuItem(text = { Text(tr("ping_real")) }, onClick = { menu = false; state.pingGroup(shownGroup, LatencyKind.HTTP) })
                 DropdownMenuItem(text = { Text(tr("ping_tcp")) }, onClick = { menu = false; state.pingGroup(shownGroup, LatencyKind.TCP) })
                 DropdownMenuItem(text = { Text(tr("ping_handshake")) }, onClick = { menu = false; state.pingGroup(shownGroup, LatencyKind.HANDSHAKE) })
+                DropdownMenuItem(
+                    text = { Text(tr("group_by_country")) },
+                    trailingIcon = { Checkbox(checked = settings.groupByCountry, onCheckedChange = null) },
+                    onClick = { menu = false; state.setGroupByCountry(!settings.groupByCountry) }
+                )
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text(tr("select_fastest")) }, onClick = { menu = false; state.useAuto(shownGroup) })
                 DropdownMenuItem(text = { Text(tr("copy_all_links")) }, onClick = { menu = false; state.copyToClipboard(state.linksOf(configs)) })
@@ -266,6 +285,7 @@ private fun ServersTab(state: AppState) {
     val auto = state.isAuto(shownGroup)
     val autoActive = auto && settings.activeGroupId == shownGroup && settings.selectedChainId == null
     val choice = state.autoChoice(shownGroup)
+    val scopedCountry = settings.autoCountries[shownGroup]
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -279,9 +299,16 @@ private fun ServersTab(state: AppState) {
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(tr("auto_best"), style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurface)
-            Text(choice?.let { "${it.name} · ${it.outboundProtocol.displayName}" } ?: tr("auto_row_hint"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            val pick = choice?.let { "${it.name} · ${it.outboundProtocol.displayName}" }
+            val line = when {
+                // Auto is on, but kept to one country's servers.
+                autoActive && scopedCountry != null ->
+                    tr("auto_in_country", CountryGrouping.displayName(scopedCountry)) + (pick?.let { " · $it" } ?: "")
+                else -> pick ?: tr("auto_row_hint")
+            }
+            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
-        if (autoActive) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+        if (autoActive && scopedCountry == null) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
     }
     Spacer(Modifier.height(6.dp))
 
@@ -303,23 +330,45 @@ private fun ServersTab(state: AppState) {
             if (visible.isEmpty()) {
                 Text(tr("empty_group"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
             }
+            val row: @Composable (ProxyConfiguration) -> Unit = { config ->
+                ServerRow(
+                    config = config,
+                    checked = config.id in selected,
+                    onCheck = { on -> selected = if (on) selected + config.id else selected - config.id },
+                    pinned = pinnedId == config.id,
+                    live = liveId == config.id,
+                    latency = latencies[config.id],
+                    onClick = { state.pin(config) },
+                    onPing = { state.pingOne(config) },
+                    onCopy = { runCatching { config.toUrl() }.onSuccess { state.copyToClipboard(it) } },
+                    onQr = { qrOf = config },
+                    onRename = { renameConfig = config },
+                    onEdit = { editor = true to config },
+                    onDelete = { confirmDelete = setOf(config.id) }
+                )
+            }
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(visible, key = { it.id }) { config ->
-                    ServerRow(
-                        config = config,
-                        checked = config.id in selected,
-                        onCheck = { on -> selected = if (on) selected + config.id else selected - config.id },
-                        pinned = pinnedId == config.id,
-                        live = liveId == config.id,
-                        latency = latencies[config.id],
-                        onClick = { state.pin(config) },
-                        onPing = { state.pingOne(config) },
-                        onCopy = { runCatching { config.toUrl() }.onSuccess { state.copyToClipboard(it) } },
-                        onQr = { qrOf = config },
-                        onRename = { renameConfig = config },
-                        onEdit = { editor = true to config },
-                        onDelete = { confirmDelete = setOf(config.id) }
-                    )
+                if (sections == null) {
+                    items(visible, key = { it.id }) { row(it) }
+                } else {
+                    for (section in sections) {
+                        val code = section.code
+                        // A search shows every match, folded section or not.
+                        val collapsed = search.isBlank() && state.countrySectionKey(shownGroup, code) in settings.collapsedCountries
+                        val autoHere = autoActive && code != null && scopedCountry == code
+                        item(key = "country-${code ?: "-"}") {
+                            CountryHeaderRow(
+                                code = code,
+                                count = section.items.size,
+                                collapsed = collapsed,
+                                autoActive = autoHere,
+                                onToggle = { state.toggleCountryCollapsed(shownGroup, code) },
+                                onPing = { state.pingConfigs(section.items, LatencyKind.HTTP) },
+                                onAuto = code?.let { c -> { if (autoHere) state.useAuto(shownGroup) else state.useAutoIn(shownGroup, c) } }
+                            )
+                        }
+                        if (!collapsed) items(section.items, key = { it.id }) { row(it) }
+                    }
                 }
                 item { Spacer(Modifier.height(24.dp)) }
             }
@@ -391,6 +440,63 @@ private fun transportLabel(config: ProxyConfiguration): String {
         else -> null
     }
     return listOfNotNull(transport, security).joinToString(" · ")
+}
+
+/**
+ * A country's row in the table: the fold arrow, its code and name, how many
+ * servers, and a speed test and Auto for that country alone. Codes rather
+ * than flags: Windows draws flag emoji as two bare letters.
+ */
+@Composable
+private fun CountryHeaderRow(
+    code: String?,
+    count: Int,
+    collapsed: Boolean,
+    autoActive: Boolean,
+    onToggle: () -> Unit,
+    onPing: () -> Unit,
+    onAuto: (() -> Unit)?
+) {
+    val name = code?.let { CountryGrouping.displayName(it) } ?: tr("country_other")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable { onToggle() }
+            .padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess, null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        if (code != null) {
+            Text(
+                code,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = Paper,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Azure).padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+        Spacer(Modifier.width(8.dp))
+        Text(count.toString(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onPing, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Default.Speed, tr("ping_country", name), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+        }
+        if (onAuto != null) {
+            IconButton(onClick = onAuto, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Default.Bolt, tr("auto_in_country", name),
+                    tint = if (autoActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable

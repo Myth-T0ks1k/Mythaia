@@ -501,4 +501,10 @@
     <string name="update_wrong_signature">Ýüklenen APK Mythaia çykyş açary bilen gol çekilmedik, şonuň üçin pozuldy.</string>
     <string name="update_check_failed">Täzelenmeleri barlap bolmady: %1$s</string>
     <string name="update_download_failed">Täzeläp bolmady: %1$s</string>
+    <string name="group_by_country">Ýurtlar boýunça topla</string>
+    <string name="country_other">Beýlekiler</string>
+    <string name="country_collapsed">Ýygnalan</string>
+    <string name="country_expanded">Açylan</string>
+    <string name="country_ping">Tizlik synagy: %1$s</string>
+    <string name="auto_in_country">Awto · diňe %1$s</string>
 </resources>

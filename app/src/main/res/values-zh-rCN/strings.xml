@@ -494,4 +494,10 @@
     <string name="update_wrong_signature">下载的 APK 未使用 Mythaia 发布密钥签名，已删除。</string>
     <string name="update_check_failed">无法检查更新：%1$s</string>
     <string name="update_download_failed">无法更新：%1$s</string>
+    <string name="group_by_country">按国家分组</string>
+    <string name="country_other">其他</string>
+    <string name="country_collapsed">已折叠</string>
+    <string name="country_expanded">已展开</string>
+    <string name="country_ping">测速：%1$s</string>
+    <string name="auto_in_country">自动 · 仅限%1$s</string>
 </resources>

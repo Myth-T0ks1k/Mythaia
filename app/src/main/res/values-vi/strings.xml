@@ -494,4 +494,10 @@
     <string name="update_wrong_signature">APK đã tải không được ký bằng khóa phát hành Mythaia nên đã bị xóa.</string>
     <string name="update_check_failed">Không kiểm tra được cập nhật: %1$s</string>
     <string name="update_download_failed">Không cập nhật được: %1$s</string>
+    <string name="group_by_country">Nhóm theo quốc gia</string>
+    <string name="country_other">Khác</string>
+    <string name="country_collapsed">Đã thu gọn</string>
+    <string name="country_expanded">Đã mở rộng</string>
+    <string name="country_ping">Kiểm tra tốc độ: %1$s</string>
+    <string name="auto_in_country">Tự động · chỉ %1$s</string>
 </resources>

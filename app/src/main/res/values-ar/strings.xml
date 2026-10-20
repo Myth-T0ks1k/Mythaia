@@ -529,4 +529,10 @@
     <string name="update_wrong_signature">ملف APK الذي تم تنزيله غير موقّع بمفتاح إصدارات Mythaia، لذا تم حذفه.</string>
     <string name="update_check_failed">تعذّر التحقق من التحديثات: %1$s</string>
     <string name="update_download_failed">تعذّر التحديث: %1$s</string>
+    <string name="group_by_country">التجميع حسب الدولة</string>
+    <string name="country_other">أخرى</string>
+    <string name="country_collapsed">مطوي</string>
+    <string name="country_expanded">موسّع</string>
+    <string name="country_ping">اختبار السرعة: %1$s</string>
+    <string name="auto_in_country">تلقائي · %1$s فقط</string>
 </resources>

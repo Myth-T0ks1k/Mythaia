@@ -28,6 +28,12 @@ data class DesktopSettings(
     val groupPins: Map<String, String> = emptyMap(),
     /** Group id -> the server Auto last settled on, to connect to at once. */
     val autoChoices: Map<String, String> = emptyMap(),
+    /** Group id -> the country (ISO code) its Auto keeps to. No entry means the whole group. */
+    val autoCountries: Map<String, String> = emptyMap(),
+    /** The server list in country sections. */
+    val groupByCountry: Boolean = true,
+    /** "groupId|code" of the country sections folded away. */
+    val collapsedCountries: List<String> = emptyList(),
     /** A chain chosen as the outbound instead of a group's server; null for none. */
     val selectedChainId: String? = null,
     /** `proxy` (local SOCKS/HTTP + system proxy) or `tun` (Wintun, all traffic). */

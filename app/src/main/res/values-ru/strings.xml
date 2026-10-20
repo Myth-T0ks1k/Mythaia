@@ -515,4 +515,10 @@
     <string name="update_wrong_signature">Загруженный APK подписан не ключом релизов Mythaia, поэтому он удалён.</string>
     <string name="update_check_failed">Не удалось проверить обновления: %1$s</string>
     <string name="update_download_failed">Не удалось обновить: %1$s</string>
+    <string name="group_by_country">Группировать по странам</string>
+    <string name="country_other">Другие</string>
+    <string name="country_collapsed">Свёрнуто</string>
+    <string name="country_expanded">Развёрнуто</string>
+    <string name="country_ping">Проверка скорости: %1$s</string>
+    <string name="auto_in_country">Авто · только %1$s</string>
 </resources>

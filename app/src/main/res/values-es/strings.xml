@@ -508,4 +508,10 @@
     <string name="update_wrong_signature">El APK descargado no está firmado con la clave de Mythaia, así que se ha borrado.</string>
     <string name="update_check_failed">No se pudo buscar actualizaciones: %1$s</string>
     <string name="update_download_failed">No se pudo actualizar: %1$s</string>
+    <string name="group_by_country">Agrupar por país</string>
+    <string name="country_other">Otros</string>
+    <string name="country_collapsed">Contraído</string>
+    <string name="country_expanded">Expandido</string>
+    <string name="country_ping">Prueba de velocidad: %1$s</string>
+    <string name="auto_in_country">Auto · solo %1$s</string>
 </resources>

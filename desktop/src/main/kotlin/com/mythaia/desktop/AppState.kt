@@ -376,11 +376,15 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     fun effectiveConfig(groupId: String): ProxyConfiguration? {
         selectedChain()?.let { return it }
         pinned(groupId)?.let { return it }
-        val configs = dialable(groupConfigs(groupId))
+        val configs = autoPool(groupId)
         if (configs.isEmpty()) return null
         autoChoice(groupId)?.takeIf { it in configs }?.let { return it }
         return bestKnown(configs) ?: configs.first()
     }
+
+    /** What Auto chooses from in [groupId]: what can be dialled, in the group's chosen country if it has one. */
+    private fun autoPool(groupId: String): List<ProxyConfiguration> =
+        com.mythaia.data.country.ServerCountry.keepTo(dialable(groupConfigs(groupId)), _settings.value.autoCountries[groupId])
 
     /** Without the native library the QUIC protocols cannot be dialled at all. */
     private fun dialable(configs: List<ProxyConfiguration>): List<ProxyConfiguration> =
@@ -406,8 +410,39 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     }
 
     fun useAuto(groupId: String) {
-        mutateSettings { it.copy(activeGroupId = groupId, groupPins = it.groupPins - groupId, selectedChainId = null) }
+        mutateSettings {
+            it.copy(activeGroupId = groupId, groupPins = it.groupPins - groupId, autoCountries = it.autoCountries - groupId, selectedChainId = null)
+        }
         reconnectIfNeeded()
+    }
+
+    /** Auto within one country of [groupId], until Auto for the whole group or a pin replaces it. */
+    fun useAutoIn(groupId: String, country: String) {
+        mutateSettings { s ->
+            // A pick made over the whole group is most likely in another country.
+            val previous = autoChoice(groupId)
+            val choices = if (previous != null && countryOf(previous) != country) s.autoChoices - groupId else s.autoChoices
+            s.copy(
+                activeGroupId = groupId, groupPins = s.groupPins - groupId, autoChoices = choices,
+                autoCountries = s.autoCountries + (groupId to country), selectedChainId = null
+            )
+        }
+        reconnectIfNeeded()
+    }
+
+    fun countryOf(config: ProxyConfiguration): String? = com.mythaia.data.country.ServerCountry.of(config)
+
+    fun setGroupByCountry(enabled: Boolean) {
+        mutateSettings { it.copy(groupByCountry = enabled) }
+    }
+
+    fun countrySectionKey(groupId: String, code: String?): String = "$groupId|${code ?: "-"}"
+
+    fun toggleCountryCollapsed(groupId: String, code: String?) {
+        val key = countrySectionKey(groupId, code)
+        mutateSettings { s ->
+            s.copy(collapsedCountries = if (key in s.collapsedCountries) s.collapsedCountries - key else s.collapsedCountries + key)
+        }
     }
 
     // -------------------------------------------------------------- chains
@@ -684,7 +719,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private suspend fun runAutoRound(groupId: String) {
         if (!autoRoundLock.tryLock()) return
         try {
-            val configs = dialable(groupConfigs(groupId))
+            val configs = autoPool(groupId)
             if (configs.isEmpty()) return
             val firstRound = !autoMeasuredOnce
             _latencies.update { m -> m + configs.associate { it.id to LatencyResult.Testing } }
@@ -811,8 +846,10 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
 
     // ---------------------------------------------------------- latency
 
-    fun pingGroup(groupId: String, kind: LatencyKind) {
-        val configs = groupConfigs(groupId)
+    fun pingGroup(groupId: String, kind: LatencyKind) = pingConfigs(groupConfigs(groupId), kind)
+
+    /** Measures [configs] — a group, or one country of it. */
+    fun pingConfigs(configs: List<ProxyConfiguration>, kind: LatencyKind) {
         if (configs.isEmpty()) return
         pingJob?.cancel()
         pingJob = scope.launch {

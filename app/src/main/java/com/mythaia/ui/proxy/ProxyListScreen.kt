@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.NetworkPing
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -121,6 +123,10 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
     val latencyResults by viewModel.latencyResults.collectAsState()
     val latencyKind by viewModel.latencyKind.collectAsState()
     val autoSelecting by viewModel.autoSelecting.collectAsState()
+    val groupByCountry by viewModel.groupByCountry.collectAsState()
+    val collapsedCountries by viewModel.collapsedCountries.collectAsState()
+    val autoCountry by viewModel.autoCountry.collectAsState()
+    val geoIpGeneration by viewModel.geoIpGeneration.collectAsState()
 
     var tab by rememberSaveable { mutableStateOf(0) }
     var browsingGroupId by rememberSaveable { mutableStateOf(activeGroupId) }
@@ -180,6 +186,15 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             (latencyResults[config.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
         }
     }
+
+    val sections = rememberCountrySections(
+        configs = visible,
+        enabled = groupByCountry,
+        sortByLatency = sortByLatency,
+        latencies = latencyResults,
+        geoIpGeneration = geoIpGeneration,
+        countryOf = viewModel::countryOf
+    )
 
     fun runCheck(kind: LatencyKind) {
         viewModel.testLatencies(forConfigs = group.configs, kind = kind)
@@ -292,6 +307,14 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                                         scope.launch { viewModel.autoSelectFastest(group.id) }
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.group_by_country)) },
+                                    leadingIcon = { Icon(Icons.Default.Public, contentDescription = null) },
+                                    trailingIcon = {
+                                        Checkbox(checked = groupByCountry, onCheckedChange = null)
+                                    },
+                                    onClick = { menuOpen = false; viewModel.setGroupByCountry(!groupByCountry) }
+                                )
                                 HorizontalDivider()
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.export_links)) },
@@ -393,6 +416,8 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
         val groupIsActive = selectedChainId == null && activeGroupId == group.id
         val pinned = pinnedByGroup[group.id]
         val auto = autoChoice[group.id]
+        val scopedCountry = autoCountry[group.id]
+        val scopedLabel = scopedCountry?.let { countryLabel(it) }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
@@ -475,11 +500,16 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             // active one and has no pin.
             item(key = "auto") {
                 val autoName = auto?.let { id -> group.configs.firstOrNull { it.id == id }?.name }
+                val pick = autoName?.let { stringResource(R.string.auto_prefix, it) }
                 AutoRow(
-                    selected = groupIsActive && pinned == null,
+                    selected = groupIsActive && pinned == null && scopedCountry == null,
                     busy = autoSelecting && groupIsActive,
-                    subtitle = autoName?.let { stringResource(R.string.auto_prefix, it) }
-                        ?: stringResource(R.string.auto_mode_hint),
+                    subtitle = when {
+                        // Auto is on, but kept to one country's servers.
+                        groupIsActive && pinned == null && scopedLabel != null ->
+                            stringResource(R.string.auto_in_country, scopedLabel) + (autoName?.let { " · $it" } ?: "")
+                        else -> pick ?: stringResource(R.string.auto_mode_hint)
+                    },
                     latency = auto?.let { latencyResults[it] },
                     kindLabel = kindLabel(latencyKind),
                     onClick = { viewModel.useAuto(group.id) }
@@ -507,7 +537,7 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                 }
             }
 
-            items(visible, key = { it.id }) { config ->
+            fun serverItems(list: List<ProxyConfiguration>) = items(list, key = { it.id }) { config ->
                 ConfigurationRow(
                     configuration = config,
                     isSelected = groupIsActive && (pinned == config.id || (pinned == null && selectedConfigId == config.id)),
@@ -520,6 +550,37 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                     onDelete = { configurationToDeleteId = config.id.toString() },
                     onTestLatency = { viewModel.testLatency(forConfig = config) }
                 )
+            }
+
+            if (sections == null) {
+                serverItems(visible)
+            } else {
+                for (section in sections) {
+                    val code = section.code
+                    // A search shows every match, folded section or not.
+                    val collapsed = searchQuery.isBlank() &&
+                        viewModel.countrySectionKey(group.id, code) in collapsedCountries
+                    val canAuto = code != null && section.items.any {
+                        it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3
+                    }
+                    val autoHere = groupIsActive && pinned == null && code != null && scopedCountry == code
+                    item(key = "country-${code ?: "-"}") {
+                        CountryHeader(
+                            code = code,
+                            count = section.items.size,
+                            collapsed = collapsed,
+                            autoActive = autoHere,
+                            autoBusy = autoSelecting,
+                            onToggle = { viewModel.toggleCountryCollapsed(group.id, code) },
+                            onPing = { viewModel.testLatencies(forConfigs = section.items, kind = LatencyKind.HTTP) },
+                            onAuto = if (canAuto && code != null) {
+                                { if (autoHere) viewModel.useAuto(group.id) else viewModel.useAutoIn(group.id, code) }
+                            } else null,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    if (!collapsed) serverItems(section.items)
+                }
             }
         }
     }

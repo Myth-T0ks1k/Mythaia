@@ -59,6 +59,8 @@ import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import com.mythaia.vpn.protocol.tls.reload
 import com.mythaia.vpn.util.reload
+import com.mythaia.vpn.util.file
+import com.mythaia.vpn.util.load
 import com.mythaia.vpn.protocol.tls.read
 import com.mythaia.vpn.protocol.tls.write
 
@@ -156,6 +158,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** Group id to the server pinned in it. A group with no pin is on Auto. */
     private val _pinnedByGroup = MutableStateFlow(loadPins())
     val pinnedByGroup: StateFlow<Map<String, UUID>> = _pinnedByGroup.asStateFlow()
+
+    /**
+     * Group id to the country its Auto keeps to (an ISO code), when the user
+     * chose Auto on a country's section rather than on the whole group.
+     */
+    private val _autoCountry = MutableStateFlow(loadCountries())
+    val autoCountry: StateFlow<Map<String, String>> = _autoCountry.asStateFlow()
+
+    /** The server list in country sections; on unless the user turned it off. */
+    private val _groupByCountry = MutableStateFlow(prefs.getBoolean(KEY_GROUP_BY_COUNTRY, true))
+    val groupByCountry: StateFlow<Boolean> = _groupByCountry.asStateFlow()
+
+    /** "groupId|code" of the country sections the user folded away. */
+    private val _collapsedCountries = MutableStateFlow(prefs.getStringSet(KEY_COLLAPSED_COUNTRIES, null)?.toSet().orEmpty())
+    val collapsedCountries: StateFlow<Set<String>> = _collapsedCountries.asStateFlow()
+
+    /** Bumped once the GeoIP database is open, so the sections place what names alone could not. */
+    private val _geoIpGeneration = MutableStateFlow(0)
+    val geoIpGeneration: StateFlow<Int> = _geoIpGeneration.asStateFlow()
 
     /** Group id to what Auto last chose, and when. Not persisted: it goes stale. */
     private val _autoChoice = MutableStateFlow<Map<String, UUID>>(emptyMap())
@@ -663,6 +684,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         // interception hook sees any persisted CA and rule sets from the moment
         // the UI process starts. Idempotent and cheap when nothing is stored.
         viewModelScope.launch { mitmRepository.loadInto() }
+        // The country sections place a server by its address when its name
+        // says nothing; the tunnel opens the database only when it starts.
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!com.mythaia.vpn.util.GeoIpDatabase.isLoaded && com.mythaia.vpn.util.GeoIpDatabase.file(application).exists()) {
+                com.mythaia.vpn.util.GeoIpDatabase.load(application)
+                if (com.mythaia.vpn.util.GeoIpDatabase.isLoaded) _geoIpGeneration.value++
+            }
+        }
         // Periodic work survives process death on its own; this only covers
         // a first run, or a reinstall that kept the preferences.
         SubscriptionRefreshScheduler.ensureScheduled(application)
@@ -717,9 +746,32 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         else all.filter { it.subscriptionId?.toString() == groupId }
     }
 
-    /** Servers Auto may choose from: dialable, and not a layer-3 interface. */
-    private fun autoCandidates(groupId: String): List<ProxyConfiguration> =
-        groupConfigs(groupId).filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }
+    /**
+     * Servers Auto may choose from: dialable, not a layer-3 interface, and in
+     * the group's country when the user asked for Auto within one.
+     */
+    private fun autoCandidates(groupId: String): List<ProxyConfiguration> = com.mythaia.data.country.ServerCountry.keepTo(
+        groupConfigs(groupId).filter { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 },
+        _autoCountry.value[groupId]
+    )
+
+    /** Where [config] is, for the country sections; see [com.mythaia.data.country.ServerCountry]. */
+    fun countryOf(config: ProxyConfiguration): String? = com.mythaia.data.country.ServerCountry.of(config)
+
+    fun setGroupByCountry(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_GROUP_BY_COUNTRY, enabled) }
+        _groupByCountry.value = enabled
+    }
+
+    /** Folds or unfolds one country's section in one group; [code] null is the unplaced servers. */
+    fun toggleCountryCollapsed(groupId: String, code: String?) {
+        val key = countrySectionKey(groupId, code)
+        val next = if (key in _collapsedCountries.value) _collapsedCountries.value - key else _collapsedCountries.value + key
+        _collapsedCountries.value = next
+        prefs.edit { putStringSet(KEY_COLLAPSED_COUNTRIES, next) }
+    }
+
+    fun countrySectionKey(groupId: String, code: String?): String = "$groupId|${code ?: "-"}"
 
     /** Whether [groupId] follows Auto (no pin). */
     fun isAuto(groupId: String): Boolean = _pinnedByGroup.value[groupId] == null
@@ -771,8 +823,30 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     /** Kept for callers that predate groups; a tap on a server pins it. */
     fun setSelectedConfiguration(config: ProxyConfiguration) = pinConfiguration(config)
 
-    /** Lets [groupId] follow Auto again, and makes it the active group. */
+    /** Lets [groupId] follow Auto again, over the whole group, and makes it the active group. */
     fun useAuto(groupId: String) {
+        if (_autoCountry.value.containsKey(groupId)) {
+            _autoCountry.value = _autoCountry.value - groupId
+            saveCountries()
+        }
+        startAuto(groupId)
+    }
+
+    /**
+     * Auto within one country of [groupId]: it measures and moves among that
+     * country's servers only, until the user picks Auto for the whole group
+     * (or a server) again.
+     */
+    fun useAutoIn(groupId: String, country: String) {
+        _autoCountry.value = _autoCountry.value + (groupId to country)
+        saveCountries()
+        // A pick made over the whole group is most likely in another country.
+        val previous = _autoChoice.value[groupId]?.let { configRepository.get(it) }
+        if (previous != null && countryOf(previous) != country) _autoChoice.value = _autoChoice.value - groupId
+        startAuto(groupId)
+    }
+
+    private fun startAuto(groupId: String) {
         _selectedChainId.value = null
         prefs.edit { remove("selectedChainId") }
         _pinnedByGroup.value = _pinnedByGroup.value - groupId
@@ -841,7 +915,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
         val chosen = livePins[gid]
             ?: liveAuto[gid]
-            ?: configs.firstOrNull { it.outboundProtocol.isImplemented && !it.outboundProtocol.isLayer3 }?.id
+            ?: autoCandidates(gid).firstOrNull()?.id
             ?: configs.firstOrNull()?.id
         _selectedConfigId.value = chosen
         // Mirrors the selection for the tile, the widget and the watch, which
@@ -861,6 +935,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private fun savePins() {
         val raw = json.encodeToString(_pinnedByGroup.value.mapValues { it.value.toString() })
         prefs.edit { putString("groupPins", raw) }
+    }
+
+    private fun loadCountries(): Map<String, String> {
+        val raw = prefs.getString(com.mythaia.vpn.AutoPolicy.COUNTRIES_KEY, null) ?: return emptyMap()
+        return runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
+    }
+
+    private fun saveCountries() {
+        prefs.edit { putString(com.mythaia.vpn.AutoPolicy.COUNTRIES_KEY, json.encodeToString(_autoCountry.value)) }
     }
 
     fun toggleVPN() {
@@ -2274,6 +2357,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private companion object {
+        private const val KEY_GROUP_BY_COUNTRY = "groupByCountry"
+        private const val KEY_COLLAPSED_COUNTRIES = "collapsedCountries"
         private const val LATENCY_CACHE_KEY = "latencyCache"
         private const val LATENCY_CACHE_WRITE_MS = 3_000L
         private const val LATENCY_FLUSH_MS = 250L

@@ -535,4 +535,10 @@
     <string name="update_wrong_signature">The downloaded APK is not signed with the Mythaia release key, so it was deleted.</string>
     <string name="update_check_failed">Could not check for updates: %1$s</string>
     <string name="update_download_failed">Could not update: %1$s</string>
+    <string name="group_by_country">Group by country</string>
+    <string name="country_other">Other</string>
+    <string name="country_collapsed">Collapsed</string>
+    <string name="country_expanded">Expanded</string>
+    <string name="country_ping">Speed test: %1$s</string>
+    <string name="auto_in_country">Auto · only %1$s</string>
 </resources>
