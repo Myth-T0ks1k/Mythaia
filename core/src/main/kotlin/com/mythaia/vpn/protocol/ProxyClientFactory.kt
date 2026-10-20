@@ -172,9 +172,11 @@ object ProxyClientFactory {
                 NaiveClient.poolKey(config)?.let { "naive" to it }
             OutboundProtocol.NOWHERE ->
                 "nowhere" to com.mythaia.vpn.protocol.nowhere.NowhereClient.poolKey(config)
+            OutboundProtocol.SUDOKU ->
+                com.mythaia.vpn.protocol.sudoku.SudokuClient.poolKey(config)?.let { "sudoku" to it }
             OutboundProtocol.VLESS, OutboundProtocol.TROJAN, OutboundProtocol.VMESS ->
                 if (config.transport == "quic") "quic" to com.mythaia.vpn.protocol.quic.QuicClientPool.key(config) else null
-            OutboundProtocol.SHADOWSOCKS, OutboundProtocol.SOCKS5, OutboundProtocol.SUDOKU,
+            OutboundProtocol.SHADOWSOCKS, OutboundProtocol.SOCKS5,
             OutboundProtocol.WIREGUARD -> null
         }
     }
@@ -189,6 +191,7 @@ object ProxyClientFactory {
             OutboundProtocol.ANYTLS -> com.mythaia.vpn.protocol.anytls.AnyTlsClient.release(config.id)
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> NaiveClient.release(config)
             OutboundProtocol.NOWHERE -> com.mythaia.vpn.protocol.nowhere.NowhereClient.release(config)
+            OutboundProtocol.SUDOKU -> com.mythaia.vpn.protocol.sudoku.SudokuClient.release(config)
             else -> Unit
         }
     }

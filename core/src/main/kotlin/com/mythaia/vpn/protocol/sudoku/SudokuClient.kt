@@ -2,7 +2,9 @@ package com.mythaia.vpn.protocol.sudoku
 
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.ProxyError
+import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
+import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,23 +16,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 private val logger = MythaiaLogger("Sudoku")
 
 /**
- * Dials Sudoku over its plain obfuscated TCP carrier.
- *
- * A dial is short: refuse the shapes this build cannot carry, resolve the
- * carrier settings once, and hand a fresh [SudokuSession] the destination. The
- * session owns the socket, the obfuscation and record layers, and the KIP
- * authentication; what is left here is the classification of the destination and
- * of the configuration.
- *
- * Only the carrier that needs nothing beyond a raw socket is wired: the
- * obfuscated stream, optionally fronted by the legacy HTTP decoy, with no
- * multiplexer. The stream/poll/auto HTTP-mask transports frame the obfuscated
- * bytes as real HTTP request/response bodies and need that machinery; the
- * WebSocket mask needs an upgrade handshake; the TLS carrier needs a TLS client
- * around the socket; and native multiplexing needs the mux framing and a shared,
- * pooled connection. Each of those is refused with a message saying so rather
- * than dialled wrongly, mirroring how [com.mythaia.vpn.protocol.nowhere.NowhereClient]
- * refuses the carriers it cannot yet speak.
+ * Dials Sudoku over its full set of carriers:
+ * - Plain obfuscated TCP (optionally fronted by the `legacy` HTTP decoy header)
+ * - TLS carrier (`httpMask.tls = true`)
+ * - WebSocket camouflage (`httpMask.mode = ws`)
+ * - Split HTTP-mask tunnel (`httpMask.mode` in `stream`, `poll`, or `auto` with
+ *   early KIP handshake on `/session?ed=...`)
+ * - Native stream multiplexing (`multiplex = on`) pooled via [SudokuMuxPool].
  *
  * Derived from the Anywhere reference implementation (GPL-3.0),
  * Copyright (C) 2026 NodePassProject.
@@ -38,13 +30,28 @@ private val logger = MythaiaLogger("Sudoku")
 class SudokuClient(
     private val configuration: ProxyConfiguration,
     private val sudoku: SudokuConfiguration,
-    private val tunnel: ProxyConnection? = null
+    private val tunnel: ProxyConnection? = null,
+    internal val rawTransportFactory: (suspend () -> Transport)? = null
 ) {
 
     /** Opens a proxied TCP flow to [host]:[port]. */
     suspend fun connect(host: String, port: Int, initialData: ByteArray? = null): ProxyConnection {
         val settings = resolveSettings()
-        val session = SudokuSession(settings, tunnel)
+        if (settings.usesMultiplex) {
+            return try {
+                if (tunnel != null) {
+                    val mux = SudokuMuxSession.open(settings, tunnel, rawTransportFactory)
+                    mux.dialTcp(host, port, initialData)
+                } else {
+                    val key = SudokuMuxPool.keyFor(configuration, sudoku)
+                    SudokuMuxPool.dialTcp(key, settings, host, port, initialData, rawTransportFactory)
+                }
+            } catch (e: Exception) {
+                throw asProxyError(e, host, port)
+            }
+        }
+
+        val session = SudokuSession(settings, tunnel, rawTransportFactory)
         try {
             session.connectTcp(host, port, initialData)
         } catch (e: Exception) {
@@ -57,7 +64,7 @@ class SudokuClient(
     /** Opens a UDP-over-TCP flow; datagrams to [host]:[port] ride it framed. */
     suspend fun connectUDP(host: String, port: Int): ProxyConnection {
         val settings = resolveSettings()
-        val session = SudokuSession(settings, tunnel)
+        val session = SudokuSession(settings, tunnel, rawTransportFactory)
         try {
             session.openUdp()
         } catch (e: Exception) {
@@ -72,7 +79,8 @@ class SudokuClient(
         return SudokuConnectionSettings.of(
             serverHost = configuration.serverAddress,
             serverPort = configuration.serverPort.toInt(),
-            sudoku = sudoku
+            sudoku = sudoku,
+            tls = configuration.tls
         )
     }
 
@@ -88,27 +96,32 @@ class SudokuClient(
         /**
          * Why this build cannot dial the given configuration, or null when it can.
          *
-         * A single reason is returned, in the order a request meets the layers it
-         * cannot cross: the multiplexer first, then the TLS carrier, then the HTTP
-         * and WebSocket masks. `auto` and `off` multiplexing both dial the plain
-         * carrier — only `on` demands the mux — and the `legacy` mask is carried,
-         * because it is only a decoy prefix on an otherwise plain stream.
+         * All Sudoku carriers (plain TCP, legacy HTTP decoy, TLS, WebSocket mask,
+         * split HTTP `stream`/`poll`/`auto` masks, and native multiplexing) are
+         * wired, so every valid [SudokuConfiguration] is dialable.
          */
-        internal fun carrierRefusal(sudoku: SudokuConfiguration): String? {
-            if (sudoku.multiplex == SudokuMultiplex.ON) {
-                return "Sudoku native multiplexing (mux=on) is not wired yet; this build dials " +
-                    "one connection per flow (mux=off or mux=auto)"
-            }
-            val mask = sudoku.httpMask
-            if (mask.tls) {
-                return "Sudoku over a TLS carrier is not wired yet; this build dials the plain " +
-                    "obfuscated TCP carrier only"
-            }
-            if (!mask.disable && mask.mode != SudokuHttpMaskMode.LEGACY) {
-                return "Sudoku HTTP camouflage mode '${mask.mode.id}' is not wired yet; this build " +
-                    "dials the plain obfuscated TCP carrier (httpmask disabled or mode=legacy)"
-            }
-            return null
+        internal fun carrierRefusal(@Suppress("UNUSED_PARAMETER") sudoku: SudokuConfiguration): String? = null
+
+        /**
+         * Returns the pool key when [configuration] uses Sudoku native multiplexing
+         * (`mux=on`), or null when each flow dials its own connection.
+         */
+        fun poolKey(configuration: ProxyConfiguration): Any? {
+            val sudoku = runCatching { configuration.toSudokuConfiguration() }.getOrNull() ?: return null
+            if (sudoku.multiplex != SudokuMultiplex.ON) return null
+            return SudokuMuxPool.keyFor(configuration, sudoku)
+        }
+
+        /** Closes any pooled multiplexed session for [configuration]. */
+        fun release(configuration: ProxyConfiguration) {
+            val sudoku = runCatching { configuration.toSudokuConfiguration() }.getOrNull() ?: return
+            if (sudoku.multiplex != SudokuMultiplex.ON) return
+            SudokuMuxPool.release(SudokuMuxPool.keyFor(configuration, sudoku))
+        }
+
+        /** Closes all pooled multiplexed sessions across all servers. */
+        fun clearAllPools() {
+            SudokuMuxPool.clearAll()
         }
     }
 }
@@ -118,9 +131,8 @@ class SudokuClient(
  *
  * The connection is the record stream: bytes sent become record payloads, bytes
  * received are the record stream's plaintext, and the far side finishing surfaces
- * as end of stream. The carrier is plain obfuscated TCP with no outer TLS, so
- * [outerTlsVersion] stays null. Cancelling tears the whole session down, which is
- * the only owner of the socket — there is nothing shared to keep alive.
+ * as end of stream. Cancelling tears the whole session down, which is the only
+ * owner of the underlying carrier.
  *
  * Derived from the Anywhere reference implementation (GPL-3.0),
  * Copyright (C) 2026 NodePassProject.
@@ -134,6 +146,9 @@ class SudokuStreamConnection internal constructor(
 
     override val isConnected: Boolean
         get() = !closed.get() && session.isConnected
+
+    override val outerTlsVersion: TlsVersion?
+        get() = session.outerTlsVersion
 
     override suspend fun sendRaw(data: ByteArray) {
         if (closed.get()) return
@@ -188,6 +203,9 @@ class SudokuUdpConnection internal constructor(
 
     override val isConnected: Boolean
         get() = !closed.get() && session.isConnected
+
+    override val outerTlsVersion: TlsVersion?
+        get() = session.outerTlsVersion
 
     override suspend fun sendRaw(data: ByteArray) {
         if (closed.get()) return

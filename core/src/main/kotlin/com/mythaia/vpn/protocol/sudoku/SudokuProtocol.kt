@@ -720,6 +720,12 @@ sealed class SudokuError(message: String) : IOException(message) {
 
     /** The peer sent something the wire format does not allow. */
     class ProtocolViolation(detail: String) : SudokuError(detail)
+
+    /** An HTTP-mask tunnel request or response failed. */
+    class HttpMaskFailed(detail: String) : SudokuError(detail)
+
+    /** A multiplexed Sudoku stream or session is closed. */
+    class StreamClosed(detail: String) : SudokuError(detail)
 }
 
 /**

@@ -1,5 +1,6 @@
 package com.mythaia.vpn.protocol.sudoku
 
+import com.mythaia.data.model.TlsConfiguration
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 
@@ -45,7 +46,10 @@ class SudokuConnectionSettings(
      * prefix — it does not ride the obfuscation — so it is stored as bytes ready
      * to hand straight to the raw transport.
      */
-    val legacyMaskHeader: ByteArray?
+    val legacyMaskHeader: ByteArray?,
+    val httpMask: SudokuHttpMaskConfiguration = SudokuHttpMaskConfiguration(),
+    val multiplex: SudokuMultiplex = SudokuMultiplex.OFF,
+    val tls: TlsConfiguration? = null
 ) {
 
     /**
@@ -60,6 +64,65 @@ class SudokuConnectionSettings(
     val tablePair: SudokuTablePair
         get() = SudokuTableStore.pairFor(psk, asciiMode, selectedCustomTable)
 
+    /** Whether this connection upgrades to a WebSocket tunnel (`mode=ws`). */
+    val usesWebSocketMask: Boolean
+        get() = !httpMask.disable && httpMask.mode == SudokuHttpMaskMode.WS
+
+    /** Whether this connection runs over the split HTTP tunnel (`stream`, `poll`, or `auto`). */
+    val usesHttpMaskTunnel: Boolean
+        get() = !httpMask.disable && (
+            httpMask.mode == SudokuHttpMaskMode.STREAM ||
+                httpMask.mode == SudokuHttpMaskMode.POLL ||
+                httpMask.mode == SudokuHttpMaskMode.AUTO
+            )
+
+    /** Whether the multiplexer should exchange HTTP-mask ping/pong (`0x05`/`0x06`) control frames. */
+    val usesHttpMaskControlFrames: Boolean
+        get() = usesHttpMaskTunnel
+
+    /** Whether TCP streams share a single multiplexed Sudoku session (`mux=on`). */
+    val usesMultiplex: Boolean
+        get() = multiplex == SudokuMultiplex.ON
+
+    /**
+     * The `Host` header sent on HTTP-mask and WebSocket requests: omits the
+     * port when it matches the scheme's default (80 for plain HTTP, 443 for TLS).
+     */
+    val hostHeader: String
+        get() {
+            val host = httpMask.host.ifEmpty { serverHost }
+            val defaultPort = if (httpMask.tls) 443 else 80
+            return if (serverPort == defaultPort) host else "$host:$serverPort"
+        }
+
+    /**
+     * Resolves the TLS configuration when [SudokuHttpMaskConfiguration.tls] is
+     * enabled, or null when the carrier runs over plain TCP.
+     *
+     * SNI defaults to [SudokuHttpMaskConfiguration.host] when set, falling back
+     * to [serverHost]; ALPN defaults to `["http/1.1"]` so HTTP-mask and
+     * WebSocket handshakes are never negotiated onto HTTP/2.
+     */
+    fun effectiveTlsConfiguration(): TlsConfiguration? {
+        if (!httpMask.tls) return null
+        val defaultSni = httpMask.host.ifEmpty { serverHost }
+        val base = tls
+        return if (base != null) {
+            val sni = if (httpMask.host.isNotEmpty()) {
+                httpMask.host
+            } else {
+                base.serverName.takeIf { it.isNotBlank() } ?: defaultSni
+            }
+            val alpn = base.alpn?.takeIf { it.isNotEmpty() } ?: listOf("http/1.1")
+            base.copy(serverName = sni, alpn = alpn)
+        } else {
+            TlsConfiguration(
+                serverName = defaultSni,
+                alpn = listOf("http/1.1")
+            )
+        }
+    }
+
     companion object {
         /**
          * Resolves the carrier settings for a Sudoku profile.
@@ -70,7 +133,12 @@ class SudokuConnectionSettings(
          * connection: the table hint in the hello and the tables the stream uses
          * have to name the same layout.
          */
-        fun of(serverHost: String, serverPort: Int, sudoku: SudokuConfiguration): SudokuConnectionSettings {
+        fun of(
+            serverHost: String,
+            serverPort: Int,
+            sudoku: SudokuConfiguration,
+            tls: TlsConfiguration? = null
+        ): SudokuConnectionSettings {
             // A hex key is either a bare public key or an expanded private key; a
             // passphrase is anything that is not 32 or 64 hex bytes. The private
             // bytes, when present, are what the fingerprint is taken over.
@@ -102,7 +170,10 @@ class SudokuConnectionSettings(
                 selectedCustomTable = selected,
                 sendsTableHint = sudoku.sendsTableHint,
                 pureDownlink = sudoku.enablePureDownlink,
-                legacyMaskHeader = legacyHeader
+                legacyMaskHeader = legacyHeader,
+                httpMask = sudoku.httpMask,
+                multiplex = sudoku.multiplex,
+                tls = tls
             )
         }
 
@@ -112,8 +183,7 @@ class SudokuConnectionSettings(
          *
          * A prefix is sent only when masking is on and set to the legacy mode,
          * which is the one that fronts the obfuscated stream with a single long
-         * POST rather than framing it as HTTP. The TLS carrier and the other mask
-         * modes are refused before settings are built, so they never reach here.
+         * POST rather than framing it as HTTP.
          */
         private fun legacyMaskHeader(serverHost: String, mask: SudokuHttpMaskConfiguration): ByteArray? {
             if (mask.disable || mask.mode != SudokuHttpMaskMode.LEGACY) return null

@@ -100,6 +100,16 @@ internal object SudokuHandshake {
         SudokuProtocol.encodeKip(SudokuProtocol.KIP_CONNECT_TCP, SudokuProtocol.encodeAddress(host, port))
 
     /**
+     * The request that opens a multiplexed session (`KIP_OPEN_MUX = 0x11`).
+     *
+     * Like [openUdpRequest], the payload is empty: individual TCP destinations
+     * travel in `MUX_OPEN` (`0x01`) frames once the record stream enters
+     * multiplexed mode.
+     */
+    fun openMuxRequest(): ByteArray =
+        SudokuProtocol.encodeKip(SudokuProtocol.KIP_OPEN_MUX, ByteArray(0))
+
+    /**
      * The request that opens a UDP-over-TCP flow.
      *
      * The payload is empty: unlike a TCP connect, the destination is not fixed at

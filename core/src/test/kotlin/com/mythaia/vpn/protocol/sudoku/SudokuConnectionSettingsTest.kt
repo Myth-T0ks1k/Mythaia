@@ -100,48 +100,93 @@ class SudokuConnectionSettingsTest {
         assertNull(settings.legacyMaskHeader)
     }
 
-    // MARK: - Carrier refusal
+    // MARK: - Carrier resolution & TLS configuration
 
     @Test
-    fun `the plain obfuscated carrier is dialable`() {
-        assertNull(SudokuClient.carrierRefusal(SudokuConfiguration(key = "k")))
-        assertNull(
-            SudokuClient.carrierRefusal(
-                SudokuConfiguration(key = "k", multiplex = SudokuMultiplex.AUTO)
+    fun `effectiveTlsConfiguration is null when httpMask tls is disabled and http11 when enabled`() {
+        val plain = SudokuConnectionSettings.of(
+            serverHost = "server.example",
+            serverPort = 8080,
+            sudoku = SudokuConfiguration(key = "k", httpMask = SudokuHttpMaskConfiguration(tls = false))
+        )
+        assertNull(plain.effectiveTlsConfiguration())
+        assertEquals("server.example:8080", plain.hostHeader)
+
+        val defaultPortPlain = SudokuConnectionSettings.of(
+            serverHost = "server.example",
+            serverPort = 80,
+            sudoku = SudokuConfiguration(key = "k", httpMask = SudokuHttpMaskConfiguration(tls = false))
+        )
+        assertEquals("server.example", defaultPortPlain.hostHeader)
+
+        val tlsWithHostOverride = SudokuConnectionSettings.of(
+            serverHost = "198.51.100.10",
+            serverPort = 443,
+            sudoku = SudokuConfiguration(
+                key = "k",
+                httpMask = SudokuHttpMaskConfiguration(tls = true, host = "cdn.example.com")
             )
         )
+        val tlsConfig = tlsWithHostOverride.effectiveTlsConfiguration()
+        assertNotNull(tlsConfig)
+        assertEquals("cdn.example.com", tlsConfig!!.serverName)
+        assertEquals(listOf("http/1.1"), tlsConfig.alpn)
+        assertEquals("cdn.example.com", tlsWithHostOverride.hostHeader)
+    }
+
+    @Test
+    fun `carrier flags distinguish plain legacy, WebSocket mask, HTTP tunnel masks, and mux`() {
+        val ws = SudokuConnectionSettings.of(
+            serverHost = "server.example",
+            serverPort = 443,
+            sudoku = SudokuConfiguration(
+                key = "k",
+                multiplex = SudokuMultiplex.ON,
+                httpMask = SudokuHttpMaskConfiguration(mode = SudokuHttpMaskMode.WS, tls = true)
+            )
+        )
+        assertTrue(ws.usesWebSocketMask)
+        assertFalse(ws.usesHttpMaskTunnel)
+        assertFalse(ws.usesHttpMaskControlFrames)
+        assertTrue(ws.usesMultiplex)
+        assertNull(ws.legacyMaskHeader)
+
+        for (mode in listOf(SudokuHttpMaskMode.STREAM, SudokuHttpMaskMode.POLL, SudokuHttpMaskMode.AUTO)) {
+            val tunnel = SudokuConnectionSettings.of(
+                serverHost = "server.example",
+                serverPort = 8443,
+                sudoku = SudokuConfiguration(
+                    key = "k",
+                    httpMask = SudokuHttpMaskConfiguration(mode = mode, tls = true)
+                )
+            )
+            assertFalse(tunnel.usesWebSocketMask)
+            assertTrue(tunnel.usesHttpMaskTunnel)
+            assertTrue(tunnel.usesHttpMaskControlFrames)
+            assertNull(tunnel.legacyMaskHeader)
+        }
+    }
+
+    @Test
+    fun `all Sudoku carriers and multiplexing modes are dialable`() {
+        assertNull(SudokuClient.carrierRefusal(SudokuConfiguration(key = "k")))
+        assertNull(SudokuClient.carrierRefusal(SudokuConfiguration(key = "k", multiplex = SudokuMultiplex.AUTO)))
+        assertNull(SudokuClient.carrierRefusal(SudokuConfiguration(key = "k", multiplex = SudokuMultiplex.ON)))
         assertNull(
             SudokuClient.carrierRefusal(
                 SudokuConfiguration(key = "k", httpMask = SudokuHttpMaskConfiguration(disable = true))
             )
         )
-    }
-
-    @Test
-    fun `native multiplexing is refused`() {
-        assertNotNull(
-            SudokuClient.carrierRefusal(
-                SudokuConfiguration(key = "k", multiplex = SudokuMultiplex.ON)
-            )
-        )
-    }
-
-    @Test
-    fun `a TLS carrier is refused`() {
-        assertNotNull(
+        assertNull(
             SudokuClient.carrierRefusal(
                 SudokuConfiguration(key = "k", httpMask = SudokuHttpMaskConfiguration(tls = true))
             )
         )
-    }
-
-    @Test
-    fun `the framed HTTP masks are refused`() {
-        for (mode in listOf(SudokuHttpMaskMode.STREAM, SudokuHttpMaskMode.POLL, SudokuHttpMaskMode.AUTO, SudokuHttpMaskMode.WS)) {
-            assertNotNull(
-                "mode $mode should be refused",
+        for (mode in SudokuHttpMaskMode.entries) {
+            assertNull(
+                "mode $mode should be dialable",
                 SudokuClient.carrierRefusal(
-                    SudokuConfiguration(key = "k", httpMask = SudokuHttpMaskConfiguration(mode = mode))
+                    SudokuConfiguration(key = "k", httpMask = SudokuHttpMaskConfiguration(mode = mode, tls = true))
                 )
             )
         }

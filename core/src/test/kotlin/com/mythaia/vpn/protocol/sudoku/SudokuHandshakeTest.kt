@@ -164,6 +164,13 @@ class SudokuHandshakeTest {
     }
 
     @Test
+    fun `a mux open request is an empty KIP frame of type 0x11`() {
+        // magic ‖ 0x11 ‖ length 0.
+        val expected = byteArrayOf(0x6B, 0x69, 0x70, 0x11, 0x00, 0x00)
+        assertArrayEquals(expected, SudokuHandshake.openMuxRequest())
+    }
+
+    @Test
     fun `a UDP open request is an empty KIP frame of its own type`() {
         // magic ‖ 0x12 ‖ length 0.
         val expected = byteArrayOf(0x6B, 0x69, 0x70, 0x12, 0x00, 0x00)

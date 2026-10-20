@@ -1,59 +1,67 @@
 package com.mythaia.vpn.protocol.sudoku
 
+import com.mythaia.data.model.TlsVersion
+import com.mythaia.data.model.WebSocketConfiguration
 import com.mythaia.vpn.X25519Crypto
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.protocol.TunneledTransport
+import com.mythaia.vpn.protocol.tls.TlsClient
+import com.mythaia.vpn.protocol.tls.TlsRecordTransport
+import com.mythaia.vpn.protocol.websocket.WebSocketConnection
 import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.util.NioSocket
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 private val logger = MythaiaLogger("Sudoku")
 
 /**
- * One authenticated Sudoku connection: a socket, the obfuscation and record
- * layers stacked on it, and the KIP exchange that keys them.
- *
- * A Sudoku connection in this build carries exactly one proxied flow. That is the
- * shape the protocol supports without its multiplexer: the KIP request that opens
- * the connection also names what it is for — a TCP destination, or a
- * UDP-over-TCP flow — and the record stream then *is* that flow, in both
- * directions. There is therefore no registry of shared sessions here as
- * [com.mythaia.vpn.protocol.nowhere.NowhereSession] keeps, because nothing is
- * shared: two dials to two destinations are two connections. Sharing a single
- * connection across flows is what the mux carrier does, and that is not wired yet
- * (see [SudokuClient]); replicating a shared-session registry over a
- * single-flow carrier would only invite two dials to fight over one stream.
- *
- * What is kept is the phase machine, so a half-built connection is torn down
- * cleanly whatever step failed, and the split between the pure handshake bytes
- * [SudokuHandshake] and the live exchange driven here.
+ * One authenticated Sudoku connection: the carrier beneath it (plain TCP, TLS,
+ * WebSocket camouflage, or the split HTTP `stream`/`poll`/`auto` tunnel), the
+ * obfuscation and record layers stacked on it, and the KIP exchange that keys
+ * them.
  *
  * Authentication has no round trip of its own. The KIP client hello rides the
  * record layer keyed from the pre-shared key; the server's hello, arriving on the
  * same record layer, proves it holds that key and hands over the second half of
- * the X25519 exchange at once. Only then does the stream rekey to the session
- * secrets and the destination request go out.
+ * the X25519 exchange at once. On the split HTTP-mask tunnel (`stream`/`poll`/`auto`),
+ * the KIP exchange can ride the `/session?ed=...` request/response body so the
+ * record layer is rekeyed to the session secrets before the first `/stream` or
+ * `/api/v1/upload` frame is sent.
+ *
+ * Once authenticated, the session enters one of three modes:
+ * - [connectTcp]: sends `KIP_CONNECT_TCP` (`0x10`) and carries one TCP stream.
+ * - [openUdp]: sends `KIP_OPEN_UDP_OVER_TCP` (`0x12`) and carries UoT datagrams.
+ * - [openMux]: sends `KIP_OPEN_MUX` (`0x11`) so [SudokuMuxSession] can multiplex
+ *   many TCP streams over the single record stream.
  *
  * Derived from the Anywhere reference implementation (GPL-3.0),
  * Copyright (C) 2026 NodePassProject.
  */
 internal class SudokuSession(
-    private val settings: SudokuConnectionSettings,
-    private val tunnel: ProxyConnection?
+    val settings: SudokuConnectionSettings,
+    private val tunnel: ProxyConnection? = null,
+    private val rawTransportFactory: (suspend () -> Transport)? = null
 ) {
 
     private enum class Phase { IDLE, TRANSPORT_READY, AUTHENTICATED, CONNECTED, CLOSED }
 
     private val phase = AtomicReference(Phase.IDLE)
+    private val tunnelConsumed = AtomicBoolean(false)
 
     @Volatile
     private var rawTransport: Transport? = null
 
-    /** The authenticated flow, valid once [connectTcp] or [openUdp] has returned. */
+    /** The authenticated flow, valid once [connectTcp], [openUdp], or [openMux] has returned. */
     @Volatile
     var stream: SudokuRecordStream? = null
+        private set
+
+    /** The outer TLS version when `httpMask.tls` is enabled, or null over plain TCP. */
+    @Volatile
+    var outerTlsVersion: TlsVersion? = null
         private set
 
     val isConnected: Boolean
@@ -82,6 +90,14 @@ internal class SudokuSession(
         phase.set(Phase.CONNECTED)
     }
 
+    /** Opens the connection, authenticates, and switches the record stream into multiplexed mode. */
+    suspend fun openMux(): SudokuRecordStream {
+        val record = openAndAuthenticate()
+        record.send(SudokuHandshake.openMuxRequest())
+        phase.set(Phase.CONNECTED)
+        return record
+    }
+
     /** Tears the connection down; safe to call more than once. */
     fun close() {
         if (phase.getAndSet(Phase.CLOSED) == Phase.CLOSED) return
@@ -104,7 +120,7 @@ internal class SudokuSession(
             throw SudokuError.ProtocolViolation("Sudoku session already used")
         }
         try {
-            val transport = openRawTransport()
+            val (transport, earlyBases) = openCarrierTransport()
             rawTransport = transport
 
             // One generator drives the whole uplink; it is seeded from system
@@ -133,7 +149,11 @@ internal class SudokuSession(
             stream = record
             phase.set(Phase.TRANSPORT_READY)
 
-            performKip(record)
+            if (earlyBases != null) {
+                record.rekey(earlyBases.clientToServer, earlyBases.serverToClient)
+            } else {
+                performKip(record)
+            }
             phase.set(Phase.AUTHENTICATED)
             logger.debug("[Sudoku] Authenticated with ${settings.serverHost}:${settings.serverPort}")
             return record
@@ -143,16 +163,82 @@ internal class SudokuSession(
         }
     }
 
-    private suspend fun openRawTransport(): Transport {
-        val transport: Transport = if (tunnel != null) {
-            TunneledTransport(tunnel)
-        } else {
-            NioSocket().also { it.connect(settings.serverHost, settings.serverPort) }
+    private suspend fun openCarrierTransport(): Pair<Transport, SudokuProtocol.DirectionKeys?> {
+        if (settings.usesHttpMaskTunnel) {
+            val httpMask = SudokuHttpMaskTransport(
+                settings = settings,
+                enableEarlyHandshake = true,
+                connectionFactory = { openSocketOrTlsTransport() }
+            )
+            httpMask.connect()
+            return httpMask to httpMask.earlySessionBases
         }
-        // The legacy mask prefix is plaintext and precedes the obfuscated stream,
-        // so it is written straight to the socket rather than through the codec.
-        settings.legacyMaskHeader?.let { transport.send(it) }
-        return transport
+
+        if (settings.usesWebSocketMask) {
+            val underlying = openSocketOrTlsTransport()
+            try {
+                val unixSeconds = System.currentTimeMillis() / 1000L
+                val auth = SudokuProtocol.httpMaskAuthToken(settings.psk, "ws", "GET", "/ws", unixSeconds)
+                val path = SudokuProtocol.appendAuth(
+                    SudokuProtocol.applyPathRoot(settings.httpMask.pathRoot, "/ws"),
+                    auth
+                )
+                val wsConfig = WebSocketConfiguration(
+                    host = settings.hostHeader,
+                    path = path,
+                    headers = mapOf(
+                        "Accept" to "*/*",
+                        "Accept-Language" to "en-US,en;q=0.9",
+                        "Cache-Control" to "no-cache",
+                        "Pragma" to "no-cache",
+                        "X-Sudoku-Tunnel" to "ws",
+                        "Authorization" to "Bearer $auth"
+                    ),
+                    heartbeatPeriod = 30u
+                )
+                val wsConnection = WebSocketConnection(transport = underlying, configuration = wsConfig)
+                wsConnection.performUpgrade()
+                val wsTransport = object : Transport {
+                    override suspend fun send(data: ByteArray) = wsConnection.send(data)
+                    override fun sendAsync(data: ByteArray) = wsConnection.sendAsync(data)
+                    override suspend fun receive(): ByteArray? = wsConnection.receive()
+                    override fun forceCancel() = wsConnection.cancel()
+                }
+                return wsTransport to null
+            } catch (e: Exception) {
+                runCatching { underlying.forceCancel() }
+                throw e
+            }
+        }
+
+        val transport = openSocketOrTlsTransport()
+        try {
+            // The legacy mask prefix is plaintext and precedes the obfuscated stream,
+            // so it is written straight to the underlying transport rather than through the codec.
+            settings.legacyMaskHeader?.let { transport.send(it) }
+            return transport to null
+        } catch (e: Exception) {
+            runCatching { transport.forceCancel() }
+            throw e
+        }
+    }
+
+    private suspend fun openSocketOrTlsTransport(): Transport {
+        val baseTransport: Transport = when {
+            rawTransportFactory != null -> rawTransportFactory.invoke()
+            tunnel != null && tunnelConsumed.compareAndSet(false, true) -> TunneledTransport(tunnel)
+            else -> NioSocket().also { it.connect(settings.serverHost, settings.serverPort) }
+        }
+        val tlsConfig = settings.effectiveTlsConfiguration() ?: return baseTransport
+        return try {
+            val tlsClient = TlsClient(tlsConfig)
+            val tlsConn = tlsClient.connect(baseTransport)
+            outerTlsVersion = if (tlsConn.isTls13) TlsVersion.TLS13 else TlsVersion.TLS12
+            TlsRecordTransport(tlsConn)
+        } catch (e: Exception) {
+            runCatching { baseTransport.forceCancel() }
+            throw e
+        }
     }
 
     /**
