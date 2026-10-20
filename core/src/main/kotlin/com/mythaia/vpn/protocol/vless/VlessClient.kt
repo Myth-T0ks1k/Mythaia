@@ -257,6 +257,23 @@ class VlessClient(
                 connectWithGrpc(command, destinationHost, destinationPort, initialData)
             }
 
+            "http" -> {
+                if (isVisionFlow) {
+                    throw ProxyError.ProtocolError("Vision flow is not supported over HTTP transport")
+                }
+                connectWithStreamTransport("HTTP", command, destinationHost, destinationPort, initialData)
+            }
+
+            "quic" -> {
+                if (isVisionFlow) {
+                    throw ProxyError.ProtocolError("Vision flow is not supported over QUIC transport")
+                }
+                if (configuration.reality != null) {
+                    throw ProxyError.ProtocolError("QUIC transport is not supported over REALITY")
+                }
+                connectWithStreamTransport("QUIC", command, destinationHost, destinationPort, initialData)
+            }
+
             else -> {
                 when {
                     configuration.tls != null -> connectWithTls(
@@ -271,6 +288,43 @@ class VlessClient(
                 }
             }
         }
+    }
+
+    private suspend fun connectWithStreamTransport(
+        label: String,
+        command: VlessCommand,
+        destinationHost: String,
+        destinationPort: Int,
+        initialData: ByteArray?
+    ): ProxyConnection {
+        var lastError: Exception? = null
+
+        for (attempt in 0 until MAX_RETRY_ATTEMPTS) {
+            if (tunnel != null && attempt > 0) break
+            if (attempt > 0) {
+                cleanupRetryResources()
+                delay(RETRY_BASE_DELAY_MS * attempt)
+            }
+
+            try {
+                val opened = com.mythaia.vpn.protocol.StreamTransports.open(configuration, configuration.tls, tunnel)
+                try {
+                    val baseConn = object : VlessDirectConnection(opened.transport) {
+                        override val outerTlsVersion: TlsVersion? = opened.tlsVersion
+                    }
+                    return completeHandshake(baseConn, command, destinationHost, destinationPort, initialData)
+                } catch (e: Exception) {
+                    runCatching { opened.transport.forceCancel() }
+                    throw e
+                }
+            } catch (e: Exception) {
+                logger.debug("$label attempt ${attempt + 1}/$MAX_RETRY_ATTEMPTS failed: ${e.message}")
+                if (e is TlsError.CertificateValidationFailed) throw e
+                lastError = e
+            }
+        }
+
+        throw lastError ?: ProxyError.ConnectionFailed("All retry attempts failed")
     }
 
     private suspend fun connectWithWebSocket(

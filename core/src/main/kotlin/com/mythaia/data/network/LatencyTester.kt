@@ -261,7 +261,7 @@ object LatencyTester {
         com.mythaia.data.model.OutboundProtocol.NOWHERE ->
             (config.nowhereUplink ?: com.mythaia.vpn.protocol.nowhere.NowhereNetwork.UDP.wireName) ==
                 com.mythaia.vpn.protocol.nowhere.NowhereNetwork.UDP.wireName
-        else -> false
+        else -> config.transport == "quic"
     }
 
     /** The UDP side of the ping: a QUIC probe, disguised the way a Hysteria2 server expects. */

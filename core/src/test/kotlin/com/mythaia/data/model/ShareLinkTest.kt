@@ -135,7 +135,13 @@ class ShareLinkTest {
     @Test
     fun `vless transports without a dialer are refused at import`() {
         val base = "vless://b1a2c3d4-0000-4000-8000-000000000001@example.com:443"
-        for (query in listOf("type=kcp", "type=quic", "type=h2", "type=tcp&headerType=http")) {
+        for (query in listOf(
+            "type=kcp",
+            "type=quic",
+            "type=quic&security=tls&quicSecurity=aes-128-gcm",
+            "type=quic&security=tls&headerType=utp",
+            "type=tcp&headerType=http"
+        )) {
             try {
                 ProxyConfiguration.fromUrl("$base?$query#N")
                 fail("expected InvalidUrl for $query")
@@ -143,6 +149,8 @@ class ShareLinkTest {
                 // expected
             }
         }
+        assertEquals("http", ProxyConfiguration.fromUrl("$base?type=h2&security=tls#N").transport)
+        assertEquals("quic", ProxyConfiguration.fromUrl("$base?type=quic&security=tls#N").transport)
         assertEquals("xhttp", ProxyConfiguration.fromUrl("$base?type=splithttp&security=tls#N").transport)
         assertEquals("tcp", ProxyConfiguration.fromUrl("$base?type=raw&headerType=none#N").transport)
         assertEquals("ws", ProxyConfiguration.fromUrl("$base?type=ws&path=%2Fws#N").transport)

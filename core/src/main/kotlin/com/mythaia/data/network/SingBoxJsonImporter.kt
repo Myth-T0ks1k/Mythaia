@@ -258,9 +258,15 @@ object SingBoxJsonImporter {
                 params["type"] = "grpc"
                 transport!!.optString("service_name").takeIf { it.isNotEmpty() }?.let { params["serviceName"] = it }
             }
-            // HTTP/2 and QUIC carriers have no dialer here; importing them
-            // as plain TCP would give a server that never connects.
-            "http" -> throw ProxyError.InvalidUrl("the http (HTTP/2) transport is not supported")
+            "http" -> {
+                params["type"] = "http"
+                val hosts = XrayJsonImporter.stringList(transport!!.opt("host"))
+                if (hosts.isNotEmpty()) params["host"] = hosts.joinToString(",")
+                transport.optString("path").takeIf { it.isNotEmpty() }?.let { params["path"] = it }
+                transport.optString("method").takeIf { it.isNotEmpty() }?.let { params["method"] = it }
+                transport.optJSONObject("headers")?.takeIf { it.length() > 0 }?.let { params["headers"] = it.toString() }
+            }
+            "quic" -> params["type"] = "quic"
             else -> throw ProxyError.InvalidUrl("the $type transport is not supported")
         }
     }
@@ -314,6 +320,8 @@ object SingBoxJsonImporter {
             .put("sni", params["sni"] ?: "")
             .put("fp", params["fp"] ?: "")
             .put("alpn", params["alpn"] ?: "")
+        params["method"]?.let { json.put("method", it) }
+        params["headers"]?.let { json.put("headers", it) }
         if (params["allowInsecure"] == "1") json.put("allowInsecure", "1")
         return "vmess://" + Base64.getEncoder().encodeToString(json.toString().toByteArray(Charsets.UTF_8))
     }

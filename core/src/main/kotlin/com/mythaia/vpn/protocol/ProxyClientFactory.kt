@@ -172,8 +172,9 @@ object ProxyClientFactory {
                 NaiveClient.poolKey(config)?.let { "naive" to it }
             OutboundProtocol.NOWHERE ->
                 "nowhere" to com.mythaia.vpn.protocol.nowhere.NowhereClient.poolKey(config)
-            OutboundProtocol.VLESS, OutboundProtocol.TROJAN, OutboundProtocol.SHADOWSOCKS,
-            OutboundProtocol.SOCKS5, OutboundProtocol.VMESS, OutboundProtocol.SUDOKU,
+            OutboundProtocol.VLESS, OutboundProtocol.TROJAN, OutboundProtocol.VMESS ->
+                if (config.transport == "quic") "quic" to com.mythaia.vpn.protocol.quic.QuicClientPool.key(config) else null
+            OutboundProtocol.SHADOWSOCKS, OutboundProtocol.SOCKS5, OutboundProtocol.SUDOKU,
             OutboundProtocol.WIREGUARD -> null
         }
     }
@@ -183,6 +184,8 @@ object ProxyClientFactory {
         when (config.outboundProtocol) {
             OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC ->
                 com.mythaia.vpn.protocol.quic.QuicClientPool.evict(config)
+            OutboundProtocol.VLESS, OutboundProtocol.TROJAN, OutboundProtocol.VMESS ->
+                if (config.transport == "quic") com.mythaia.vpn.protocol.quic.QuicClientPool.evict(config)
             OutboundProtocol.ANYTLS -> com.mythaia.vpn.protocol.anytls.AnyTlsClient.release(config.id)
             OutboundProtocol.NAIVE_HTTP11, OutboundProtocol.NAIVE_HTTP2 -> NaiveClient.release(config)
             OutboundProtocol.NOWHERE -> com.mythaia.vpn.protocol.nowhere.NowhereClient.release(config)

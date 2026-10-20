@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.mythaia.R
 import com.mythaia.data.model.FragmentSettings
 import com.mythaia.data.model.HopInterval
+import com.mythaia.data.model.HttpTransportConfiguration
 import com.mythaia.data.model.HttpUpgradeConfiguration
 import com.mythaia.data.model.NaiveProtocol
 import com.mythaia.data.model.OutboundProtocol
@@ -141,6 +142,8 @@ fun ProxyEditorScreen(
     var wsPath by rememberSaveable { mutableStateOf(c?.websocket?.path ?: "/") }
     var httpUpgradeHost by rememberSaveable { mutableStateOf(c?.httpUpgrade?.host ?: "") }
     var httpUpgradePath by rememberSaveable { mutableStateOf(c?.httpUpgrade?.path ?: "/") }
+    var httpHost by rememberSaveable { mutableStateOf(c?.httpTransport?.hosts?.joinToString(", ") ?: "") }
+    var httpPath by rememberSaveable { mutableStateOf(c?.httpTransport?.path ?: "/") }
     var xhttpHost by rememberSaveable { mutableStateOf(c?.xhttp?.host ?: "") }
     var xhttpPath by rememberSaveable { mutableStateOf(c?.xhttp?.path ?: "/") }
     var xhttpMode by rememberSaveable { mutableStateOf(c?.xhttp?.mode?.raw ?: "auto") }
@@ -451,6 +454,14 @@ fun ProxyEditorScreen(
                             httpUpgradeConfiguration = (configuration?.httpUpgrade ?: HttpUpgradeConfiguration(host = host))
                                 .copy(host = host, path = httpUpgradePath.trim().ifEmpty { "/" })
                         }
+                        var httpTransportConfiguration: HttpTransportConfiguration? = null
+                        if (transport == "http" && streamProtocol) {
+                            val hosts = httpHost.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                            var path = httpPath.trim().ifEmpty { "/" }
+                            if (!path.startsWith("/")) path = "/$path"
+                            httpTransportConfiguration = (configuration?.httpTransport ?: HttpTransportConfiguration())
+                                .copy(hosts = hosts, path = path)
+                        }
                         var xhttpConfiguration: XHttpConfiguration? = null
                         if (transport == "xhttp" && streamProtocol) {
                             val host = xhttpHost.trim().ifEmpty { bareAddress }
@@ -502,6 +513,7 @@ fun ProxyEditorScreen(
                             reality = if (isVless) realityConfiguration else null,
                             websocket = wsConfiguration,
                             httpUpgrade = httpUpgradeConfiguration,
+                            httpTransport = httpTransportConfiguration,
                             xhttp = xhttpConfiguration,
                             grpc = grpcConfiguration,
                             muxEnabled = if (isVless) muxEnabled else false,
@@ -774,12 +786,15 @@ fun ProxyEditorScreen(
                             "tcp" to "TCP",
                             "ws" to "WebSocket",
                             "httpupgrade" to "HTTPUpgrade",
+                            "http" to "HTTP/2",
+                            "quic" to "QUIC",
                             "xhttp" to "XHTTP",
                             "grpc" to "gRPC"
                         ),
                         onSelect = {
                             transport = it
                             if (flow.isNotEmpty() && it != "tcp") flow = ""
+                            if (it == "quic" && security != "tls") security = "tls"
                         }
                     )
 
@@ -790,6 +805,10 @@ fun ProxyEditorScreen(
                     if (transport == "httpupgrade") {
                         WingField(httpUpgradeHost, { httpUpgradeHost = it }, stringResource(R.string.host))
                         WingField(httpUpgradePath, { httpUpgradePath = it }, stringResource(R.string.path))
+                    }
+                    if (transport == "http") {
+                        WingField(httpHost, { httpHost = it }, stringResource(R.string.host))
+                        WingField(httpPath, { httpPath = it }, stringResource(R.string.path))
                     }
                     if (transport == "xhttp") {
                         WingField(xhttpHost, { xhttpHost = it }, stringResource(R.string.host))

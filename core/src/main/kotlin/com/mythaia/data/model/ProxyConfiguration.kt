@@ -61,7 +61,7 @@ internal fun parseAlpn(raw: String?): List<String>? =
  */
 internal fun transportHostParam(params: Map<String, String>): String? {
     val raw = when (params["type"]) {
-        "ws", "httpupgrade", "xhttp", "splithttp" -> params["host"]
+        "ws", "httpupgrade", "http", "h2", "xhttp", "splithttp" -> params["host"]
         "grpc" -> params["authority"]
         else -> null
     } ?: return null
@@ -372,6 +372,76 @@ data class HttpUpgradeConfiguration(
             var path = params["path"]?.takeIf { it.isNotEmpty() } ?: "/"
             if (!path.startsWith("/")) path = "/$path"
             return HttpUpgradeConfiguration(host = host, path = path)
+        }
+    }
+}
+
+/**
+ * The V2Ray `http` transport: sing-box's `http`, Xray's former `h2`, Clash's
+ * `network: h2`. Every connection is one HTTP request whose body is the
+ * uplink and whose response body the downlink; over TLS that is a stream of
+ * a shared HTTP/2 connection, in the clear an HTTP/1.1 request on a TCP
+ * connection of its own, which is how sing-box dials it.
+ */
+@Serializable
+data class HttpTransportConfiguration(
+    /** Host names, one picked at random per connection; none sends the default [pickHost] gives. */
+    val hosts: List<String> = emptyList(),
+    val path: String = "/",
+    /** sing-box's default, and what Xray's h2 always sent. */
+    val method: String = DEFAULT_METHOD,
+    val headers: Map<String, String> = emptyMap()
+) {
+    /**
+     * The Host (`:authority`) of one connection: a random one of [hosts], or
+     * what v2ray and sing-box send without one — `www.example.com` over
+     * HTTP/2, the server's address over HTTP/1.1. A server with hosts set
+     * refuses any other.
+     */
+    fun pickHost(secure: Boolean, serverAddress: String): String =
+        hosts.randomOrNull() ?: if (secure) DEFAULT_SECURE_HOST else serverAddress
+
+    fun headersJson(): String? = if (headers.isEmpty()) null else org.json.JSONObject(headers).toString()
+
+    companion object {
+        const val DEFAULT_METHOD = "PUT"
+        const val DEFAULT_SECURE_HOST = "www.example.com"
+
+        /**
+         * From link parameters: `host` (a comma-separated list), `path`, and
+         * this client's own `method` and `headers` (a JSON object), which no
+         * other link format has a place for.
+         */
+        fun parse(params: Map<String, String>): HttpTransportConfiguration {
+            val hosts = params["host"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            var path = params["path"]?.trim()?.takeIf { it.isNotEmpty() } ?: "/"
+            if (!path.startsWith("/")) path = "/$path"
+            val method = params["method"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: DEFAULT_METHOD
+            val headers = params["headers"]?.takeIf { it.isNotBlank() }?.let { text ->
+                val json = runCatching { org.json.JSONObject(text) }.getOrNull()
+                    ?: throw ProxyError.InvalidUrl("http transport: headers are not a JSON object")
+                json.keys().asSequence().associateWith { key ->
+                    when (val value = json.opt(key)) {
+                        is org.json.JSONArray -> (0 until value.length()).joinToString(", ") { value.opt(it).toString() }
+                        else -> value.toString()
+                    }
+                }
+            } ?: emptyMap()
+            return HttpTransportConfiguration(hosts = hosts, path = path, method = method, headers = headers)
+        }
+
+        /**
+         * The V2Ray QUIC transport's own settings, refused unless they are
+         * the defaults: its packet encryption (`quicSecurity`, `key`) and
+         * header disguise (`headerType`) are things no reference server this
+         * client is tested against still speaks, and a client that ignored
+         * them would send packets the server drops.
+         */
+        fun checkQuicDefaults(security: String?, headerType: String?) {
+            val s = security?.trim()?.lowercase().orEmpty()
+            if (s.isNotEmpty() && s != "none") throw ProxyError.InvalidUrl("quic transport: $s packet encryption is not supported")
+            val h = headerType?.trim()?.lowercase().orEmpty()
+            if (h.isNotEmpty() && h != "none") throw ProxyError.InvalidUrl("quic transport: $h header disguise is not supported")
         }
     }
 }
@@ -790,6 +860,7 @@ data class ProxyConfiguration(
     val reality: RealityConfiguration? = null,
     val websocket: WebSocketConfiguration? = null,
     val httpUpgrade: HttpUpgradeConfiguration? = null,
+    val httpTransport: HttpTransportConfiguration? = null,
     val xhttp: XHttpConfiguration? = null,
     val grpc: com.mythaia.vpn.protocol.grpc.GrpcConfiguration? = null,
     val testseed: List<UInt> = listOf(900u, 500u, 900u, 256u),
@@ -923,6 +994,7 @@ data class ProxyConfiguration(
         get() = when (transport) {
             "ws" -> websocket?.host
             "httpupgrade" -> httpUpgrade?.host
+            "http" -> httpTransport?.hosts?.firstOrNull()
             "xhttp" -> xhttp?.host
             "grpc" -> grpc?.authority
             else -> null
@@ -975,6 +1047,7 @@ data class ProxyConfiguration(
                 reality == other.reality &&
                 websocket == other.websocket &&
                 httpUpgrade == other.httpUpgrade &&
+                httpTransport == other.httpTransport &&
                 xhttp == other.xhttp &&
                 grpc == other.grpc &&
                 testseed == other.testseed &&
@@ -1121,7 +1194,7 @@ data class ProxyConfiguration(
         json.put("id", uuid.toString())
         json.put("aid", "0")
         json.put("scy", vmessSecurity ?: "auto")
-        json.put("net", transport)
+        json.put("net", if (transport == "http") "h2" else transport)
         json.put("type", if (grpc?.multiMode == true) "multi" else "none")
         websocket?.let {
             json.put("path", it.path)
@@ -1130,6 +1203,12 @@ data class ProxyConfiguration(
         httpUpgrade?.let {
             json.put("path", it.path)
             json.put("host", it.host)
+        }
+        httpTransport?.let {
+            json.put("path", it.path)
+            if (it.hosts.isNotEmpty()) json.put("host", it.hosts.joinToString(","))
+            if (it.method != HttpTransportConfiguration.DEFAULT_METHOD) json.put("method", it.method)
+            it.headersJson()?.let { h -> json.put("headers", h) }
         }
         grpc?.let {
             json.put("path", it.serviceName)
@@ -1473,6 +1552,14 @@ data class ProxyConfiguration(
         if (transport == "httpupgrade" && httpUpgrade != null) {
             if (httpUpgrade.host != serverAddress) params.add("host=${httpUpgrade.host}")
             if (httpUpgrade.path != "/") params.add("path=${urlEncode(httpUpgrade.path)}")
+        }
+        if (transport == "http" && httpTransport != null) {
+            if (httpTransport.hosts.isNotEmpty()) params.add("host=${urlEncode(httpTransport.hosts.joinToString(","))}")
+            if (httpTransport.path != "/") params.add("path=${urlEncode(httpTransport.path)}")
+            if (httpTransport.method != HttpTransportConfiguration.DEFAULT_METHOD) {
+                params.add("method=${urlEncode(httpTransport.method)}")
+            }
+            httpTransport.headersJson()?.let { params.add("headers=${urlEncode(it)}") }
         }
         if (transport == "xhttp" && xhttp != null) {
             if (xhttp.host != serverAddress) params.add("host=${xhttp.host}")
@@ -1899,9 +1986,13 @@ data class ProxyConfiguration(
 
             val type = params["type"]?.takeIf { it.isNotEmpty() } ?: "tcp"
             val transport = when (type) {
-                "tcp", "ws", "httpupgrade", "grpc", "xhttp" -> type
+                "tcp", "ws", "httpupgrade", "grpc", "xhttp", "http", "quic" -> type
+                "h2" -> "http"
                 "splithttp" -> "xhttp"
                 else -> throw ProxyError.InvalidUrl("trojan: $type transport is not supported")
+            }
+            if (transport == "quic") {
+                HttpTransportConfiguration.checkQuicDefaults(params["quicSecurity"], params["headerType"])
             }
 
             val alpn = parseAlpn(params["alpn"])
@@ -1928,6 +2019,7 @@ data class ProxyConfiguration(
                 tls = tls,
                 websocket = if (transport == "ws") WebSocketConfiguration.parse(params, host) else null,
                 httpUpgrade = if (transport == "httpupgrade") HttpUpgradeConfiguration.parse(params, host) else null,
+                httpTransport = if (transport == "http") HttpTransportConfiguration.parse(params) else null,
                 xhttp = if (transport == "xhttp") XHttpConfiguration.parse(params + ("host" to (params["host"] ?: sni)), host) else null,
                 grpc = if (transport == "grpc") com.mythaia.vpn.protocol.grpc.GrpcConfiguration.parse(params) else null,
                 outboundProtocol = OutboundProtocol.TROJAN,
@@ -2073,6 +2165,8 @@ data class ProxyConfiguration(
                 "httpupgrade" -> "httpupgrade"
                 "grpc", "gun" -> "grpc"
                 "xhttp", "splithttp" -> "xhttp"
+                "http", "h2" -> "http"
+                "quic" -> "quic"
                 else -> throw ProxyError.InvalidUrl("vmess: $network transport is not supported yet")
             }
             // "type" is the header obfuscation (http camouflage etc.). Nothing
@@ -2081,6 +2175,12 @@ data class ProxyConfiguration(
             // the same field carries the mode instead ("multi"), which is
             // what this exporter writes.
             val headerType = json.optString("type").trim()
+            if (transport == "quic") {
+                HttpTransportConfiguration.checkQuicDefaults(
+                    json.optString("quicSecurity").ifEmpty { json.optString("host") },
+                    headerType
+                )
+            }
             val isGrpcMode = transport == "grpc" && headerType == "multi"
             if (headerType.isNotEmpty() && headerType != "none" && !isGrpcMode) {
                 throw ProxyError.InvalidUrl("vmess: $headerType header obfuscation is not supported")
@@ -2088,8 +2188,11 @@ data class ProxyConfiguration(
 
             val tlsField = json.optString("tls")
             val useTls = tlsField == "tls" || tlsField == "1" || tlsField == "true"
+            if (transport == "quic" && !useTls) {
+                throw ProxyError.InvalidUrl("vmess: quic transport requires TLS")
+            }
             val sni = json.optString("sni").takeIf { it.isNotEmpty() }
-                ?: json.optString("host").takeIf { it.isNotEmpty() }
+                ?: json.optString("host").substringBefore(',').trim().takeIf { it.isNotEmpty() }
                 ?: host
             val alpn = json.optString("alpn").takeIf { it.isNotEmpty() }?.split(",")
             // v2rayN writes this either way round depending on its version.
@@ -2125,6 +2228,16 @@ data class ProxyConfiguration(
                     path = json.optString("path").ifEmpty { "/" }
                 )
             } else null
+            val httpTransport = if (transport == "http") {
+                HttpTransportConfiguration.parse(
+                    mapOf(
+                        "host" to json.optString("host"),
+                        "path" to json.optString("path"),
+                        "method" to json.optString("method"),
+                        "headers" to json.optString("headers")
+                    )
+                )
+            } else null
             // v2rayN puts the service name in `path` and the mode in `type`.
             val grpc = if (transport == "grpc") {
                 com.mythaia.vpn.protocol.grpc.GrpcConfiguration(
@@ -2153,6 +2266,7 @@ data class ProxyConfiguration(
                 tls = tls,
                 websocket = websocket,
                 httpUpgrade = httpUpgrade,
+                httpTransport = httpTransport,
                 grpc = grpc,
                 xhttp = xhttp,
                 outboundProtocol = OutboundProtocol.VMESS,
@@ -2364,14 +2478,19 @@ data class ProxyConfiguration(
             val encryption = params["encryption"] ?: "none"
             val flow = params["flow"]
             val security = params["security"] ?: "none"
-            // kcp, quic, h2 and the rest have no dialer here; stored as they
-            // are they would only fail at connect time, with a vaguer message.
             val type = params["type"]?.takeIf { it.isNotEmpty() } ?: "tcp"
             val transport = when (type) {
-                "tcp", "ws", "httpupgrade", "grpc", "xhttp" -> type
+                "tcp", "ws", "httpupgrade", "grpc", "xhttp", "http", "quic" -> type
+                "h2" -> "http"
                 "splithttp" -> "xhttp"
                 "raw" -> "tcp"
                 else -> throw ProxyError.InvalidUrl("vless: $type transport is not supported")
+            }
+            if (transport == "quic") {
+                HttpTransportConfiguration.checkQuicDefaults(params["quicSecurity"], params["headerType"])
+                if (security != "tls") {
+                    throw ProxyError.InvalidUrl("vless: quic transport requires security=tls")
+                }
             }
             // Header obfuscation (http camouflage) is not spoken either, and a
             // server expecting it never answers a plain request.
@@ -2390,6 +2509,7 @@ data class ProxyConfiguration(
             val tlsConfig = if (security == "tls") TlsConfiguration.parse(params, host) else null
             val wsConfig = if (transport == "ws") WebSocketConfiguration.parse(params, host) else null
             val httpUpgradeConfig = if (transport == "httpupgrade") HttpUpgradeConfiguration.parse(params, host) else null
+            val httpConfig = if (transport == "http") HttpTransportConfiguration.parse(params) else null
             val xhttpConfig = if (transport == "xhttp") {
                 // Fall back to TLS/Reality SNI for XHTTP host
                 val xhttpHost = params["host"]
@@ -2416,6 +2536,7 @@ data class ProxyConfiguration(
                 reality = realityConfig,
                 websocket = wsConfig,
                 httpUpgrade = httpUpgradeConfig,
+                httpTransport = httpConfig,
                 xhttp = xhttpConfig,
                 grpc = grpcConfig,
                 testseed = testseed ?: listOf(900u, 500u, 900u, 256u),

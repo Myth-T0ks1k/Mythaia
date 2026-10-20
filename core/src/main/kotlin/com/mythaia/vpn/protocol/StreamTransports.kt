@@ -87,6 +87,16 @@ object StreamTransports {
                     grpcTransport(connection)
                 }
             }
+            "http" -> V2RayHttpTransport.open(configuration, tls, tunnel)
+            "quic" -> {
+                if (tunnel != null) {
+                    throw ProxyError.ConnectionFailed("quic transport cannot be dialled through a proxy chain")
+                }
+                val quicTls = tls
+                    ?: throw ProxyError.ConnectionFailed("quic transport requires TLS")
+                val stream = com.mythaia.vpn.protocol.quic.QuicClientPool.openTransportStream(configuration, quicTls)
+                Opened(TunneledTransport(stream), TlsVersion.TLS13)
+            }
             "xhttp" -> openXHttp(configuration, tls, tunnel)
             else -> throw ProxyError.ConnectionFailed("$transport transport is not supported")
         }

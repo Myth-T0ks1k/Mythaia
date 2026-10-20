@@ -275,19 +275,35 @@ class SingBoxJsonImporterTest {
     }
 
     @Test
-    fun `transports and outbounds with no dialer here are refused with a reason`() {
-        val json = """
+    fun `http and quic transports import and unsupported ones are refused with a reason`() {
+        val ok = """
         {"outbounds":[
           {"type":"vless","tag":"h2","server":"a.example.com","server_port":443,"uuid":"$uuid",
-           "tls":{"enabled":true},"transport":{"type":"http","host":["a.example.com"],"path":"/"}},
+           "tls":{"enabled":true},"transport":{"type":"http","host":["h1.example.com","h2.example.com"],"path":"/api","method":"POST","headers":{"X-Custom":["v1","v2"]}}},
+          {"type":"trojan","tag":"q","server":"q.example.com","server_port":443,"password":"pw",
+           "tls":{"enabled":true},"transport":{"type":"quic"}},
+          {"type":"direct","tag":"direct"}
+        ]}"""
+        val (h2, quic) = SingBoxJsonImporter.parse(ok)
+        assertEquals("http", h2.transport)
+        assertEquals(listOf("h1.example.com", "h2.example.com"), h2.httpTransport?.hosts)
+        assertEquals("/api", h2.httpTransport?.path)
+        assertEquals("POST", h2.httpTransport?.method)
+        assertEquals("v1, v2", h2.httpTransport?.headers?.get("X-Custom"))
+        assertEquals("quic", quic.transport)
+
+        val bad = """
+        {"outbounds":[
+          {"type":"vless","tag":"kcp","server":"a.example.com","server_port":443,"uuid":"$uuid",
+           "transport":{"type":"kcp"}},
           {"type":"shadowtls","tag":"stls","server":"b.example.com","server_port":443},
           {"type":"direct","tag":"direct"}
         ]}"""
         try {
-            SingBoxJsonImporter.parse(json)
+            SingBoxJsonImporter.parse(bad)
             fail("expected a refusal")
         } catch (e: ProxyError.InvalidUrl) {
-            assertTrue(e.message!!, e.message!!.contains("HTTP/2"))
+            assertTrue(e.message!!, e.message!!.contains("kcp"))
             assertTrue(e.message!!, e.message!!.contains("shadowtls"))
         }
     }

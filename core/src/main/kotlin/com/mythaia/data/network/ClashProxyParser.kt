@@ -99,6 +99,7 @@ object ClashProxyParser {
         val transport = when (network) {
             "tcp" -> "tcp"
             "ws" -> "ws"
+            "h2", "http" -> "http"
             else -> return null
         }
 
@@ -117,9 +118,12 @@ object ClashProxyParser {
             else -> "none"
         }
 
+        val httpConfig = if (transport == "http") parseH2Opts(node) else null
+
         // Common TLS/Reality fields
         val serverName = node.optString("servername", "").takeIf { it.isNotEmpty() }
             ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
+            ?: httpConfig?.hosts?.firstOrNull()
             ?: server
         val skipCertVerify = node.optBoolean("skip-cert-verify", false)
         val clientFP = node.optString("client-fingerprint", "").takeIf { it.isNotEmpty() }
@@ -207,8 +211,17 @@ object ClashProxyParser {
             tls = tlsConfig,
             reality = realityConfig,
             websocket = wsConfig,
-            httpUpgrade = httpUpgradeConfig
+            httpUpgrade = httpUpgradeConfig,
+            httpTransport = httpConfig
         )
+    }
+
+    private fun parseH2Opts(node: JSONObject): com.mythaia.data.model.HttpTransportConfiguration {
+        val opts = node.optJSONObject("h2-opts") ?: return com.mythaia.data.model.HttpTransportConfiguration()
+        val hosts = XrayJsonImporter.stringList(opts.opt("host"))
+        var path = opts.optString("path", "/").trim().ifEmpty { "/" }
+        if (!path.startsWith("/")) path = "/$path"
+        return com.mythaia.data.model.HttpTransportConfiguration(hosts = hosts, path = path)
     }
 
     /**
@@ -251,9 +264,8 @@ object ClashProxyParser {
 
     /**
      * Parses a Clash `type: trojan` node into a TROJAN outbound. Reality, ECH,
-     * gRPC, the Trojan-Go SS layer, and any transport other than bare TCP
-     * cause the node to be skipped rather than silently downgraded to a
-     * different wire format.
+     * gRPC, and the Trojan-Go SS layer cause the node to be skipped rather than
+     * silently downgraded to a different wire format.
      */
     private fun parseTrojanProxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
@@ -265,7 +277,11 @@ object ClashProxyParser {
         val port = portInt.toUShort()
 
         val network = node.optString("network", "tcp")
-        if (network != "tcp") return null
+        val transport = when (network) {
+            "tcp" -> "tcp"
+            "h2", "http" -> "http"
+            else -> return null
+        }
 
         if (node.optJSONObject("reality-opts") != null) return null
         if (node.optJSONObject("ech-opts") != null) return null
@@ -274,8 +290,11 @@ object ClashProxyParser {
             if (it.optBoolean("enabled", false)) return null
         }
 
+        val httpConfig = if (transport == "http") parseH2Opts(node) else null
+
         val sni = node.optString("servername", "").takeIf { it.isNotEmpty() }
             ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
+            ?: httpConfig?.hosts?.firstOrNull()
             ?: server
         val alpn = node.optJSONArray("alpn")?.let { arr ->
             (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
@@ -296,9 +315,10 @@ object ClashProxyParser {
             serverPort = port,
             uuid = UUID.randomUUID(), // placeholder, not used for Trojan
             encryption = "none",
-            transport = "tcp",
+            transport = transport,
             security = "tls",
             tls = tls,
+            httpTransport = httpConfig,
             outboundProtocol = OutboundProtocol.TROJAN,
             trojanPassword = password,
             trojanTls = tls
@@ -387,6 +407,7 @@ object ClashProxyParser {
         val transport = when (network) {
             "ws" -> "ws"
             "tcp" -> "tcp"
+            "h2", "http" -> "http"
             else -> return null
         }
 
@@ -403,6 +424,7 @@ object ClashProxyParser {
         val wsHeaders = wsOpts?.optJSONObject("headers")
         val wsHost = wsHeaders?.optString("Host")?.takeIf { it.isNotEmpty() }
             ?: wsHeaders?.optString("host")?.takeIf { it.isNotEmpty() }
+        val httpConfig = if (transport == "http") parseH2Opts(node) else null
 
         val websocket = if (transport == "ws") {
             WebSocketConfiguration(
@@ -418,6 +440,7 @@ object ClashProxyParser {
                 serverName = node.optString("servername", "").takeIf { it.isNotEmpty() }
                     ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
                     ?: wsHost
+                    ?: httpConfig?.hosts?.firstOrNull()
                     ?: server,
                 allowInsecure = node.optBoolean("skip-cert-verify", false),
                 fingerprint = TlsFingerprint.fromRaw(
@@ -438,6 +461,7 @@ object ClashProxyParser {
             security = if (useTls) "tls" else "none",
             tls = tls,
             websocket = websocket,
+            httpTransport = httpConfig,
             outboundProtocol = OutboundProtocol.VMESS,
             vmessSecurity = node.optString("cipher", "").takeIf { it.isNotEmpty() && it != "auto" }
         )

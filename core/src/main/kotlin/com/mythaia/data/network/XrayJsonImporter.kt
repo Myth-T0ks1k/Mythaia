@@ -320,6 +320,19 @@ object XrayJsonImporter {
                     throw ProxyError.InvalidUrl("tcp header type '$header' is not supported")
                 }
             }
+            "http" -> stream.optJSONObject("httpSettings")?.let { h ->
+                val hosts = stringList(h.opt("host"))
+                if (hosts.isNotEmpty()) params["host"] = hosts.joinToString(",")
+                h.optString("path").takeIf { it.isNotEmpty() }?.let { params["path"] = it }
+                h.optString("method").takeIf { it.isNotEmpty() }?.let { params["method"] = it }
+                h.optJSONObject("headers")?.takeIf { it.length() > 0 }?.let { params["headers"] = it.toString() }
+            }
+            "quic" -> stream.optJSONObject("quicSettings")?.let { q ->
+                com.mythaia.data.model.HttpTransportConfiguration.checkQuicDefaults(
+                    q.optString("security"),
+                    q.optJSONObject("header")?.optString("type")
+                )
+            }
             else -> throw ProxyError.InvalidUrl("$network transport is not supported")
         }
 
@@ -445,6 +458,8 @@ object XrayJsonImporter {
             .put("sni", params["sni"] ?: "")
             .put("fp", params["fp"] ?: "")
             .put("alpn", params["alpn"] ?: "")
+        params["method"]?.let { json.put("method", it) }
+        params["headers"]?.let { json.put("headers", it) }
         if (params["allowInsecure"] == "1") json.put("allowInsecure", "1")
         params["pcs"]?.let { json.put("pcs", it) }
         params["vcn"]?.let { json.put("vcn", it) }

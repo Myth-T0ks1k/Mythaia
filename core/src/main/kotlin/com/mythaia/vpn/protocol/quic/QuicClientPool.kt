@@ -2,19 +2,24 @@ package com.mythaia.vpn.protocol.quic
 
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.ProxyError
+import com.mythaia.data.model.TlsConfiguration
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.hysteria.HysteriaClient
 import com.mythaia.vpn.protocol.tuic.TuicClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * One Hysteria2 / TUIC client per server, shared by every flow.
+ * One Hysteria2 / TUIC client or V2Ray QUIC transport session per server,
+ * shared by every flow.
  *
- * Both protocols multiplex everything onto one QUIC connection — that is
+ * All three multiplex everything onto one QUIC connection — that is
  * where their speed comes from — so a client per flow was the worst of both
  * worlds: every TCP connection in the tunnel paid a full QUIC handshake,
  * HTTP/3 setup and authentication (most of a second on a filtered network),
@@ -28,6 +33,7 @@ object QuicClientPool {
 
     private val hysteria = ConcurrentHashMap<String, HysteriaClient>()
     private val tuic = ConcurrentHashMap<String, TuicClient>()
+    private val transport = ConcurrentHashMap<String, QuicTransportSession>()
 
     fun hysteria(configuration: ProxyConfiguration): HysteriaClient =
         hysteria.computeIfAbsent(key(configuration)) { HysteriaClient(configuration) }
@@ -35,14 +41,20 @@ object QuicClientPool {
     fun tuic(configuration: ProxyConfiguration): TuicClient =
         tuic.computeIfAbsent(key(configuration)) { TuicClient(configuration) }
 
+    suspend fun openTransportStream(configuration: ProxyConfiguration, tls: TlsConfiguration): QuicStream =
+        transport.computeIfAbsent(key(configuration)) { QuicTransportSession(configuration, tls) }.openStream()
+
     /** Ends every pooled session. Safe to call any time; the next dial starts afresh. */
     fun closeAll() {
         val h = hysteria.values.toList()
         val t = tuic.values.toList()
+        val q = transport.values.toList()
         hysteria.clear()
         tuic.clear()
+        transport.clear()
         h.forEach { runCatching { it.close() } }
         t.forEach { runCatching { it.close() } }
+        q.forEach { runCatching { it.close() } }
     }
 
     /**
@@ -57,16 +69,100 @@ object QuicClientPool {
         val k = key(configuration)
         hysteria.remove(k)?.let { runCatching { it.close() } }
         tuic.remove(k)?.let { runCatching { it.close() } }
+        transport.remove(k)?.let { runCatching { it.close() } }
     }
 
     /** Everything that makes two configurations reach the same session. */
     internal fun key(c: ProxyConfiguration): String = listOf(
-        c.outboundProtocol, c.serverAddress, c.serverPort, c.uuid, c.password, c.trojanPassword,
+        c.outboundProtocol, c.transport, c.serverAddress, c.serverPort, c.uuid, c.password, c.trojanPassword,
         c.obfuscation, c.obfuscationPassword, c.hysteriaUpMbps, c.hysteriaDownMbps,
         c.hysteriaPorts, c.hysteriaHopInterval, c.hysteriaHopIntervalMax,
         c.tls?.serverName, c.tls?.allowInsecure, c.tls?.fingerprint, c.tls?.alpn,
         c.tls?.pinnedCertSha256, c.tls?.verifyName
     ).joinToString("|")
+}
+
+/**
+ * The V2Ray/sing-box `quic` transport: raw bidirectional QUIC streams on a
+ * shared connection, with default ALPN `h3` when none is configured.
+ */
+internal class QuicTransportSession(
+    private val configuration: ProxyConfiguration,
+    private val tls: TlsConfiguration
+) {
+    private val lock = Mutex()
+
+    @Volatile
+    private var quic: QuicConnection? = null
+
+    @Volatile
+    private var closed = false
+
+    private val backoff = QuicRedialBackoff()
+
+    suspend fun openStream(): QuicStream {
+        val session = lock.withLock { ensureSessionLocked() }
+        session.openStream()?.let { return it }
+        // Stream credit exhausted on the old connection; open a fresh one.
+        val fresh = lock.withLock {
+            if (quic === session) {
+                runCatching { quic?.close() }
+                quic = null
+            }
+            ensureSessionLocked()
+        }
+        return fresh.openStream()
+            ?: throw ProxyError.ConnectionFailed("QUIC transport: no stream credit left")
+    }
+
+    private suspend fun ensureSessionLocked(): QuicConnection {
+        if (closed) throw ProxyError.ConnectionFailed("QUIC transport session closed")
+        quic?.takeIf { it.isConnected }?.let { return it }
+        backoff.check("QUIC")
+
+        runCatching { quic?.close() }
+        quic = null
+
+        val alpn = tls.alpn?.takeIf { it.isNotEmpty() } ?: listOf("h3")
+        val connection = QuicConnection(
+            serverName = configuration.serverAddress,
+            serverPort = configuration.serverPort.toInt(),
+            alpn = alpn,
+            tuning = QuicTuning.NOWHERE,
+            fingerprint = tls.fingerprint,
+            tlsServerName = tls.serverName.ifBlank { configuration.serverAddress },
+            allowInsecure = tls.allowInsecure,
+            pinnedCertSha256 = tls.pinnedCertSha256,
+            verifyName = tls.verifyName
+        )
+        try {
+            if (!connection.connect()) {
+                throw ProxyError.ConnectionFailed("QUIC transport handshake failed")
+            }
+            if (closed) throw ProxyError.ConnectionFailed("QUIC transport session closed")
+            quic = connection
+            if (closed) {
+                quic = null
+                throw ProxyError.ConnectionFailed("QUIC transport session closed")
+            }
+        } catch (e: CancellationException) {
+            runCatching { connection.close() }
+            throw e
+        } catch (e: Throwable) {
+            runCatching { connection.close() }
+            if (!closed) backoff.failed(e)
+            throw e
+        }
+        backoff.succeeded()
+        return connection
+    }
+
+    fun close() {
+        closed = true
+        val c = quic
+        quic = null
+        c?.close()
+    }
 }
 
 /**
