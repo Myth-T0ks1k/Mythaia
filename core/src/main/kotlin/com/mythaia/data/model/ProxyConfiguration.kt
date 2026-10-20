@@ -502,8 +502,12 @@ data class XHttpConfiguration(
     val mode: XHttpMode = XHttpMode.AUTO,
     val headers: Map<String, String> = emptyMap(),
     @SerialName("noGRPCHeader") val noGrpcHeader: Boolean = false,
+    @SerialName("noSSEHeader") val noSseHeader: Boolean = false,
     val scMaxEachPostBytes: Int = 1_000_000,
     val scMinPostsIntervalMs: Int = 30,
+    val scMaxBufferedPosts: Int = 30,
+    val scStreamUpServerSecsFrom: Int = 20,
+    val scStreamUpServerSecsTo: Int = 80,
     val xPaddingBytesFrom: Int = 100,
     val xPaddingBytesTo: Int = 1000,
     val xPaddingObfsMode: Boolean = false,
@@ -518,7 +522,9 @@ data class XHttpConfiguration(
     val seqKey: String = "",
     val uplinkDataPlacement: XHttpPlacement = XHttpPlacement.BODY,
     val uplinkDataKey: String = "",
-    val uplinkChunkSize: Int = 0
+    val uplinkChunkSize: Int = 0,
+    val xmuxJson: String? = null,
+    val downloadSettingsJson: String? = null
 ) {
     val normalizedPath: String
         get() {
@@ -568,8 +574,15 @@ data class XHttpConfiguration(
     fun toExtraJson(): String {
         val parts = mutableListOf<String>()
         if (noGrpcHeader) parts.add("\"noGRPCHeader\":true")
+        if (noSseHeader) parts.add("\"noSSEHeader\":true")
         if (scMaxEachPostBytes != 1_000_000) parts.add("\"scMaxEachPostBytes\":$scMaxEachPostBytes")
         if (scMinPostsIntervalMs != 30) parts.add("\"scMinPostsIntervalMs\":$scMinPostsIntervalMs")
+        if (scMaxBufferedPosts != 30) parts.add("\"scMaxBufferedPosts\":$scMaxBufferedPosts")
+        if (scStreamUpServerSecsFrom != 20 || scStreamUpServerSecsTo != 80) {
+            val secsStr = if (scStreamUpServerSecsFrom == scStreamUpServerSecsTo) "$scStreamUpServerSecsFrom"
+            else "\"$scStreamUpServerSecsFrom-$scStreamUpServerSecsTo\""
+            parts.add("\"scStreamUpServerSecs\":$secsStr")
+        }
         if (xPaddingBytesFrom != 100) parts.add("\"xPaddingBytesFrom\":$xPaddingBytesFrom")
         if (xPaddingBytesTo != 1000) parts.add("\"xPaddingBytesTo\":$xPaddingBytesTo")
         if (xPaddingObfsMode) parts.add("\"xPaddingObfsMode\":true")
@@ -589,7 +602,116 @@ data class XHttpConfiguration(
             val headersJson = headers.entries.joinToString(",") { "${jsonString(it.key)}:${jsonString(it.value)}" }
             parts.add("\"headers\":{$headersJson}")
         }
+        if (!xmuxJson.isNullOrBlank()) parts.add("\"xmux\":$xmuxJson")
+        if (!downloadSettingsJson.isNullOrBlank()) parts.add("\"downloadSettings\":$downloadSettingsJson")
         return if (parts.isEmpty()) "" else "{${parts.joinToString(",")}}"
+    }
+
+    /**
+     * Resolves [downloadSettingsJson] into a standalone download [ProxyConfiguration]
+     * and [XHttpConfiguration] when configured, or returns null when upload and download
+     * share the same server/transport settings.
+     */
+    fun resolveDownloadConfiguration(parent: ProxyConfiguration): Pair<ProxyConfiguration, XHttpConfiguration>? {
+        val raw = downloadSettingsJson?.takeIf { it.isNotBlank() } ?: return null
+        val ds = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return null
+        val address = ds.optString("address").trim().ifEmpty { parent.serverAddress }
+        val portInt = ds.optInt("port", parent.serverPort.toInt())
+        val port = if (portInt in 1..65535) portInt.toUShort() else parent.serverPort
+
+        val xhttpObj = ds.optJSONObject("xhttpSettings") ?: ds.optJSONObject("splithttpSettings")
+        val downXHttp = if (xhttpObj != null) {
+            val downHost = xhttpObj.optString("host").trim().ifEmpty {
+                ds.optJSONObject("tlsSettings")?.optString("serverName")?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: ds.optJSONObject("realitySettings")?.optString("serverName")?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: this.host.ifEmpty { address }
+            }
+            val downPath = xhttpObj.optString("path").trim().ifEmpty { this.path }
+            val downMode = xhttpObj.optString("mode").trim().takeIf { it.isNotEmpty() }?.let { XHttpMode.fromRaw(it) } ?: this.mode
+            val extraObj = xhttpObj.optJSONObject("extra") ?: org.json.JSONObject()
+            for (key in xhttpObj.keys()) {
+                if (key != "host" && key != "path" && key != "mode" && key != "extra" && !extraObj.has(key)) {
+                    extraObj.put(key, xhttpObj.get(key))
+                }
+            }
+            if (extraObj.length() > 0) {
+                fromExtraJson(downHost, downPath, downMode, extraObj.toString()).copy(downloadSettingsJson = null)
+            } else {
+                this.copy(host = downHost, path = downPath, mode = downMode, downloadSettingsJson = null)
+            }
+        } else {
+            this.copy(downloadSettingsJson = null)
+        }
+
+        val tlsObj = ds.optJSONObject("tlsSettings")
+        val realityObj = ds.optJSONObject("realitySettings")
+        val secRaw = ds.optString("security").trim().lowercase()
+        val downSecurity = when {
+            secRaw == "tls" || (secRaw.isEmpty() && tlsObj != null) -> "tls"
+            secRaw == "reality" || (secRaw.isEmpty() && realityObj != null) -> "reality"
+            secRaw == "none" -> "none"
+            secRaw.isEmpty() -> parent.security
+            else -> "none"
+        }
+
+        val downTls = if (downSecurity == "tls") {
+            if (tlsObj != null) {
+                val sni = tlsObj.optString("serverName").trim().ifEmpty {
+                    tlsObj.optString("sni").trim().ifEmpty { downXHttp.host.ifEmpty { address } }
+                }
+                val allowInsecure = tlsObj.optBoolean("allowInsecure", parent.tls?.allowInsecure ?: false)
+                val fp = tlsObj.optString("fingerprint").trim().ifEmpty { parent.tls?.fingerprint?.raw ?: "chrome_133" }
+                val alpnArr = tlsObj.optJSONArray("alpn")
+                val alpn = if (alpnArr != null) {
+                    (0 until alpnArr.length()).mapNotNull { alpnArr.optString(it)?.takeIf { s -> s.isNotEmpty() } }
+                } else parent.tls?.alpn
+                val pcsText = tlsObj.optString("pinnedPeerCertSha256")
+                    .ifEmpty { tlsObj.optString("pinnedPeerCertificateChainSha256") }
+                    .ifEmpty { tlsObj.optString("pcs") }
+                val pcs = if (pcsText.isNotEmpty()) parsePinnedCerts(mapOf("pcs" to pcsText)) else parent.tls?.pinnedCertSha256
+                TlsConfiguration(
+                    serverName = sni,
+                    alpn = alpn,
+                    allowInsecure = allowInsecure,
+                    fingerprint = TlsFingerprint.fromRaw(fp),
+                    pinnedCertSha256 = pcs,
+                    verifyName = tlsObj.optString("verifyPeerCertByName").trim().ifEmpty { parent.tls?.verifyName }
+                )
+            } else {
+                parent.tls ?: TlsConfiguration(serverName = downXHttp.host.ifEmpty { address })
+            }
+        } else null
+
+        val downReality = if (downSecurity == "reality") {
+            if (realityObj != null) {
+                val sni = realityObj.optString("serverName").trim().ifEmpty {
+                    realityObj.optString("sni").trim().ifEmpty { parent.reality?.serverName ?: address }
+                }
+                val pbk = realityObj.optString("publicKey").trim().ifEmpty { realityObj.optString("pbk").trim() }
+                val sid = realityObj.optString("shortId").trim().ifEmpty { realityObj.optString("sid").trim() }
+                val fp = realityObj.optString("fingerprint").trim().ifEmpty { parent.reality?.fingerprint?.raw ?: "chrome_133" }
+                val pubBytes = pbk.base64UrlToByteArrayOrNull() ?: parent.reality?.publicKey
+                val sidBytes = sid.hexToByteArrayOrNull() ?: parent.reality?.shortId ?: ByteArray(0)
+                if (pubBytes != null && pubBytes.size == 32) {
+                    RealityConfiguration(
+                        serverName = sni,
+                        publicKey = pubBytes,
+                        shortId = sidBytes,
+                        fingerprint = TlsFingerprint.fromRaw(fp)
+                    )
+                } else parent.reality
+            } else parent.reality
+        } else null
+
+        val downProxy = parent.copy(
+            serverAddress = address,
+            serverPort = port,
+            security = downSecurity,
+            tls = downTls,
+            reality = downReality,
+            xhttp = downXHttp
+        )
+        return downProxy to downXHttp
     }
 
     /** A JSON string literal, quotes and all. */
@@ -621,6 +743,14 @@ data class XHttpConfiguration(
                 // or as {"from":N,"to":N}; all four are the same statement.
                 val scMaxEachPostBytes = xrayRange(json.opt("scMaxEachPostBytes"))?.second ?: 1_000_000
                 val scMinPostsIntervalMs = xrayRange(json.opt("scMinPostsIntervalMs"))?.second ?: 30
+                val scMaxBufferedPosts = xrayRange(json.opt("scMaxBufferedPosts"))?.second ?: 30
+
+                var scStreamUpServerSecsFrom = 20
+                var scStreamUpServerSecsTo = 80
+                xrayRange(json.opt("scStreamUpServerSecs"))?.let { (from, to) ->
+                    scStreamUpServerSecsFrom = from
+                    scStreamUpServerSecsTo = to
+                }
 
                 var xPaddingFrom = 100
                 var xPaddingTo = 1000
@@ -646,14 +776,23 @@ data class XHttpConfiguration(
                     else -> 0
                 }
 
+                val rawSessionPlacement = json.optString("sessionPlacement")
+                    .ifEmpty { json.optString("sessionIDPlacement", "path") }
+                val rawSessionKey = json.optString("sessionKey")
+                    .ifEmpty { json.optString("sessionIDKey", "") }
+
                 XHttpConfiguration(
                     host = host, path = path, mode = mode,
                     headers = json.optJSONObject("headers")?.let { h ->
                         h.keys().asSequence().associateWith { k -> h.optString(k, "") }
                     } ?: emptyMap(),
                     noGrpcHeader = json.optBoolean("noGRPCHeader", false),
+                    noSseHeader = json.optBoolean("noSSEHeader", false),
                     scMaxEachPostBytes = scMaxEachPostBytes,
                     scMinPostsIntervalMs = scMinPostsIntervalMs,
+                    scMaxBufferedPosts = scMaxBufferedPosts,
+                    scStreamUpServerSecsFrom = scStreamUpServerSecsFrom,
+                    scStreamUpServerSecsTo = scStreamUpServerSecsTo,
                     xPaddingBytesFrom = xPaddingFrom,
                     xPaddingBytesTo = xPaddingTo,
                     xPaddingObfsMode = json.optBoolean("xPaddingObfsMode", false),
@@ -662,13 +801,15 @@ data class XHttpConfiguration(
                     xPaddingPlacement = XHttpPlacement.fromRaw(json.optString("xPaddingPlacement", "queryInHeader")),
                     xPaddingMethod = XHttpPaddingMethod.fromRaw(json.optString("xPaddingMethod", "repeat-x")),
                     uplinkHTTPMethod = json.optString("uplinkHTTPMethod", "POST"),
-                    sessionPlacement = XHttpPlacement.fromRaw(json.optString("sessionPlacement", "path")),
-                    sessionKey = json.optString("sessionKey", ""),
+                    sessionPlacement = XHttpPlacement.fromRaw(rawSessionPlacement),
+                    sessionKey = rawSessionKey,
                     seqPlacement = XHttpPlacement.fromRaw(json.optString("seqPlacement", "path")),
                     seqKey = json.optString("seqKey", ""),
                     uplinkDataPlacement = uplinkDataPlacement,
                     uplinkDataKey = json.optString("uplinkDataKey", defaultUplinkDataKey),
-                    uplinkChunkSize = json.optInt("uplinkChunkSize", defaultUplinkChunkSize)
+                    uplinkChunkSize = json.optInt("uplinkChunkSize", defaultUplinkChunkSize),
+                    xmuxJson = json.optJSONObject("xmux")?.toString(),
+                    downloadSettingsJson = json.optJSONObject("downloadSettings")?.toString()
                 )
             } catch (_: Exception) {
                 XHttpConfiguration(host = host, path = path, mode = mode)
@@ -1195,7 +1336,14 @@ data class ProxyConfiguration(
         json.put("aid", "0")
         json.put("scy", vmessSecurity ?: "auto")
         json.put("net", if (transport == "http") "h2" else transport)
-        json.put("type", if (grpc?.multiMode == true) "multi" else "none")
+        json.put(
+            "type",
+            when (transport) {
+                "grpc" -> if (grpc?.multiMode == true) "multi" else "none"
+                "xhttp" -> xhttp?.mode?.raw ?: "auto"
+                else -> "none"
+            }
+        )
         websocket?.let {
             json.put("path", it.path)
             json.put("host", it.host)
@@ -1224,8 +1372,15 @@ data class ProxyConfiguration(
         // An if rather than `tls?.let { … } ?: …`: the block's last statement
         // is itself a null-safe call, and a null there would run the fallback
         // and quietly export a TLS server as plaintext.
+        val reality = reality
         val tls = tls
-        if (tls != null) {
+        if (security == "reality" && reality != null) {
+            json.put("tls", "reality")
+            json.put("sni", reality.serverName)
+            json.put("pbk", reality.publicKey.toBase64Url())
+            if (reality.shortId.isNotEmpty()) json.put("sid", reality.shortId.toHex())
+            json.put("fp", reality.fingerprint.raw)
+        } else if (tls != null) {
             json.put("tls", "tls")
             json.put("sni", tls.serverName)
             tls.alpn?.takeIf { alpn -> alpn.isNotEmpty() }?.let { alpn ->
@@ -2121,17 +2276,19 @@ data class ProxyConfiguration(
         }
 
         /**
-         * `vmess://` + base64 of a JSON object — the "v2rayN" form every panel
-         * writes. There is also a query-string spelling in the wild; it is rare
-         * enough, and ambiguous enough, that only the JSON form is accepted.
+         * `vmess://` + base64 of a JSON object (the "v2rayN" form) or standard
+         * URI `vmess://uuid@host:port?type=...&encryption=...&security=...#name`
+         * (Xray / DuckSoft / Shadowrocket).
          *
-         * `aid` (alterId) must be 0: the legacy MD5-authenticated header it
-         * selects was removed from v2ray in 2022, and pretending to support it
-         * would produce a connection that silently never authenticates.
+         * Non-zero `aid` (alterId) values are coerced to 0 (AEAD), matching Xray-core.
          */
         private fun fromVmessUrl(url: String): ProxyConfiguration {
             val payload = url.removePrefix("vmess://").trim()
             if (payload.isEmpty()) throw ProxyError.InvalidUrl("Empty vmess:// link")
+
+            if (payload.contains('@') && !payload.startsWith("{")) {
+                return fromVmessStandardUri(payload)
+            }
 
             val decoded = decodeBase64Flexible(payload)
                 ?: throw ProxyError.InvalidUrl("vmess:// payload is not base64")
@@ -2150,18 +2307,12 @@ data class ProxyConfiguration(
             val id = runCatching { UUID.fromString(idText) }.getOrNull()
                 ?: throw ProxyError.InvalidUrl("vmess: id is not a UUID")
 
-            // aid may be a number or a string depending on who wrote the link.
-            val alterId = json.opt("aid")?.toString()?.trim()?.toIntOrNull() ?: 0
-            if (alterId != 0) {
-                throw ProxyError.InvalidUrl(
-                    "vmess: alterId $alterId is the removed legacy header; only alterId 0 (AEAD) is supported"
-                )
-            }
+            // Non-zero aid (alterId) is coerced to 0 (AEAD), matching modern Xray-core.
 
             val network = json.optString("net").ifEmpty { "tcp" }
             val transport = when (network) {
                 "ws" -> "ws"
-                "tcp" -> "tcp"
+                "tcp", "raw" -> "tcp"
                 "httpupgrade" -> "httpupgrade"
                 "grpc", "gun" -> "grpc"
                 "xhttp", "splithttp" -> "xhttp"
@@ -2169,11 +2320,9 @@ data class ProxyConfiguration(
                 "quic" -> "quic"
                 else -> throw ProxyError.InvalidUrl("vmess: $network transport is not supported yet")
             }
-            // "type" is the header obfuscation (http camouflage etc.). Nothing
-            // here speaks it, and a server expecting it never answers a plain
-            // request, so refuse rather than import a dead entry. Over gRPC
-            // the same field carries the mode instead ("multi"), which is
-            // what this exporter writes.
+            // "type" is the header obfuscation (http camouflage etc.) for TCP/QUIC,
+            // the mode ("multi"/"gun") for gRPC, and the XHTTP mode ("auto",
+            // "packet-up", "stream-one", "stream-up") for XHTTP in v2rayN links.
             val headerType = json.optString("type").trim()
             if (transport == "quic") {
                 HttpTransportConfiguration.checkQuicDefaults(
@@ -2181,13 +2330,16 @@ data class ProxyConfiguration(
                     headerType
                 )
             }
-            val isGrpcMode = transport == "grpc" && headerType == "multi"
-            if (headerType.isNotEmpty() && headerType != "none" && !isGrpcMode) {
+            val isGrpcMode = transport == "grpc" && (headerType == "multi" || headerType == "gun")
+            val isXhttpMode = transport == "xhttp" &&
+                headerType in setOf("auto", "packet-up", "stream-one", "stream-up")
+            if (headerType.isNotEmpty() && headerType != "none" && !isGrpcMode && !isXhttpMode) {
                 throw ProxyError.InvalidUrl("vmess: $headerType header obfuscation is not supported")
             }
 
-            val tlsField = json.optString("tls")
+            val tlsField = json.optString("tls").ifEmpty { json.optString("security") }.trim().lowercase()
             val useTls = tlsField == "tls" || tlsField == "1" || tlsField == "true"
+            val useReality = tlsField == "reality"
             if (transport == "quic" && !useTls) {
                 throw ProxyError.InvalidUrl("vmess: quic transport requires TLS")
             }
@@ -2209,6 +2361,23 @@ data class ProxyConfiguration(
                     ),
                     pinnedCertSha256 = parsePinnedCerts(mapOf("pcs" to json.optString("pcs"))),
                     verifyName = json.optString("vcn").takeIf { it.isNotEmpty() }
+                )
+            } else {
+                null
+            }
+
+            val reality = if (useReality) {
+                val pbk = json.optString("pbk").ifEmpty { json.optString("publicKey") }
+                val sid = json.optString("sid").ifEmpty { json.optString("shortId") }
+                val fp = json.optString("fp").ifEmpty { "chrome_133" }
+                RealityConfiguration.parse(
+                    mapOf(
+                        "security" to "reality",
+                        "sni" to sni,
+                        "pbk" to pbk,
+                        "sid" to sid,
+                        "fp" to fp
+                    )
                 )
             } else {
                 null
@@ -2247,10 +2416,13 @@ data class ProxyConfiguration(
                 )
             } else null
             val xhttp = if (transport == "xhttp") {
+                val rawMode = json.optString("mode").ifEmpty {
+                    headerType.takeIf { it != "none" }.orEmpty()
+                }.ifEmpty { "auto" }
                 XHttpConfiguration.fromExtraJson(
                     host = json.optString("host").takeIf { it.isNotEmpty() } ?: sni,
                     path = json.optString("path").ifEmpty { "/" },
-                    mode = XHttpMode.fromRaw(json.optString("mode").ifEmpty { "auto" }),
+                    mode = XHttpMode.fromRaw(rawMode),
                     extraJson = json.optString("extra")
                 )
             } else null
@@ -2262,8 +2434,13 @@ data class ProxyConfiguration(
                 uuid = id,
                 encryption = "none",
                 transport = transport,
-                security = if (useTls) "tls" else "none",
+                security = when {
+                    useReality -> "reality"
+                    useTls -> "tls"
+                    else -> "none"
+                },
                 tls = tls,
+                reality = reality,
                 websocket = websocket,
                 httpUpgrade = httpUpgrade,
                 httpTransport = httpTransport,
@@ -2271,6 +2448,27 @@ data class ProxyConfiguration(
                 xhttp = xhttp,
                 outboundProtocol = OutboundProtocol.VMESS,
                 vmessSecurity = json.optString("scy").takeIf { it.isNotEmpty() && it != "auto" }
+            )
+        }
+
+        /**
+         * Standard URI form: `vmess://uuid@host:port?type=xhttp&encryption=auto&security=tls...#name`.
+         */
+        private fun fromVmessStandardUri(payload: String): ProxyConfiguration {
+            val qIndex = payload.indexOf('?')
+            val hashIndex = payload.lastIndexOf('#')
+            val queryString = if (qIndex >= 0) {
+                val end = if (hashIndex > qIndex) hashIndex else payload.length
+                payload.substring(qIndex + 1, end)
+            } else null
+            val params = parseQueryParams(queryString)
+            val rawCipher = (params["encryption"] ?: params["scy"] ?: params["cipher"])?.trim()?.lowercase()
+            val base = fromVlessUrl("vless://$payload")
+            return base.copy(
+                encryption = "none",
+                flow = null,
+                outboundProtocol = OutboundProtocol.VMESS,
+                vmessSecurity = rawCipher?.takeIf { it.isNotEmpty() && it != "auto" }
             )
         }
 

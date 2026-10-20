@@ -78,6 +78,14 @@ All notable changes to Mythaia are recorded here. The format follows
   so open downloads, calls and UDP flows carry on. Both editors have the port list and the
   interval; exported links keep one port and put the list in `mport`, which v2rayN and 3x-ui read.
   Clash servers with `ports` were skipped before.
+- **VMess over XHTTP and REALITY, and sing-box `http` and `quic` transports.** VMess servers now
+  connect over XHTTP (`auto`, `packet-up`, `stream-up`, `stream-one`, and Xray `extra` /
+  `downloadSettings` / `xmux` / `xPaddingBytes`) and over REALITY (`pbk`, `sid`, `spx`, `fp`,
+  `sni`), with `auto`, `aes-128-gcm`, `chacha20-poly1305`, `none` and `zero` encryption, imported
+  from both base64-JSON and `vmess://uuid@host:port?...` links as well as Xray, sing-box and Clash
+  configs. VLESS, VMess and Trojan also support sing-box's `http` (HTTP/2 and HTTP/1.1) and `quic`
+  transports; Nowhere adds UDP-over-flow, TLS carrier and asymmetric uplink/downlink flows; and
+  Sudoku adds native mux pooling, TLS carrier and HTTP-mask stream/poll/ws carriers.
 
 ## [1.3.1] — 2026-10-18
 

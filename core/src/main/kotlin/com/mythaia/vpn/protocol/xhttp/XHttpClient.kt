@@ -43,6 +43,7 @@ class TransportClosures(
 /** XHTTP connection implementing packet-up, stream-up, and stream-one modes. */
 class XHttpConnection private constructor(
     val configuration: XHttpConfiguration,
+    val downloadConfiguration: XHttpConfiguration = configuration,
     val mode: XHttpMode,
     val sessionId: String,
     private val useHTTP2: Boolean,
@@ -124,6 +125,7 @@ class XHttpConnection private constructor(
      * unopened stream per request.
      */
     private var pooledStream: (suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream)? = null
+    private var pooledDownloadStream: (suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream)? = null
 
     /** Pooled: the download GET, or stream-one's single POST. */
     @Volatile
@@ -142,7 +144,7 @@ class XHttpConnection private constructor(
 
     val isConnected: Boolean
         get() = lock.withLock { _isConnected } &&
-            (pooledStream == null || pooledDownload?.isConnected != false)
+            (pooledDownloadStream == null || pooledDownload?.isConnected != false)
 
     constructor(
         socket: NioSocket,
@@ -150,9 +152,11 @@ class XHttpConnection private constructor(
         mode: XHttpMode,
         sessionId: String,
         useHTTP2: Boolean = false,
-        uploadConnectionFactory: (suspend () -> TransportClosures)? = null
+        uploadConnectionFactory: (suspend () -> TransportClosures)? = null,
+        downloadConfiguration: XHttpConfiguration = configuration
     ) : this(
         configuration = configuration,
+        downloadConfiguration = downloadConfiguration,
         mode = mode,
         sessionId = sessionId,
         useHTTP2 = useHTTP2,
@@ -169,9 +173,11 @@ class XHttpConnection private constructor(
         mode: XHttpMode,
         sessionId: String,
         useHTTP2: Boolean = false,
-        uploadConnectionFactory: (suspend () -> TransportClosures)? = null
+        uploadConnectionFactory: (suspend () -> TransportClosures)? = null,
+        downloadConfiguration: XHttpConfiguration = configuration
     ) : this(
         configuration = configuration,
+        downloadConfiguration = downloadConfiguration,
         mode = mode,
         sessionId = sessionId,
         useHTTP2 = useHTTP2,
@@ -188,9 +194,11 @@ class XHttpConnection private constructor(
         mode: XHttpMode,
         sessionId: String,
         useHTTP2: Boolean = false,
-        uploadConnectionFactory: (suspend () -> TransportClosures)? = null
+        uploadConnectionFactory: (suspend () -> TransportClosures)? = null,
+        downloadConfiguration: XHttpConfiguration = configuration
     ) : this(
         configuration = configuration,
+        downloadConfiguration = downloadConfiguration,
         mode = mode,
         sessionId = sessionId,
         useHTTP2 = useHTTP2,
@@ -205,21 +213,21 @@ class XHttpConnection private constructor(
      * Non-obfs mode (default): `Referer: https://{host}{path}?x_padding=XXX...`.
      * Obfs mode: places padding in header, cookie, query, or queryInHeader based on config.
      */
-    private fun applyPadding(sb: StringBuilder, forPath: String) {
-        val padding = configuration.generatePadding()
+    private fun applyPadding(sb: StringBuilder, forPath: String, config: XHttpConfiguration = configuration) {
+        val padding = config.generatePadding()
 
-        if (!configuration.xPaddingObfsMode) {
-            sb.append("Referer: https://${configuration.host}${forPath}?${configuration.xPaddingKey}=$padding\r\n")
+        if (!config.xPaddingObfsMode) {
+            sb.append("Referer: https://${config.host}${forPath}?${config.xPaddingKey}=$padding\r\n")
             return
         }
 
-        when (configuration.xPaddingPlacement) {
+        when (config.xPaddingPlacement) {
             XHttpPlacement.HEADER ->
-                sb.append("${configuration.xPaddingHeader}: $padding\r\n")
+                sb.append("${config.xPaddingHeader}: $padding\r\n")
             XHttpPlacement.QUERY_IN_HEADER ->
-                sb.append("${configuration.xPaddingHeader}: https://${configuration.host}${forPath}?${configuration.xPaddingKey}=$padding\r\n")
+                sb.append("${config.xPaddingHeader}: https://${config.host}${forPath}?${config.xPaddingKey}=$padding\r\n")
             XHttpPlacement.COOKIE ->
-                sb.append("Cookie: ${configuration.xPaddingKey}=$padding\r\n")
+                sb.append("Cookie: ${config.xPaddingKey}=$padding\r\n")
             XHttpPlacement.QUERY -> {
                 // Query padding is appended to the URL path in buildRequestLine
             }
@@ -229,10 +237,10 @@ class XHttpConnection private constructor(
 
     private class MutablePath(var value: String)
 
-    private fun applySessionId(sb: StringBuilder, path: MutablePath) {
+    private fun applySessionId(sb: StringBuilder, path: MutablePath, config: XHttpConfiguration = configuration) {
         if (sessionId.isEmpty()) return
-        val key = configuration.normalizedSessionKey
-        when (configuration.sessionPlacement) {
+        val key = config.normalizedSessionKey
+        when (config.sessionPlacement) {
             XHttpPlacement.PATH -> path.value = appendToPath(path.value, sessionId)
             XHttpPlacement.HEADER -> sb.append("$key: $sessionId\r\n")
             XHttpPlacement.COOKIE -> sb.append("Cookie: $key=$sessionId\r\n")
@@ -253,14 +261,14 @@ class XHttpConnection private constructor(
     }
 
     /** Returns query string components for session/seq placed in query params. */
-    private fun queryParamsForMeta(seq: Long? = null): String {
+    private fun queryParamsForMeta(seq: Long? = null, config: XHttpConfiguration = configuration): String {
         val parts = mutableListOf<String>()
-        if (sessionId.isNotEmpty() && configuration.sessionPlacement == XHttpPlacement.QUERY) {
-            val key = configuration.normalizedSessionKey
+        if (sessionId.isNotEmpty() && config.sessionPlacement == XHttpPlacement.QUERY) {
+            val key = config.normalizedSessionKey
             parts.add("$key=$sessionId")
         }
-        if (seq != null && configuration.seqPlacement == XHttpPlacement.QUERY) {
-            val key = configuration.normalizedSeqKey
+        if (seq != null && config.seqPlacement == XHttpPlacement.QUERY) {
+            val key = config.normalizedSeqKey
             parts.add("$key=$seq")
         }
         return parts.joinToString("&")
@@ -270,16 +278,21 @@ class XHttpConnection private constructor(
         return if (path.endsWith("/")) "$path$segment" else "$path/$segment"
     }
 
-    private fun buildRequestLine(method: String, path: String, queryParts: List<String>): String {
+    private fun buildRequestLine(
+        method: String,
+        path: String,
+        queryParts: List<String>,
+        config: XHttpConfiguration = configuration
+    ): String {
         var url = path
         val allQuery = queryParts.filter { it.isNotEmpty() }.toMutableList()
-        val configQuery = configuration.normalizedQuery
+        val configQuery = config.normalizedQuery
         if (configQuery.isNotEmpty()) {
             allQuery.add(0, configQuery)
         }
-        if (configuration.xPaddingObfsMode && configuration.xPaddingPlacement == XHttpPlacement.QUERY) {
-            val padding = configuration.generatePadding()
-            allQuery.add("${configuration.xPaddingKey}=$padding")
+        if (config.xPaddingObfsMode && config.xPaddingPlacement == XHttpPlacement.QUERY) {
+            val padding = config.generatePadding()
+            allQuery.add("${config.xPaddingKey}=$padding")
         }
         if (allQuery.isNotEmpty()) {
             url += "?" + allQuery.joinToString("&")
@@ -295,8 +308,26 @@ class XHttpConnection private constructor(
      *   and establishes the upload connection via the factory.
      */
     suspend fun performSetup() {
-        if (pooledStream != null) {
+        if (pooledDownloadStream != null && pooledStream != null) {
             performPooledSetup()
+        } else if (pooledDownloadStream != null && pooledStream == null) {
+            val download = pooledDownloadStream!!()
+            download.openRequest(encodeH2RequestHeaders(method = "GET", includeMeta = true, config = downloadConfiguration), endStream = true)
+            pooledDownload = download
+            if (mode == XHttpMode.STREAM_UP) {
+                setupHttp11UploadForStreamUp()
+            } else if (mode == XHttpMode.PACKET_UP) {
+                setupHttp11UploadForPacketUp()
+            }
+        } else if (pooledDownloadStream == null && pooledStream != null) {
+            val getRequest = buildDownloadGETRequest()
+            downloadSend(getRequest)
+            receiveResponseHeaders()
+            if (mode == XHttpMode.STREAM_UP) {
+                val upload = pooledStream!!()
+                upload.openRequest(encodeH2UploadHeaders(seq = null))
+                pooledUpload = upload
+            }
         } else if (useHTTP2) {
             performH2Setup()
         } else if (mode == XHttpMode.STREAM_ONE) {
@@ -315,19 +346,20 @@ class XHttpConnection private constructor(
      * wait for an upload that is never sent.
      */
     private suspend fun performPooledSetup() {
-        val open = pooledStream ?: return
+        val openUp = pooledStream ?: return
+        val openDown = pooledDownloadStream ?: openUp
         if (mode == XHttpMode.STREAM_ONE) {
-            val stream = open()
+            val stream = openUp()
             stream.openRequest(encodeH2RequestHeaders(method = "POST", includeMeta = false))
             pooledDownload = stream
             return
         }
         // stream-up / packet-up: the download is a GET with no body.
-        val download = open()
-        download.openRequest(encodeH2RequestHeaders(method = "GET", includeMeta = true), endStream = true)
+        val download = openDown()
+        download.openRequest(encodeH2RequestHeaders(method = "GET", includeMeta = true, config = downloadConfiguration), endStream = true)
         pooledDownload = download
         if (mode == XHttpMode.STREAM_UP) {
-            val upload = open()
+            val upload = openUp()
             upload.openRequest(encodeH2UploadHeaders(seq = null))
             pooledUpload = upload
         }
@@ -352,6 +384,9 @@ class XHttpConnection private constructor(
                 sb.append("$key: $value\r\n")
             }
         }
+        if (configuration.headers.keys.none { it.equals("Connection", ignoreCase = true) }) {
+            sb.append("Connection: close\r\n")
+        }
         sb.append("\r\n")
 
         val requestData = sb.toString().toByteArray(Charsets.UTF_8)
@@ -371,6 +406,10 @@ class XHttpConnection private constructor(
 
         receiveResponseHeaders()
 
+        setupHttp11UploadForStreamUp()
+    }
+
+    private suspend fun setupHttp11UploadForStreamUp() {
         val factory = uploadConnectionFactory
             ?: throw XHttpError.SetupFailed("No upload connection factory for stream-up")
 
@@ -386,25 +425,32 @@ class XHttpConnection private constructor(
         val upSend = lock.withLock { uploadSend }
             ?: throw XHttpError.SetupFailed("Upload connection not established")
         upSend(postRequest)
+
+        // Drain the server's 200 OK and periodic scStreamUpServerSecs padding on the upload stream.
+        startUploadResponseDrain()
     }
 
     /** Used by packet-up and stream-up. Session ID is placed according to sessionPlacement config. */
     private fun buildDownloadGETRequest(): ByteArray {
-        val path = MutablePath(configuration.normalizedPath)
+        val cfg = downloadConfiguration
+        val path = MutablePath(cfg.normalizedPath)
         val headerBlock = StringBuilder()
-        applySessionId(headerBlock, path)
+        applySessionId(headerBlock, path, cfg)
         if (!path.value.endsWith("/")) path.value += "/"
-        val metaQuery = queryParamsForMeta()
+        val metaQuery = queryParamsForMeta(config = cfg)
         val sb = StringBuilder()
-        sb.append(buildRequestLine("GET", path.value, listOf(metaQuery)))
+        sb.append(buildRequestLine("GET", path.value, listOf(metaQuery), cfg))
         sb.append(headerBlock)
-        sb.append("Host: ${configuration.host}\r\n")
-        sb.append("User-Agent: ${configuration.headers["User-Agent"] ?: DEFAULT_USER_AGENT}\r\n")
-        applyPadding(sb, path.value)
-        for ((key, value) in configuration.headers) {
+        sb.append("Host: ${cfg.host}\r\n")
+        sb.append("User-Agent: ${cfg.headers["User-Agent"] ?: DEFAULT_USER_AGENT}\r\n")
+        applyPadding(sb, path.value, cfg)
+        for ((key, value) in cfg.headers) {
             if (key != "User-Agent") {
                 sb.append("$key: $value\r\n")
             }
+        }
+        if (cfg.headers.keys.none { it.equals("Connection", ignoreCase = true) }) {
+            sb.append("Connection: close\r\n")
         }
         sb.append("\r\n")
         return sb.toString().toByteArray(Charsets.UTF_8)
@@ -436,6 +482,9 @@ class XHttpConnection private constructor(
                 sb.append("$key: $value\r\n")
             }
         }
+        if (configuration.headers.keys.none { it.equals("Connection", ignoreCase = true) }) {
+            sb.append("Connection: close\r\n")
+        }
         sb.append("\r\n")
         return sb.toString().toByteArray(Charsets.UTF_8)
     }
@@ -446,6 +495,10 @@ class XHttpConnection private constructor(
 
         receiveResponseHeaders()
 
+        setupHttp11UploadForPacketUp()
+    }
+
+    private suspend fun setupHttp11UploadForPacketUp() {
         val factory = uploadConnectionFactory
             ?: throw XHttpError.SetupFailed("No upload connection factory")
 
@@ -681,7 +734,7 @@ class XHttpConnection private constructor(
 
             seq = nextSeq
             nextSeq++
-            isH2 = useHTTP2
+            isH2 = useHTTP2 || pooledStream != null
             packetUpLastFlushTime = System.nanoTime()
         }
 
@@ -811,7 +864,7 @@ class XHttpConnection private constructor(
     }
 
     suspend fun receive(): ByteArray? {
-        if (pooledStream != null) {
+        if (pooledDownloadStream != null) {
             val data = pooledDownload?.receiveData()
             if (data == null) lock.withLock { h2StreamClosed = true }
             return data
@@ -913,6 +966,8 @@ class XHttpConnection private constructor(
             configuration: XHttpConfiguration,
             mode: XHttpMode,
             sessionId: String,
+            downloadConfiguration: XHttpConfiguration = configuration,
+            downloadStream: (suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream)? = null,
             stream: suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream
         ): XHttpConnection = XHttpConnection(
             configuration = configuration,
@@ -923,8 +978,40 @@ class XHttpConnection private constructor(
             downloadSendAsync = {},
             downloadReceive = { null },
             downloadCancel = {},
-            uploadConnectionFactory = null
-        ).also { it.pooledStream = stream }
+            uploadConnectionFactory = null,
+            downloadConfiguration = downloadConfiguration
+        ).also {
+            it.pooledStream = stream
+            it.pooledDownloadStream = downloadStream ?: stream
+        }
+
+        fun split(
+            configuration: XHttpConfiguration,
+            downloadConfiguration: XHttpConfiguration,
+            mode: XHttpMode,
+            sessionId: String,
+            uploadStream: (suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream)?,
+            downloadStream: (suspend () -> com.mythaia.vpn.protocol.naive.http2.Http2Stream)?,
+            downloadSend: suspend (ByteArray) -> Unit = { throw XHttpError.ConnectionClosed },
+            downloadSendAsync: (ByteArray) -> Unit = {},
+            downloadReceive: suspend () -> ByteArray? = { null },
+            downloadCancel: () -> Unit = {},
+            uploadConnectionFactory: (suspend () -> TransportClosures)? = null
+        ): XHttpConnection = XHttpConnection(
+            configuration = configuration,
+            mode = mode,
+            sessionId = sessionId,
+            useHTTP2 = false,
+            downloadSend = downloadSend,
+            downloadSendAsync = downloadSendAsync,
+            downloadReceive = downloadReceive,
+            downloadCancel = downloadCancel,
+            uploadConnectionFactory = uploadConnectionFactory,
+            downloadConfiguration = downloadConfiguration
+        ).also {
+            it.pooledStream = uploadStream
+            it.pooledDownloadStream = downloadStream
+        }
 
         /** HTTP/2 connection preface (RFC 7540 S3.5). */
         private val H2_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".toByteArray(Charsets.UTF_8)
@@ -1041,7 +1128,12 @@ class XHttpConnection private constructor(
     }
 
     /** Encodes a request header block for stream-one POST or stream-up/packet-up download GET. */
-    private fun encodeH2RequestHeaders(method: String = "POST", includeMeta: Boolean = false): ByteArray {
+    private fun encodeH2RequestHeaders(
+        method: String = "POST",
+        includeMeta: Boolean = false,
+        config: XHttpConfiguration = if (method == "GET") downloadConfiguration else configuration
+    ): ByteArray {
+        val cfg = config
         val block = mutableListOf<Byte>()
 
         // Pseudo-header order: :authority, :method, :path, :scheme
@@ -1049,7 +1141,7 @@ class XHttpConnection private constructor(
         val authBytes = hpackEncodeInteger(1, 6)
         authBytes[0] = (authBytes[0].toInt() or 0x40).toByte()
         block.addAll(authBytes.toList())
-        block.addAll(hpackEncodeString(configuration.host).toList())
+        block.addAll(hpackEncodeString(cfg.host).toList())
 
         if (method == "GET") {
             block.add(0x82.toByte()) // GET = index 2
@@ -1057,17 +1149,17 @@ class XHttpConnection private constructor(
             block.add(0x83.toByte()) // POST = index 3
         }
 
-        var path = configuration.normalizedPath
-        if (includeMeta && sessionId.isNotEmpty() && configuration.sessionPlacement == XHttpPlacement.PATH) {
+        var path = cfg.normalizedPath
+        if (includeMeta && sessionId.isNotEmpty() && cfg.sessionPlacement == XHttpPlacement.PATH) {
             path = appendToPath(path, sessionId)
         }
         val queryParts = mutableListOf<String>()
-        val configQuery = configuration.normalizedQuery
+        val configQuery = cfg.normalizedQuery
         if (configQuery.isNotEmpty()) {
             queryParts.add(configQuery)
         }
-        if (includeMeta && sessionId.isNotEmpty() && configuration.sessionPlacement == XHttpPlacement.QUERY) {
-            queryParts.add("${configuration.normalizedSessionKey}=$sessionId")
+        if (includeMeta && sessionId.isNotEmpty() && cfg.sessionPlacement == XHttpPlacement.QUERY) {
+            queryParts.add("${cfg.normalizedSessionKey}=$sessionId")
         }
         if (queryParts.isNotEmpty()) {
             path += "?" + queryParts.joinToString("&")
@@ -1085,7 +1177,7 @@ class XHttpConnection private constructor(
         // :scheme https — static table index 7
         block.add(0x87.toByte())
 
-        if (method != "GET" && !configuration.noGrpcHeader) {
+        if (method != "GET" && !cfg.noGrpcHeader) {
             val ctBytes = hpackEncodeInteger(31, 6)
             ctBytes[0] = (ctBytes[0].toInt() or 0x40).toByte()
             block.addAll(ctBytes.toList())
@@ -1093,23 +1185,23 @@ class XHttpConnection private constructor(
         }
 
         if (includeMeta && sessionId.isNotEmpty()) {
-            when (configuration.sessionPlacement) {
+            when (cfg.sessionPlacement) {
                 XHttpPlacement.HEADER -> {
                     block.add(0x40)
-                    block.addAll(hpackEncodeString(configuration.normalizedSessionKey.lowercase()).toList())
+                    block.addAll(hpackEncodeString(cfg.normalizedSessionKey.lowercase()).toList())
                     block.addAll(hpackEncodeString(sessionId).toList())
                 }
                 XHttpPlacement.COOKIE -> {
                     val cookieBytes = hpackEncodeInteger(32, 6)
                     cookieBytes[0] = (cookieBytes[0].toInt() or 0x40).toByte()
                     block.addAll(cookieBytes.toList())
-                    block.addAll(hpackEncodeString("${configuration.normalizedSessionKey}=$sessionId").toList())
+                    block.addAll(hpackEncodeString("${cfg.normalizedSessionKey}=$sessionId").toList())
                 }
                 else -> {} // path and query handled above
             }
         }
 
-        appendH2CommonHeaders(block, path)
+        appendH2CommonHeaders(block, path, cfg)
 
         return block.toByteArray()
     }
@@ -1218,45 +1310,45 @@ class XHttpConnection private constructor(
             }
         }
 
-        appendH2CommonHeaders(block, path)
+        appendH2CommonHeaders(block, path, configuration)
 
         return block.toByteArray()
     }
 
     /** Appends common HPACK headers (user-agent, padding, custom headers) to a header block. */
-    private fun appendH2CommonHeaders(block: MutableList<Byte>, path: String) {
-        val ua = configuration.headers["User-Agent"] ?: DEFAULT_USER_AGENT
+    private fun appendH2CommonHeaders(block: MutableList<Byte>, path: String, cfg: XHttpConfiguration = configuration) {
+        val ua = cfg.headers["User-Agent"] ?: DEFAULT_USER_AGENT
         val uaBytes = hpackEncodeInteger(58, 6)
         uaBytes[0] = (uaBytes[0].toInt() or 0x40).toByte()
         block.addAll(uaBytes.toList())
         block.addAll(hpackEncodeString(ua).toList())
 
-        val padding = configuration.generatePadding()
-        val paddingPath = configuration.normalizedPath
-        if (!configuration.xPaddingObfsMode) {
-            val referer = "https://${configuration.host}${paddingPath}?x_padding=$padding"
+        val padding = cfg.generatePadding()
+        val paddingPath = cfg.normalizedPath
+        if (!cfg.xPaddingObfsMode) {
+            val referer = "https://${cfg.host}${paddingPath}?x_padding=$padding"
             val refBytes = hpackEncodeInteger(51, 6)
             refBytes[0] = (refBytes[0].toInt() or 0x40).toByte()
             block.addAll(refBytes.toList())
             block.addAll(hpackEncodeString(referer).toList())
         } else {
-            when (configuration.xPaddingPlacement) {
+            when (cfg.xPaddingPlacement) {
                 XHttpPlacement.HEADER -> {
                     block.add(0x40)
-                    block.addAll(hpackEncodeString(configuration.xPaddingHeader.lowercase()).toList())
+                    block.addAll(hpackEncodeString(cfg.xPaddingHeader.lowercase()).toList())
                     block.addAll(hpackEncodeString(padding).toList())
                 }
                 XHttpPlacement.QUERY_IN_HEADER -> {
-                    val headerValue = "https://${configuration.host}${paddingPath}?${configuration.xPaddingKey}=$padding"
+                    val headerValue = "https://${cfg.host}${paddingPath}?${cfg.xPaddingKey}=$padding"
                     block.add(0x40)
-                    block.addAll(hpackEncodeString(configuration.xPaddingHeader.lowercase()).toList())
+                    block.addAll(hpackEncodeString(cfg.xPaddingHeader.lowercase()).toList())
                     block.addAll(hpackEncodeString(headerValue).toList())
                 }
                 XHttpPlacement.COOKIE -> {
                     val cookieBytes = hpackEncodeInteger(32, 6)
                     cookieBytes[0] = (cookieBytes[0].toInt() or 0x40).toByte()
                     block.addAll(cookieBytes.toList())
-                    block.addAll(hpackEncodeString("${configuration.xPaddingKey}=$padding").toList())
+                    block.addAll(hpackEncodeString("${cfg.xPaddingKey}=$padding").toList())
                 }
                 else -> {}
             }
@@ -1267,7 +1359,7 @@ class XHttpConnection private constructor(
             "host", "connection", "proxy-connection", "transfer-encoding",
             "upgrade", "keep-alive", "content-length", "user-agent"
         )
-        for ((key, value) in configuration.headers) {
+        for ((key, value) in cfg.headers) {
             val lk = key.lowercase()
             if (h2ForbiddenHeaders.contains(lk)) continue
             block.add(0x40)

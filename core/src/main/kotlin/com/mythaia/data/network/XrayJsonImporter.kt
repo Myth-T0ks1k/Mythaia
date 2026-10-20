@@ -303,7 +303,13 @@ object XrayJsonImporter {
                 x.optString("path").takeIf { it.isNotEmpty() }?.let { params["path"] = it }
                 x.optString("host").takeIf { it.isNotEmpty() }?.let { params["host"] = it }
                 x.optString("mode").takeIf { it.isNotEmpty() }?.let { params["mode"] = it }
-                x.optJSONObject("extra")?.let { params["extra"] = it.toString() }
+                val extra = x.optJSONObject("extra")?.let { JSONObject(it.toString()) } ?: JSONObject()
+                for (key in XHTTP_EXTRA_KEYS) {
+                    if (!extra.has(key) && x.has(key)) {
+                        extra.put(key, x.opt(key))
+                    }
+                }
+                if (extra.length() > 0) params["extra"] = extra.toString()
             }
             "grpc", "gun" -> stream.optJSONObject("grpcSettings")?.let { g ->
                 params["type"] = "grpc"
@@ -422,6 +428,15 @@ object XrayJsonImporter {
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
+    private val XHTTP_EXTRA_KEYS = listOf(
+        "headers", "noGRPCHeader", "noSSEHeader",
+        "scMaxEachPostBytes", "scMinPostsIntervalMs", "scMaxBufferedPosts", "scStreamUpServerSecs",
+        "xPaddingBytes", "xPaddingObfsMode", "xPaddingKey", "xPaddingHeader", "xPaddingPlacement", "xPaddingMethod",
+        "uplinkHTTPMethod", "sessionPlacement", "sessionIDPlacement", "sessionKey", "sessionIDKey",
+        "seqPlacement", "seqKey", "uplinkDataPlacement", "uplinkDataKey", "uplinkChunkSize",
+        "xmux", "downloadSettings"
+    )
+
     private fun vlessLink(outbound: JSONObject, stream: JSONObject, name: String, fragment: String?): String {
         val server = firstServer(outbound, "vnext")
         val user = server.optJSONArray("users")?.optJSONObject(0)
@@ -439,9 +454,12 @@ object XrayJsonImporter {
         val user = server.optJSONArray("users")?.optJSONObject(0)
             ?: throw ProxyError.InvalidUrl("vmess: no user in vnext")
         val params = streamParams(stream, null)
-        // The link has no spelling for Reality; written as `tls: ""` the
-        // outbound would import as plaintext VMess and never connect.
-        if (params["security"] == "reality") throw ProxyError.InvalidUrl("vmess: Reality is not supported")
+        val net = params["type"] ?: "tcp"
+        val vmessType = when (net) {
+            "xhttp" -> params["mode"] ?: "auto"
+            "grpc" -> if (params["mode"] == "multi") "multi" else "none"
+            else -> "none"
+        }
         val json = JSONObject()
             .put("v", "2")
             .put("ps", name.ifEmpty { hostPort(server) })
@@ -450,14 +468,23 @@ object XrayJsonImporter {
             .put("id", user.optString("id"))
             .put("aid", user.optInt("alterId", 0))
             .put("scy", user.optString("security").ifEmpty { "auto" })
-            .put("net", params["type"] ?: "tcp")
-            .put("type", "none")
+            .put("net", net)
+            .put("type", vmessType)
             .put("host", params["host"] ?: "")
             .put("path", params["path"] ?: params["serviceName"] ?: "")
-            .put("tls", if (params["security"] == "tls") "tls" else "")
+            .put("tls", when (params["security"]) {
+                "tls" -> "tls"
+                "reality" -> "reality"
+                else -> ""
+            })
             .put("sni", params["sni"] ?: "")
             .put("fp", params["fp"] ?: "")
             .put("alpn", params["alpn"] ?: "")
+        params["pbk"]?.let { json.put("pbk", it) }
+        params["sid"]?.let { json.put("sid", it) }
+        params["mode"]?.let { json.put("mode", it) }
+        params["extra"]?.let { json.put("extra", it) }
+        params["authority"]?.let { json.put("authority", it) }
         params["method"]?.let { json.put("method", it) }
         params["headers"]?.let { json.put("headers", it) }
         if (params["allowInsecure"] == "1") json.put("allowInsecure", "1")

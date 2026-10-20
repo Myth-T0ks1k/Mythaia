@@ -21,15 +21,18 @@ class VmessConnection(
     requestHeader: ByteArray
 ) : ProxyConnection() {
 
+    private val chunkStream = session.option and VmessProtocol.OPTION_CHUNK_STREAM != 0
     private val masking = session.option and VmessProtocol.OPTION_CHUNK_MASKING != 0
     private val padding = session.option and VmessProtocol.OPTION_GLOBAL_PADDING != 0
+    private val authenticatedLength = session.option and VmessProtocol.OPTION_AUTHENTICATED_LENGTH != 0
 
     private val writer = VmessChunkStream(
         key = session.requestBodyKey,
         iv = session.requestBodyIv,
         security = session.security,
         masking = masking,
-        globalPadding = padding
+        globalPadding = padding,
+        authenticatedLength = authenticatedLength
     )
 
     private val reader = VmessChunkStream(
@@ -37,7 +40,10 @@ class VmessConnection(
         iv = session.responseBodyIv,
         security = session.security,
         masking = masking,
-        globalPadding = padding
+        globalPadding = padding,
+        authenticatedLength = authenticatedLength,
+        lengthKeySource = session.requestBodyKey,
+        lengthIvFallback = session.requestBodyIv
     )
 
     /**
@@ -67,14 +73,14 @@ class VmessConnection(
         // only one writer may be inside encode at a time.
         sendLock.withLock {
             val header = pendingHeader.getAndSet(null)
-            val body = writer.encode(data)
+            val body = if (chunkStream) writer.encode(data) else data
             transport.send(if (header != null) header + body else body)
         }
     }
 
     override fun sendRawAsync(data: ByteArray) {
         val header = pendingHeader.getAndSet(null)
-        val body = synchronized(writer) { writer.encode(data) }
+        val body = if (chunkStream) synchronized(writer) { writer.encode(data) } else data
         transport.sendAsync(if (header != null) header + body else body)
     }
 
@@ -89,6 +95,21 @@ class VmessConnection(
                     if (!fill()) return null
                     continue
                 }
+            }
+
+            if (!chunkStream) {
+                if (buffer.isNotEmpty()) {
+                    val out = buffer
+                    buffer = ByteArray(0)
+                    return out
+                }
+                if (!fill()) {
+                    closed = true
+                    return null
+                }
+                val out = buffer
+                buffer = ByteArray(0)
+                return out
             }
 
             when (val decoded = reader.decode(buffer, 0)) {

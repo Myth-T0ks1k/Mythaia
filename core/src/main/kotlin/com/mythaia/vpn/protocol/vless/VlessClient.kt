@@ -674,10 +674,20 @@ class VlessClient(
         val useHTTP2 = httpVersion == XHttpHttpVersion.HTTP2
 
         val resolvedMode: XHttpMode = if (xhttpConfig.mode == XHttpMode.AUTO) {
-            // Reality -> stream-one (direct, HTTP/2); TLS/none -> packet-up (CDN-safe).
-            if (configuration.reality != null) XHttpMode.STREAM_ONE else XHttpMode.PACKET_UP
+            // Reality -> stream-up when downloadSettings is present, else stream-one; TLS/none -> packet-up.
+            if (configuration.reality != null) {
+                if (!xhttpConfig.downloadSettingsJson.isNullOrBlank()) XHttpMode.STREAM_UP else XHttpMode.STREAM_ONE
+            } else {
+                XHttpMode.PACKET_UP
+            }
         } else {
             xhttpConfig.mode
+        }
+
+        if (resolvedMode != XHttpMode.STREAM_ONE && xhttpConfig.resolveDownloadConfiguration(configuration) != null && tunnel == null) {
+            val tls = if (configuration.security == "tls") configuration.tls else null
+            val opened = com.mythaia.vpn.protocol.StreamTransports.open(configuration, tls, null)
+            return completeHandshake(VlessDirectConnection(opened.transport), command, destinationHost, destinationPort, initialData)
         }
 
         val sessionId = if (resolvedMode == XHttpMode.PACKET_UP || resolvedMode == XHttpMode.STREAM_UP) {

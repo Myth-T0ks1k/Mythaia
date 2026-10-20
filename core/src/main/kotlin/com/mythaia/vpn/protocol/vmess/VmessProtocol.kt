@@ -13,6 +13,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /** How the VMess body is encrypted. */
 enum class VmessSecurity(val raw: String, val id: Int) {
+    AUTO("auto", 0x02),
     AES_128_GCM("aes-128-gcm", 0x03),
     CHACHA20_POLY1305("chacha20-poly1305", 0x04),
     NONE("none", 0x05),
@@ -20,23 +21,55 @@ enum class VmessSecurity(val raw: String, val id: Int) {
 
     val displayName: String
         get() = when (this) {
+            AUTO -> "Auto"
             AES_128_GCM -> "AES-128-GCM"
             CHACHA20_POLY1305 -> "ChaCha20-Poly1305"
             NONE -> "None"
             ZERO -> "Zero"
         }
 
+    /**
+     * Resolves [AUTO] to the concrete AEAD cipher for this CPU architecture,
+     * matching Xray-core (`proxy/vmess/outbound/outbound.go`):
+     * `AES-128-GCM` on amd64 / x86_64 / arm64 / aarch64 / s390x, and
+     * `ChaCha20-Poly1305` on 32-bit ARM or other architectures without AES-NI.
+     */
+    fun resolve(): VmessSecurity {
+        if (this != AUTO) return this
+        val arch = System.getProperty("os.arch")?.lowercase().orEmpty()
+        return if (arch.contains("amd64") || arch.contains("x86_64") ||
+            arch.contains("aarch64") || arch.contains("arm64") ||
+            arch.contains("s390x") || arch == "x86"
+        ) {
+            AES_128_GCM
+        } else {
+            CHACHA20_POLY1305
+        }
+    }
+
+    /**
+     * The wire security byte written into the VMess request header (`(paddingLen shl 4) or wireId`).
+     * Per V2Ray/Xray/sing-box spec, `zero` (`0x06`) is a client-side pseudo-cipher that writes
+     * `SecurityType_NONE` (`0x05`) on the wire and omits `OptionChunkStream` (`option = 0`).
+     */
+    val wireId: Int
+        get() = when (val resolved = resolve()) {
+            ZERO -> NONE.id
+            else -> resolved.id
+        }
+
     companion object {
         /**
-         * `auto` is what most links and panels write; on any device this app
-         * runs on AES has hardware backing, so it resolves to AES-128-GCM.
+         * `auto` is what most links and panels write; resolves via [AUTO.resolve]
+         * (AES-128-GCM on 64-bit x86/ARM, ChaCha20-Poly1305 on 32-bit ARM).
          */
-        fun fromRaw(value: String?): VmessSecurity = when (value?.lowercase()) {
-            null, "", "auto", "aes-128-gcm" -> AES_128_GCM
+        fun fromRaw(value: String?): VmessSecurity = when (value?.lowercase()?.trim()) {
+            null, "", "auto" -> AUTO.resolve()
+            "aes-128-gcm" -> AES_128_GCM
             "chacha20-poly1305", "chacha20-ietf-poly1305" -> CHACHA20_POLY1305
             "none" -> NONE
             "zero" -> ZERO
-            else -> AES_128_GCM
+            else -> AUTO.resolve()
         }
     }
 }
@@ -45,8 +78,8 @@ enum class VmessSecurity(val raw: String, val id: Int) {
  * The VMessAEAD request header and its sealing.
  *
  * Only the AEAD form is implemented — `alterId` 0. The legacy MD5-authenticated
- * header with a non-zero alterId was deprecated by v2ray in 2022 and is refused
- * rather than half-supported.
+ * header with a non-zero alterId was deprecated by v2ray in 2022 and is coerced
+ * to AEAD (`alterId` 0).
  */
 object VmessProtocol {
 
@@ -56,6 +89,7 @@ object VmessProtocol {
     const val OPTION_CHUNK_STREAM = 0x01
     const val OPTION_CHUNK_MASKING = 0x04
     const val OPTION_GLOBAL_PADDING = 0x08
+    const val OPTION_AUTHENTICATED_LENGTH = 0x10
 
     const val COMMAND_TCP: Byte = 1
     const val COMMAND_UDP: Byte = 2
@@ -94,17 +128,19 @@ object VmessProtocol {
         host: String,
         port: Int,
         command: Byte,
-        security: VmessSecurity
+        security: VmessSecurity,
+        authenticatedLength: Boolean = false
     ): SealedRequest {
+        val resolvedSecurity = security.resolve()
         val cmdKey = VmessKdf.commandKey(id)
 
         val bodyKey = ByteArray(16).also { random.nextBytes(it) }
         val bodyIv = ByteArray(16).also { random.nextBytes(it) }
         val responseHeader = ByteArray(1).also { random.nextBytes(it) }[0]
 
-        val option = optionsFor(security)
+        val option = optionsFor(resolvedSecurity, authenticatedLength)
 
-        val header = buildHeader(bodyKey, bodyIv, responseHeader, option, security, command, host, port)
+        val header = buildHeader(bodyKey, bodyIv, responseHeader, option, resolvedSecurity, command, host, port)
         val authId = generateAuthId(cmdKey)
         val nonce = ByteArray(8).also { random.nextBytes(it) }
 
@@ -127,7 +163,7 @@ object VmessProtocol {
         nonce.copyInto(out, at); at += nonce.size
         sealedHeader.copyInto(out, at)
 
-        return SealedRequest(out, Session(bodyKey, bodyIv, responseHeader, security, option))
+        return SealedRequest(out, Session(bodyKey, bodyIv, responseHeader, resolvedSecurity, option))
     }
 
     /**
@@ -135,16 +171,18 @@ object VmessProtocol {
      *
      * Masking and global padding only make sense over an AEAD body: they act on
      * the length prefix and the trailing bytes of a sealed chunk. With `none`
-     * the chunk carries the payload verbatim, so padding would be delivered to
-     * the destination as part of the stream — the first HTTP request the tunnel
-     * carried would arrive with random bytes glued to the end of it.
+     * the chunk carries the payload verbatim (`OPTION_CHUNK_STREAM`), and with
+     * `zero` (`0x06`) chunk framing is omitted (`option = 0`) and `SecurityType_NONE`
+     * (`0x05`) is sent on the wire so the body is unframed after the response header.
      */
-    private fun optionsFor(security: VmessSecurity): Int = when (security) {
-        VmessSecurity.AES_128_GCM, VmessSecurity.CHACHA20_POLY1305 ->
-            OPTION_CHUNK_STREAM or OPTION_CHUNK_MASKING or OPTION_GLOBAL_PADDING
-        // Chunked, so lengths still frame the stream, but nothing is added to
-        // the payload that the far side would have to strip.
-        VmessSecurity.NONE, VmessSecurity.ZERO -> OPTION_CHUNK_STREAM
+    fun optionsFor(security: VmessSecurity, authenticatedLength: Boolean = false): Int = when (security.resolve()) {
+        VmessSecurity.AES_128_GCM, VmessSecurity.CHACHA20_POLY1305 -> {
+            val base = OPTION_CHUNK_STREAM or OPTION_CHUNK_MASKING or OPTION_GLOBAL_PADDING
+            if (authenticatedLength) base or OPTION_AUTHENTICATED_LENGTH else base
+        }
+        VmessSecurity.NONE -> OPTION_CHUNK_STREAM
+        VmessSecurity.ZERO -> 0
+        VmessSecurity.AUTO -> error("unreachable")
     }
 
     /**
@@ -199,7 +237,7 @@ object VmessProtocol {
 
         // High nibble is the padding length, low nibble the cipher.
         val paddingLength = random.nextInt(16)
-        out.add(((paddingLength shl 4) or security.id).toByte())
+        out.add(((paddingLength shl 4) or security.wireId).toByte())
         out.add(0)                                   // reserved
         out.add(command)
         out.add(((port shr 8) and 0xFF).toByte())

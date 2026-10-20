@@ -267,6 +267,14 @@ object SingBoxJsonImporter {
                 transport.optJSONObject("headers")?.takeIf { it.length() > 0 }?.let { params["headers"] = it.toString() }
             }
             "quic" -> params["type"] = "quic"
+            "xhttp", "splithttp" -> {
+                params["type"] = "xhttp"
+                transport!!.optString("path").takeIf { it.isNotEmpty() }?.let { params["path"] = it }
+                (XrayJsonImporter.stringList(transport.opt("host")).firstOrNull()
+                    ?: headerValue(transport.optJSONObject("headers"), "Host"))?.let { params["host"] = it }
+                transport.optString("mode").takeIf { it.isNotEmpty() }?.let { params["mode"] = it }
+                transport.optJSONObject("extra")?.let { params["extra"] = it.toString() }
+            }
             else -> throw ProxyError.InvalidUrl("the $type transport is not supported")
         }
     }
@@ -302,8 +310,9 @@ object SingBoxJsonImporter {
         val params = LinkedHashMap<String, String>()
         transportParams(item, params)
         val security = tlsParams(item, params, "allowInsecure")
-        if (security == "reality") throw ProxyError.InvalidUrl("vmess: Reality is not supported")
         val server = item.optString("server")
+        val net = params["type"] ?: "tcp"
+        val vmessType = if (net == "xhttp") (params["mode"] ?: "auto") else "none"
         val json = JSONObject()
             .put("v", "2")
             .put("ps", name.ifEmpty { hostPort(item) })
@@ -312,14 +321,22 @@ object SingBoxJsonImporter {
             .put("id", required(item, "uuid"))
             .put("aid", item.optInt("alter_id", 0))
             .put("scy", item.optString("security").ifEmpty { "auto" })
-            .put("net", params["type"] ?: "tcp")
-            .put("type", "none")
+            .put("net", net)
+            .put("type", vmessType)
             .put("host", params["host"] ?: "")
             .put("path", params["path"] ?: params["serviceName"] ?: "")
-            .put("tls", if (security == "tls") "tls" else "")
+            .put("tls", when (security) {
+                "tls" -> "tls"
+                "reality" -> "reality"
+                else -> ""
+            })
             .put("sni", params["sni"] ?: "")
             .put("fp", params["fp"] ?: "")
             .put("alpn", params["alpn"] ?: "")
+        params["pbk"]?.let { json.put("pbk", it) }
+        params["sid"]?.let { json.put("sid", it) }
+        params["mode"]?.let { json.put("mode", it) }
+        params["extra"]?.let { json.put("extra", it) }
         params["method"]?.let { json.put("method", it) }
         params["headers"]?.let { json.put("headers", it) }
         if (params["allowInsecure"] == "1") json.put("allowInsecure", "1")

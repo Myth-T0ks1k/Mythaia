@@ -323,7 +323,6 @@ private fun ServerEditorForm(
                 isAnyTls || isNowhere -> password.isNotEmpty()
                 isTuic -> uuidValid && password.isNotEmpty()
                 isSudoku -> sudokuKey.isNotBlank()
-                isVmess -> uuidValid
                 else -> uuidValid &&
                         (!isReality || (sni.isNotBlank() && publicKeyValid && shortIdValid)) &&
                         (transport != "xhttp" || xhttpExtraValid)
@@ -385,8 +384,8 @@ private fun ServerEditorForm(
                                 alpn = alpnList,
                                 allowInsecure = tlsAllowInsecure,
                                 fingerprint = fingerprint,
-                                minVersion = if (isVless) tlsMinVersion else baseTls.minVersion,
-                                maxVersion = if (isVless) tlsMaxVersion else baseTls.maxVersion
+                                minVersion = if (isVless || isVmess) tlsMinVersion else baseTls.minVersion,
+                                maxVersion = if (isVless || isVmess) tlsMaxVersion else baseTls.maxVersion
                             )
                         }
                         if (isNowhere) {
@@ -442,7 +441,7 @@ private fun ServerEditorForm(
                         }
 
                         var realityConfiguration: RealityConfiguration? = null
-                        if (isReality && isVless) {
+                        if (isReality && (isVless || isVmess)) {
                             val pk = publicKeyBytes ?: return@IconButton
                             val sid = shortIdBytes ?: return@IconButton
                             realityConfiguration = RealityConfiguration(
@@ -529,7 +528,7 @@ private fun ServerEditorForm(
                             flow = if (isVless && effectiveSecurity != "none" && transport == "tcp") flow.ifEmpty { null } else null,
                             security = effectiveSecurity,
                             tls = tlsConfiguration,
-                            reality = if (isVless) realityConfiguration else null,
+                            reality = if (isVless || isVmess) realityConfiguration else null,
                             websocket = wsConfiguration,
                             httpUpgrade = httpUpgradeConfiguration,
                             httpTransport = httpTransportConfiguration,
@@ -616,7 +615,7 @@ private fun ServerEditorForm(
                             security = when (next) {
                                 OutboundProtocol.TROJAN, OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC,
                                 OutboundProtocol.ANYTLS, OutboundProtocol.NOWHERE -> "tls"
-                                OutboundProtocol.VMESS -> if (security == "reality") "none" else security
+                                OutboundProtocol.VMESS -> security
                                 else -> "none"
                             }
                         }
@@ -898,7 +897,7 @@ private fun ServerEditorForm(
                         EditorDropdownField(
                             label = tr("security"),
                             selectedValue = security,
-                            options = if (isVless) listOf(
+                            options = if (isVless || isVmess) listOf(
                                 "none" to tr("none"),
                                 "tls" to "TLS",
                                 "reality" to "Reality"
@@ -940,7 +939,7 @@ private fun ServerEditorForm(
                         if (!isNowhere && !isNaive) {
                             EditorWingField(tlsEch, { tlsEch = it }, tr("ech_config"))
                         }
-                        if (isVless) {
+                        if (isVless || isVmess) {
                             EditorDropdownField(
                                 label = tr("min_tls_version"),
                                 selectedValue = tlsMinVersion?.name ?: "ANY",
@@ -968,7 +967,7 @@ private fun ServerEditorForm(
                         }
                     }
 
-                    if (isReality && isVless) {
+                    if (isReality && (isVless || isVmess)) {
                         EditorWingField(sni, { sni = it }, tr("sni"))
                         OutlinedTextField(
                             value = publicKey,

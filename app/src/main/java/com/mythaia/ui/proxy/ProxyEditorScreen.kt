@@ -305,7 +305,6 @@ fun ProxyEditorScreen(
                 isAnyTls || isNowhere -> password.isNotEmpty()
                 isTuic -> uuidValid && password.isNotEmpty()
                 isSudoku -> sudokuKey.isNotBlank()
-                isVmess -> uuidValid
                 else -> uuidValid &&
                         (!isReality || (sni.isNotBlank() && publicKeyValid && shortIdValid)) &&
                         (transport != "xhttp" || xhttpExtraValid)
@@ -367,8 +366,8 @@ fun ProxyEditorScreen(
                                 alpn = alpnList,
                                 allowInsecure = tlsAllowInsecure,
                                 fingerprint = fingerprint,
-                                minVersion = if (isVless) tlsMinVersion else baseTls.minVersion,
-                                maxVersion = if (isVless) tlsMaxVersion else baseTls.maxVersion
+                                minVersion = if (isVless || isVmess) tlsMinVersion else baseTls.minVersion,
+                                maxVersion = if (isVless || isVmess) tlsMaxVersion else baseTls.maxVersion
                             )
                         }
                         if (isNowhere) {
@@ -424,7 +423,7 @@ fun ProxyEditorScreen(
                         }
 
                         var realityConfiguration: RealityConfiguration? = null
-                        if (isReality && isVless) {
+                        if (isReality && (isVless || isVmess)) {
                             val pk = publicKeyBytes ?: return@IconButton
                             val sid = shortIdBytes ?: return@IconButton
                             realityConfiguration = RealityConfiguration(
@@ -511,7 +510,7 @@ fun ProxyEditorScreen(
                             flow = if (isVless && effectiveSecurity != "none" && transport == "tcp") flow.ifEmpty { null } else null,
                             security = effectiveSecurity,
                             tls = tlsConfiguration,
-                            reality = if (isVless) realityConfiguration else null,
+                            reality = if (isVless || isVmess) realityConfiguration else null,
                             websocket = wsConfiguration,
                             httpUpgrade = httpUpgradeConfiguration,
                             httpTransport = httpTransportConfiguration,
@@ -598,7 +597,7 @@ fun ProxyEditorScreen(
                             security = when (next) {
                                 OutboundProtocol.TROJAN, OutboundProtocol.HYSTERIA2, OutboundProtocol.TUIC,
                                 OutboundProtocol.ANYTLS, OutboundProtocol.NOWHERE -> "tls"
-                                OutboundProtocol.VMESS -> if (security == "reality") "none" else security
+                                OutboundProtocol.VMESS -> security
                                 else -> "none"
                             }
                         }
@@ -880,7 +879,7 @@ fun ProxyEditorScreen(
                         DropdownField(
                             label = stringResource(R.string.security),
                             selectedValue = security,
-                            options = if (isVless) listOf(
+                            options = if (isVless || isVmess) listOf(
                                 "none" to stringResource(R.string.none),
                                 "tls" to "TLS",
                                 "reality" to "Reality"
@@ -922,7 +921,7 @@ fun ProxyEditorScreen(
                         if (!isNowhere && !isNaive) {
                             WingField(tlsEch, { tlsEch = it }, stringResource(R.string.ech_config))
                         }
-                        if (isVless) {
+                        if (isVless || isVmess) {
                             DropdownField(
                                 label = stringResource(R.string.min_tls_version),
                                 selectedValue = tlsMinVersion?.name ?: "ANY",
@@ -950,7 +949,7 @@ fun ProxyEditorScreen(
                         }
                     }
 
-                    if (isReality && isVless) {
+                    if (isReality && (isVless || isVmess)) {
                         WingField(sni, { sni = it }, stringResource(R.string.sni))
                         OutlinedTextField(
                             value = publicKey,

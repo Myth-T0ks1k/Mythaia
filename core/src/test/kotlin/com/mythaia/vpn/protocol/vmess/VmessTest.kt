@@ -431,17 +431,13 @@ class VmessTest {
     }
 
     @Test
-    fun `a non-zero alterId is refused, not silently downgraded`() {
-        // It selects the legacy MD5 header removed from v2ray in 2022; a
-        // connection built on it would never authenticate.
+    fun `a non-zero alterId is coerced to zero for AEAD compatibility`() {
         val json = """{"v":"2","ps":"N","add":"example.com","port":"443","id":"$id","aid":"64"}"""
         val link = "vmess://" + java.util.Base64.getEncoder().encodeToString(json.toByteArray())
-        try {
-            ProxyConfiguration.fromUrl(link)
-            fail("expected InvalidUrl")
-        } catch (e: ProxyError.InvalidUrl) {
-            assertTrue(e.message!!.contains("alterId"))
-        }
+        val config = ProxyConfiguration.fromUrl(link)
+        assertEquals(OutboundProtocol.VMESS, config.outboundProtocol)
+        assertEquals("example.com", config.serverAddress)
+        assertEquals(id, config.uuid)
     }
 
     @Test
@@ -487,13 +483,847 @@ class VmessTest {
     }
 
     @Test
-    fun `security names map to their protocol ids`() {
+    fun `security names map to their protocol ids and wire ids`() {
+        assertEquals(0x02, VmessSecurity.AUTO.id)
         assertEquals(0x03, VmessSecurity.AES_128_GCM.id)
         assertEquals(0x04, VmessSecurity.CHACHA20_POLY1305.id)
         assertEquals(0x05, VmessSecurity.NONE.id)
+        assertEquals(0x06, VmessSecurity.ZERO.id)
+        assertEquals(0x05, VmessSecurity.ZERO.wireId)
         assertEquals(VmessSecurity.AES_128_GCM, VmessSecurity.fromRaw("auto"))
+        assertEquals(VmessSecurity.AES_128_GCM, VmessSecurity.AUTO.resolve())
         assertEquals(VmessSecurity.AES_128_GCM, VmessSecurity.fromRaw(null))
         assertEquals(VmessSecurity.CHACHA20_POLY1305, VmessSecurity.fromRaw("chacha20-ietf-poly1305"))
         assertEquals(VmessSecurity.NONE, VmessSecurity.fromRaw("none"))
+        assertEquals(VmessSecurity.ZERO, VmessSecurity.fromRaw("zero"))
+
+        assertEquals(0, VmessProtocol.optionsFor(VmessSecurity.ZERO))
+        assertEquals(VmessProtocol.OPTION_CHUNK_STREAM, VmessProtocol.optionsFor(VmessSecurity.NONE))
+        assertEquals(
+            VmessProtocol.OPTION_CHUNK_STREAM or
+                VmessProtocol.OPTION_CHUNK_MASKING or
+                VmessProtocol.OPTION_GLOBAL_PADDING,
+            VmessProtocol.optionsFor(VmessSecurity.AES_128_GCM, authenticatedLength = false)
+        )
+        assertEquals(
+            VmessProtocol.OPTION_CHUNK_STREAM or
+                VmessProtocol.OPTION_CHUNK_MASKING or
+                VmessProtocol.OPTION_GLOBAL_PADDING or
+                VmessProtocol.OPTION_AUTHENTICATED_LENGTH,
+            VmessProtocol.optionsFor(VmessSecurity.AES_128_GCM, authenticatedLength = true)
+        )
+    }
+
+    @Test
+    fun `authenticated length chunks round-trip in AES-128-GCM and ChaCha20-Poly1305`() {
+        for (security in listOf(VmessSecurity.AES_128_GCM, VmessSecurity.CHACHA20_POLY1305)) {
+            for (padding in listOf(true, false)) {
+                val key = ByteArray(16) { (it + 1).toByte() }
+                val iv = ByteArray(16) { (it * 5 + 3).toByte() }
+                val writer = VmessChunkStream(
+                    key = key,
+                    iv = iv,
+                    security = security,
+                    masking = true,
+                    globalPadding = padding,
+                    authenticatedLength = true
+                )
+                val reader = VmessChunkStream(
+                    key = key,
+                    iv = iv,
+                    security = security,
+                    masking = true,
+                    globalPadding = padding,
+                    authenticatedLength = true
+                )
+
+                val payloads = listOf(
+                    "auth-len-hello".toByteArray(),
+                    ByteArray(1) { 42 },
+                    ByteArray(4096) { (it % 251).toByte() }
+                )
+                var wire = ByteArray(0)
+                for (p in payloads) wire += writer.encode(p)
+                wire += writer.encodeTerminator()
+
+                var at = 0
+                val received = ArrayList<ByteArray>()
+                var ended = false
+                while (at < wire.size) {
+                    when (val decoded = reader.decode(wire, at)) {
+                        is VmessChunkStream.Decoded.Chunk -> {
+                            received.add(decoded.payload)
+                            at += decoded.consumed
+                        }
+                        VmessChunkStream.Decoded.EndOfStream -> {
+                            ended = true
+                            break
+                        }
+                        VmessChunkStream.Decoded.NeedMore -> fail("truncated at $at ($security padding=$padding)")
+                    }
+                }
+                assertTrue("expected EndOfStream ($security padding=$padding)", ended)
+                assertArrayEquals(
+                    payloads.reduce { a, b -> a + b },
+                    received.reduce { a, b -> a + b }
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `zero security leaves request option zero and passes body unchunked`() {
+        val sealed = VmessProtocol.sealRequest(
+            id, "example.com", 443, VmessProtocol.COMMAND_TCP, VmessSecurity.ZERO
+        )
+        assertEquals(0, sealed.session.option)
+        assertEquals(VmessSecurity.ZERO, sealed.session.security)
+
+        val sent = ArrayList<ByteArray>()
+        val inbound = ArrayDeque<ByteArray>()
+
+        // Craft a valid AEAD response header from the server for this session.
+        val respPlain = byteArrayOf(sealed.session.responseHeader, 0, 0, 0)
+        val respLenKey = VmessKdf.kdf16(sealed.session.responseBodyKey, VmessKdf.salt(VmessKdf.SALT_RESP_HEADER_LEN_KEY))
+        val respLenIv = VmessKdf.kdf12(sealed.session.responseBodyIv, VmessKdf.salt(VmessKdf.SALT_RESP_HEADER_LEN_IV))
+        val respKey = VmessKdf.kdf16(sealed.session.responseBodyKey, VmessKdf.salt(VmessKdf.SALT_RESP_HEADER_PAYLOAD_KEY))
+        val respIv = VmessKdf.kdf12(sealed.session.responseBodyIv, VmessKdf.salt(VmessKdf.SALT_RESP_HEADER_PAYLOAD_IV))
+        val lenCipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(
+                javax.crypto.Cipher.ENCRYPT_MODE,
+                SecretKeySpec(respLenKey, "AES"),
+                javax.crypto.spec.GCMParameterSpec(128, respLenIv)
+            )
+        }
+        val payloadCipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(
+                javax.crypto.Cipher.ENCRYPT_MODE,
+                SecretKeySpec(respKey, "AES"),
+                javax.crypto.spec.GCMParameterSpec(128, respIv)
+            )
+        }
+        val sealedRespHeader = lenCipher.doFinal(byteArrayOf(0, 4)) + payloadCipher.doFinal(respPlain)
+        val serverPayload = "raw unchunked reply".toByteArray()
+        inbound.add(sealedRespHeader + serverPayload)
+
+        val transport = object : com.mythaia.vpn.protocol.Transport {
+            override suspend fun send(data: ByteArray) { sent.add(data) }
+            override fun sendAsync(data: ByteArray) { sent.add(data) }
+            override suspend fun receive(): ByteArray? = if (inbound.isEmpty()) null else inbound.removeFirst()
+            override fun forceCancel() {}
+        }
+
+        val conn = VmessConnection(transport, sealed.session, sealed.bytes)
+        kotlinx.coroutines.runBlocking {
+            val clientPayload = "raw unchunked request".toByteArray()
+            conn.send(clientPayload)
+            assertEquals(1, sent.size)
+            // First write is exact header + raw clientPayload (no 2-byte chunk length prefix).
+            assertArrayEquals(sealed.bytes + clientPayload, sent[0])
+
+            val reply = conn.receive()
+            assertArrayEquals(serverPayload, reply)
+
+            conn.cancel()
+            // Cancelling a ZERO stream must not emit a 2-byte 0x0000 chunk terminator.
+            assertEquals(1, sent.size)
+        }
+    }
+
+    @Test
+    fun `vmess xhttp and reality links round-trip through v2rayN JSON and standard URI`() {
+        val pbk = "YsP5Y9uw0OTS6d1DXoDZH33a2CBIfsVid9j_3DPZcxc"
+        val sid = "0123456789abcdef"
+        val extra = """{"noGRPCHeader":true,"noSSEHeader":true,"scMaxBufferedPosts":40,"scStreamUpServerSecs":"15-30","headers":{"X-Test":"1"}}"""
+        val json = org.json.JSONObject().apply {
+            put("v", "2")
+            put("ps", "VMess-XHTTP-Reality")
+            put("add", "example.com")
+            put("port", "443")
+            put("id", id.toString())
+            put("aid", "0")
+            put("scy", "zero")
+            put("net", "xhttp")
+            put("type", "stream-one")
+            put("host", "cdn.example.com")
+            put("path", "/xhttp")
+            put("extra", extra)
+            put("tls", "reality")
+            put("sni", "www.microsoft.com")
+            put("fp", "chrome")
+            put("pbk", pbk)
+            put("sid", sid)
+        }
+        val link = "vmess://" + java.util.Base64.getEncoder().encodeToString(json.toString().toByteArray())
+        val parsed = ProxyConfiguration.fromUrl(link)
+        assertEquals(OutboundProtocol.VMESS, parsed.outboundProtocol)
+        assertEquals("xhttp", parsed.transport)
+        assertEquals("reality", parsed.security)
+        assertEquals("zero", parsed.vmessSecurity)
+        assertEquals(com.mythaia.data.model.XHttpMode.STREAM_ONE, parsed.xhttp?.mode)
+        assertEquals("/xhttp", parsed.xhttp?.path)
+        assertEquals("cdn.example.com", parsed.xhttp?.host)
+        assertEquals(true, parsed.xhttp?.noGrpcHeader)
+        assertEquals(true, parsed.xhttp?.noSseHeader)
+        assertEquals(40, parsed.xhttp?.scMaxBufferedPosts)
+        assertEquals(15, parsed.xhttp?.scStreamUpServerSecsFrom)
+        assertEquals(30, parsed.xhttp?.scStreamUpServerSecsTo)
+        assertEquals("www.microsoft.com", parsed.reality?.serverName)
+
+        val reparsed = ProxyConfiguration.fromUrl(parsed.toUrl())
+        assertEquals(parsed.name, reparsed.name)
+        assertEquals(parsed.transport, reparsed.transport)
+        assertEquals(parsed.security, reparsed.security)
+        assertEquals(parsed.vmessSecurity, reparsed.vmessSecurity)
+        assertEquals(parsed.xhttp?.mode, reparsed.xhttp?.mode)
+        assertEquals(parsed.xhttp?.path, reparsed.xhttp?.path)
+        assertEquals(parsed.xhttp?.noGrpcHeader, reparsed.xhttp?.noGrpcHeader)
+        assertEquals(parsed.xhttp?.noSseHeader, reparsed.xhttp?.noSseHeader)
+        assertEquals(parsed.xhttp?.scMaxBufferedPosts, reparsed.xhttp?.scMaxBufferedPosts)
+        assertEquals(parsed.xhttp?.scStreamUpServerSecsFrom, reparsed.xhttp?.scStreamUpServerSecsFrom)
+        assertEquals(parsed.xhttp?.scStreamUpServerSecsTo, reparsed.xhttp?.scStreamUpServerSecsTo)
+        assertEquals(parsed.reality?.serverName, reparsed.reality?.serverName)
+        assertArrayEquals(parsed.reality?.publicKey, reparsed.reality?.publicKey)
+        assertArrayEquals(parsed.reality?.shortId, reparsed.reality?.shortId)
+
+        // Standard URI format: vmess://uuid@host:port?...#name
+        val stdUri = "vmess://$id@example.com:443?type=xhttp&encryption=chacha20-poly1305" +
+            "&security=reality&pbk=$pbk&sid=$sid&sni=www.microsoft.com&path=%2Fxh&mode=packet-up#StdVMess"
+        val stdParsed = ProxyConfiguration.fromUrl(stdUri)
+        assertEquals(OutboundProtocol.VMESS, stdParsed.outboundProtocol)
+        assertEquals("StdVMess", stdParsed.name)
+        assertEquals("xhttp", stdParsed.transport)
+        assertEquals("reality", stdParsed.security)
+        assertEquals("chacha20-poly1305", stdParsed.vmessSecurity)
+        assertEquals(com.mythaia.data.model.XHttpMode.PACKET_UP, stdParsed.xhttp?.mode)
+        assertEquals("/xh", stdParsed.xhttp?.path)
+    }
+
+    @Test
+    fun `xhttp extra JSON preserves sessionIDPlacement aliases xmux and downloadSettings`() {
+        val extra = """
+            {
+              "sessionIDPlacement": "header",
+              "sessionIDKey": "X-Session-ID",
+              "seqPlacement": "cookie",
+              "seqKey": "seq_id",
+              "uplinkDataPlacement": "body",
+              "xmux": {"maxConcurrency": "8-16", "maxConnections": 2},
+              "downloadSettings": {
+                "address": "down.example.com",
+                "port": 8443,
+                "network": "xhttp",
+                "security": "tls",
+                "tlsSettings": {"serverName": "down.example.com", "allowInsecure": true},
+                "xhttpSettings": {"path": "/down", "host": "down.example.com", "mode": "stream-up"}
+              }
+            }
+        """.trimIndent()
+        val xhttp = com.mythaia.data.model.XHttpConfiguration.fromExtraJson(
+            host = "up.example.com",
+            path = "/up",
+            mode = com.mythaia.data.model.XHttpMode.PACKET_UP,
+            extraJson = extra
+        )
+        assertEquals(com.mythaia.data.model.XHttpPlacement.HEADER, xhttp.sessionPlacement)
+        assertEquals("X-Session-ID", xhttp.sessionKey)
+        assertEquals(com.mythaia.data.model.XHttpPlacement.COOKIE, xhttp.seqPlacement)
+        assertEquals("seq_id", xhttp.seqKey)
+        assertEquals(com.mythaia.data.model.XHttpPlacement.BODY, xhttp.uplinkDataPlacement)
+
+        val roundTripped = com.mythaia.data.model.XHttpConfiguration.fromExtraJson(
+            host = xhttp.host,
+            path = xhttp.path,
+            mode = xhttp.mode,
+            extraJson = xhttp.toExtraJson()
+        )
+        assertEquals(xhttp.sessionPlacement, roundTripped.sessionPlacement)
+        assertEquals(xhttp.sessionKey, roundTripped.sessionKey)
+        assertEquals(xhttp.xmuxJson, roundTripped.xmuxJson)
+        assertEquals(xhttp.downloadSettingsJson, roundTripped.downloadSettingsJson)
+
+        val parent = ProxyConfiguration(
+            name = "Parent",
+            serverAddress = "up.example.com",
+            serverPort = 443u,
+            uuid = id,
+            encryption = "none",
+            outboundProtocol = OutboundProtocol.VMESS,
+            transport = "xhttp",
+            security = "tls",
+            xhttp = xhttp
+        )
+        val resolved = roundTripped.resolveDownloadConfiguration(parent)
+        org.junit.Assert.assertNotNull(resolved)
+        val (downProxy, downXhttp) = resolved!!
+        assertEquals("down.example.com", downProxy.serverAddress)
+        assertEquals(8443.toUShort(), downProxy.serverPort)
+        assertEquals("tls", downProxy.security)
+        assertEquals("down.example.com", downProxy.tls?.serverName)
+        assertEquals(true, downProxy.tls?.allowInsecure)
+        assertEquals("/down", downXhttp.path)
+        assertEquals("down.example.com", downXhttp.host)
+    }
+
+    @Test
+    fun `ClashProxyParser parses VMess with xhttp reality and non-zero alterId`() {
+        val pbk = "YsP5Y9uw0OTS6d1DXoDZH33a2CBIfsVid9j_3DPZcxc"
+        val doc = org.json.JSONObject(
+            """
+            {
+              "proxies": [
+                {
+                  "name": "vmess-xhttp-reality",
+                  "type": "vmess",
+                  "server": "example.com",
+                  "port": 443,
+                  "uuid": "$id",
+                  "alterId": 16,
+                  "cipher": "zero",
+                  "tls": true,
+                  "servername": "www.microsoft.com",
+                  "client-fingerprint": "chrome",
+                  "network": "xhttp",
+                  "reality-opts": {
+                    "public-key": "$pbk",
+                    "short-id": "0123456789abcdef"
+                  },
+                  "xhttp-opts": {
+                    "path": "/xh",
+                    "host": "cdn.example.com",
+                    "mode": "packet-up",
+                    "no-grpc-header": true
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val configs = com.mythaia.data.network.ClashProxyParser.parseDocument(doc).configurations
+        assertEquals(1, configs.size)
+        val c = configs[0]
+        assertEquals(OutboundProtocol.VMESS, c.outboundProtocol)
+        assertEquals("vmess-xhttp-reality", c.name)
+        assertEquals("xhttp", c.transport)
+        assertEquals("reality", c.security)
+        assertEquals("zero", c.vmessSecurity)
+        assertEquals("/xh", c.xhttp?.path)
+        assertEquals("cdn.example.com", c.xhttp?.host)
+        assertEquals(com.mythaia.data.model.XHttpMode.PACKET_UP, c.xhttp?.mode)
+        assertEquals(true, c.xhttp?.noGrpcHeader)
+        assertEquals("www.microsoft.com", c.reality?.serverName)
+    }
+
+    @Test
+    fun `live Xray integration tests for VMess over XHTTP`() {
+        val binaries = listOfNotNull(
+            System.getenv("MYTHAIA_XRAY")?.takeIf { it.isNotBlank() }?.let { java.io.File(it) },
+            System.getenv("XRAY")?.takeIf { it.isNotBlank() }?.let { java.io.File(it) }
+        ).distinctBy { it.canonicalPath }.filter { it.isFile }
+        org.junit.Assume.assumeTrue("No local xray binary found for live test", binaries.isNotEmpty())
+
+        // Start a local TCP echo server that echoes every chunk back and closes when client half-closes or sends "EOF".
+        val echoServer = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
+        val echoPort = echoServer.localPort
+        val echoThread = Thread {
+            try {
+                while (!echoServer.isClosed) {
+                    val client = try { echoServer.accept() } catch (_: Exception) { break }
+                    Thread {
+                        client.use { sock ->
+                            sock.soTimeout = 10_000
+                            val inp = sock.getInputStream()
+                            val out = sock.getOutputStream()
+                            val buf = ByteArray(16384)
+                            while (true) {
+                                val n = try { inp.read(buf) } catch (_: Exception) { -1 }
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                out.flush()
+                            }
+                        }
+                    }.apply { isDaemon = true }.start()
+                }
+            } catch (_: Exception) {}
+        }.apply { isDaemon = true; start() }
+
+        try {
+            for (xrayBin in binaries) {
+                runXrayMatrix(xrayBin, echoPort)
+            }
+        } finally {
+            runCatching { echoServer.close() }
+            echoThread.join(1000)
+        }
+    }
+
+    private fun freePort(): Int =
+        java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
+
+    private fun runXrayMatrix(xrayBin: java.io.File, echoPort: Int) {
+        // Generate TLS certificate via `xray tls cert --domain=localhost`
+        val certProc = ProcessBuilder(xrayBin.absolutePath, "tls", "cert", "--domain=localhost")
+            .redirectErrorStream(true)
+            .start()
+        val certJsonText = certProc.inputStream.bufferedReader().readText()
+        certProc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+        val certObj = org.json.JSONObject(certJsonText.substring(certJsonText.indexOf('{')).trim())
+
+        val realityPrivateKey = "aLU54PDyo85Mn2JietGWthdOImxFonHn3jq7_hmPOUQ"
+        val realityPublicKey = "YsP5Y9uw0OTS6d1DXoDZH33a2CBIfsVid9j_3DPZcxc"
+        val realityShortId = "0123456789abcdef"
+
+        val portPlain = freePort()
+        val portPlacement = freePort()
+        val portTls = freePort()
+        val portReality = freePort()
+
+        val configJson = org.json.JSONObject().apply {
+            put("log", org.json.JSONObject().put("loglevel", "warning"))
+            put(
+                "inbounds",
+                org.json.JSONArray()
+                    .put(
+                        org.json.JSONObject()
+                            .put("tag", "in-plain")
+                            .put("listen", "127.0.0.1")
+                            .put("port", portPlain)
+                            .put("protocol", "vmess")
+                            .put(
+                                "settings",
+                                org.json.JSONObject().put(
+                                    "clients",
+                                    org.json.JSONArray().put(org.json.JSONObject().put("id", id.toString()))
+                                )
+                            )
+                            .put(
+                                "streamSettings",
+                                org.json.JSONObject()
+                                    .put("network", "xhttp")
+                                    .put("security", "none")
+                                    .put(
+                                        "xhttpSettings",
+                                        org.json.JSONObject()
+                                            .put("path", "/xh")
+                                            .put("mode", "auto")
+                                    )
+                            )
+                    )
+                    .put(
+                        org.json.JSONObject()
+                            .put("tag", "in-placement")
+                            .put("listen", "127.0.0.1")
+                            .put("port", portPlacement)
+                            .put("protocol", "vmess")
+                            .put(
+                                "settings",
+                                org.json.JSONObject().put(
+                                    "clients",
+                                    org.json.JSONArray().put(org.json.JSONObject().put("id", id.toString()))
+                                )
+                            )
+                            .put(
+                                "streamSettings",
+                                org.json.JSONObject()
+                                    .put("network", "xhttp")
+                                    .put("security", "none")
+                                    .put(
+                                        "xhttpSettings",
+                                        org.json.JSONObject()
+                                            .put("path", "/custom")
+                                            .put("mode", "packet-up")
+                                            .put(
+                                                "extra",
+                                                org.json.JSONObject()
+                                                    .put("sessionIDPlacement", "header")
+                                                    .put("sessionIDKey", "X-My-Session")
+                                                    .put("seqPlacement", "cookie")
+                                                    .put("seqKey", "my_seq")
+                                                    .put("uplinkDataPlacement", "header")
+                                                    .put("uplinkDataKey", "X-Up-Data")
+                                                    .put("uplinkChunkSize", 256)
+                                                    .put("serverMaxHeaderBytes", 65536)
+                                                    .put("noSSEHeader", true)
+                                            )
+                                    )
+                            )
+                    )
+                    .put(
+                        org.json.JSONObject()
+                            .put("tag", "in-tls")
+                            .put("listen", "127.0.0.1")
+                            .put("port", portTls)
+                            .put("protocol", "vmess")
+                            .put(
+                                "settings",
+                                org.json.JSONObject().put(
+                                    "clients",
+                                    org.json.JSONArray().put(org.json.JSONObject().put("id", id.toString()))
+                                )
+                            )
+                            .put(
+                                "streamSettings",
+                                org.json.JSONObject()
+                                    .put("network", "xhttp")
+                                    .put("security", "tls")
+                                    .put(
+                                        "tlsSettings",
+                                        org.json.JSONObject()
+                                            .put("alpn", org.json.JSONArray().put("h2").put("http/1.1"))
+                                            .put("certificates", org.json.JSONArray().put(certObj))
+                                    )
+                                    .put(
+                                        "xhttpSettings",
+                                        org.json.JSONObject()
+                                            .put("path", "/tlsxh")
+                                            .put("mode", "auto")
+                                    )
+                            )
+                    )
+                    .put(
+                        org.json.JSONObject()
+                            .put("tag", "in-reality")
+                            .put("listen", "127.0.0.1")
+                            .put("port", portReality)
+                            .put("protocol", "vmess")
+                            .put(
+                                "settings",
+                                org.json.JSONObject().put(
+                                    "clients",
+                                    org.json.JSONArray().put(org.json.JSONObject().put("id", id.toString()))
+                                )
+                            )
+                            .put(
+                                "streamSettings",
+                                org.json.JSONObject()
+                                    .put("network", "xhttp")
+                                    .put("security", "reality")
+                                    .put(
+                                        "realitySettings",
+                                        org.json.JSONObject()
+                                            .put("show", true)
+                                            .put("dest", "127.0.0.1:$portTls")
+                                            .put("serverNames", org.json.JSONArray().put("localhost"))
+                                            .put("privateKey", realityPrivateKey)
+                                            .put("shortIds", org.json.JSONArray().put(realityShortId))
+                                    )
+                                    .put(
+                                        "xhttpSettings",
+                                        org.json.JSONObject()
+                                            .put("path", "/realityxh")
+                                            .put("mode", "auto")
+                                    )
+                            )
+                    )
+            )
+            put(
+                "outbounds",
+                org.json.JSONArray().put(
+                    org.json.JSONObject()
+                        .put("protocol", "freedom")
+                        .put("tag", "direct")
+                        .put(
+                            "settings",
+                            org.json.JSONObject().put(
+                                "finalRules",
+                                org.json.JSONArray().put(org.json.JSONObject().put("action", "allow"))
+                            )
+                        )
+                )
+            )
+        }
+
+        val tempConfig = java.io.File.createTempFile("xray-vmess-xhttp-", ".json")
+        tempConfig.writeText(configJson.toString(2))
+        val process = ProcessBuilder(xrayBin.absolutePath, "run", "-c", tempConfig.absolutePath)
+            .redirectErrorStream(true)
+            .start()
+        val xrayLog = StringBuffer()
+        val logReader = Thread {
+            try {
+                process.inputStream.bufferedReader().forEachLine { line ->
+                    xrayLog.append(line).append('\n')
+                }
+            } catch (_: Exception) {}
+        }.apply { isDaemon = true; start() }
+
+        try {
+            // Wait until Xray is listening on portPlain.
+            var ready = false
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    java.net.Socket("127.0.0.1", portPlain).use { ready = true }
+                    if (ready) break
+                } catch (_: Exception) {
+                    Thread.sleep(50)
+                }
+            }
+            if (!ready) {
+                fail("Xray (${xrayBin.absolutePath}) failed to start:\n$xrayLog")
+            }
+
+            val supportsNoneAndZero = xrayBin.readBytes().let { bytes ->
+                // Xray 26.10+ removed NONE (0x05) and ZERO (0x06) from xray.common.protocol.SecurityType,
+                // whereas Xray <= 26.6 supports them.
+                val pattern = byteArrayOf(0x04, 'N'.code.toByte(), 'O'.code.toByte(), 'N'.code.toByte(), 'E'.code.toByte(), 0x10, 0x05)
+                bytes.indices.any { i ->
+                    i + pattern.size <= bytes.size && pattern.indices.all { j -> bytes[i + j] == pattern[j] }
+                }
+            }
+
+            // 6. REALITY + XHTTP (mode = AUTO -> stream-one)
+            val realitySecurities = buildList {
+                add(VmessSecurity.AES_128_GCM)
+                if (supportsNoneAndZero) add(VmessSecurity.ZERO)
+            }
+            for (realitySec in realitySecurities) {
+                val realityCfg = ProxyConfiguration(
+                    name = "reality-xhttp-$realitySec",
+                    serverAddress = "127.0.0.1",
+                    serverPort = portReality.toUShort(),
+                    uuid = id,
+                    encryption = "none",
+                    outboundProtocol = OutboundProtocol.VMESS,
+                    transport = "xhttp",
+                    security = "reality",
+                    vmessSecurity = realitySec.raw,
+                    reality = com.mythaia.data.model.RealityConfiguration.parse(
+                        mapOf(
+                            "security" to "reality",
+                            "sni" to "localhost",
+                            "pbk" to realityPublicKey,
+                            "sid" to realityShortId,
+                            "fp" to "chrome_133"
+                        )
+                    ),
+                    xhttp = com.mythaia.data.model.XHttpConfiguration(
+                        host = "localhost",
+                        path = "/realityxh",
+                        mode = com.mythaia.data.model.XHttpMode.AUTO
+                    )
+                )
+                verifyVmessEcho(realityCfg, echoPort, realitySec, authenticatedLength = false, label = "${xrayBin.parentFile.name}/reality/auto/$realitySec")
+            }
+
+            // 1. Plain HTTP XHTTP: modes (packet-up, stream-up, stream-one, auto) x ciphers (aes-128-gcm, chacha20-poly1305, auto, none, zero)
+            val securities = buildList {
+                add(VmessSecurity.AES_128_GCM)
+                add(VmessSecurity.CHACHA20_POLY1305)
+                add(VmessSecurity.AUTO)
+                if (supportsNoneAndZero) {
+                    add(VmessSecurity.NONE)
+                    add(VmessSecurity.ZERO)
+                }
+            }
+            for (mode in listOf(
+                com.mythaia.data.model.XHttpMode.PACKET_UP,
+                com.mythaia.data.model.XHttpMode.STREAM_UP,
+                com.mythaia.data.model.XHttpMode.STREAM_ONE,
+                com.mythaia.data.model.XHttpMode.AUTO
+            )) {
+                for (security in securities) {
+                    val cfg = ProxyConfiguration(
+                        name = "plain-$mode-$security",
+                        serverAddress = "127.0.0.1",
+                        serverPort = portPlain.toUShort(),
+                        uuid = id,
+                        encryption = "none",
+                        outboundProtocol = OutboundProtocol.VMESS,
+                        transport = "xhttp",
+                        security = "none",
+                        vmessSecurity = security.raw,
+                        xhttp = com.mythaia.data.model.XHttpConfiguration(
+                            host = "localhost",
+                            path = "/xh",
+                            mode = mode,
+                            noGrpcHeader = mode == com.mythaia.data.model.XHttpMode.STREAM_ONE
+                        )
+                    )
+                    verifyVmessEcho(cfg, echoPort, security, authenticatedLength = false, label = "${xrayBin.parentFile.name}/plain/$mode/$security")
+                }
+            }
+
+            // 2. Authenticated Length (OPTION_AUTHENTICATED_LENGTH = 0x10) with AES-128-GCM and ChaCha20-Poly1305
+            for (security in listOf(VmessSecurity.AES_128_GCM, VmessSecurity.CHACHA20_POLY1305)) {
+                val cfg = ProxyConfiguration(
+                    name = "authlen-$security",
+                    serverAddress = "127.0.0.1",
+                    serverPort = portPlain.toUShort(),
+                    uuid = id,
+                    encryption = "none",
+                    outboundProtocol = OutboundProtocol.VMESS,
+                    transport = "xhttp",
+                    security = "none",
+                    vmessSecurity = security.raw,
+                    xhttp = com.mythaia.data.model.XHttpConfiguration(
+                        host = "localhost",
+                        path = "/xh",
+                        mode = com.mythaia.data.model.XHttpMode.STREAM_ONE,
+                        noGrpcHeader = true
+                    )
+                )
+                verifyVmessEcho(cfg, echoPort, security, authenticatedLength = true, label = "${xrayBin.parentFile.name}/authlen/$security")
+            }
+
+            // 3. Custom metadata placements (session in header, seq in cookie, uplink data in header, noSSEHeader)
+            val placementCfg = ProxyConfiguration(
+                name = "placement",
+                serverAddress = "127.0.0.1",
+                serverPort = portPlacement.toUShort(),
+                uuid = id,
+                encryption = "none",
+                outboundProtocol = OutboundProtocol.VMESS,
+                transport = "xhttp",
+                security = "none",
+                vmessSecurity = VmessSecurity.AES_128_GCM.raw,
+                xhttp = com.mythaia.data.model.XHttpConfiguration(
+                    host = "localhost",
+                    path = "/custom",
+                    mode = com.mythaia.data.model.XHttpMode.PACKET_UP,
+                    sessionPlacement = com.mythaia.data.model.XHttpPlacement.HEADER,
+                    sessionKey = "X-My-Session",
+                    seqPlacement = com.mythaia.data.model.XHttpPlacement.COOKIE,
+                    seqKey = "my_seq",
+                    uplinkDataPlacement = com.mythaia.data.model.XHttpPlacement.HEADER,
+                    uplinkDataKey = "X-Up-Data",
+                    uplinkChunkSize = 256,
+                    noSseHeader = true
+                )
+            )
+            verifyVmessEcho(placementCfg, echoPort, VmessSecurity.AES_128_GCM, authenticatedLength = false, label = "${xrayBin.parentFile.name}/placement")
+
+            // 4. TLS XHTTP (HTTP/2 and HTTP/1.1) across modes
+            for (alpn in listOf(listOf("h2"), listOf("http/1.1"))) {
+                for (mode in listOf(
+                    com.mythaia.data.model.XHttpMode.PACKET_UP,
+                    com.mythaia.data.model.XHttpMode.STREAM_UP,
+                    com.mythaia.data.model.XHttpMode.STREAM_ONE,
+                    com.mythaia.data.model.XHttpMode.AUTO
+                )) {
+                    val tlsCfg = ProxyConfiguration(
+                        name = "tls-$alpn-$mode",
+                        serverAddress = "127.0.0.1",
+                        serverPort = portTls.toUShort(),
+                        uuid = id,
+                        encryption = "none",
+                        outboundProtocol = OutboundProtocol.VMESS,
+                        transport = "xhttp",
+                        security = "tls",
+                        vmessSecurity = VmessSecurity.CHACHA20_POLY1305.raw,
+                        tls = com.mythaia.data.model.TlsConfiguration(
+                            serverName = "localhost",
+                            alpn = alpn,
+                            allowInsecure = true
+                        ),
+                        xhttp = com.mythaia.data.model.XHttpConfiguration(
+                            host = "localhost",
+                            path = "/tlsxh",
+                            mode = mode
+                        )
+                    )
+                    verifyVmessEcho(tlsCfg, echoPort, VmessSecurity.CHACHA20_POLY1305, authenticatedLength = false, label = "${xrayBin.parentFile.name}/tls/$alpn/$mode")
+                }
+            }
+
+            // 5. Split downloadSettings (upload on portTls with stream-up, download on portTls via separate downloadSettings)
+            val splitExtra = """
+                {
+                  "downloadSettings": {
+                    "address": "127.0.0.1",
+                    "port": $portTls,
+                    "network": "xhttp",
+                    "security": "tls",
+                    "tlsSettings": {"serverName": "localhost", "allowInsecure": true, "alpn": ["h2"]},
+                    "xhttpSettings": {"path": "/tlsxh", "host": "localhost"}
+                  }
+                }
+            """.trimIndent()
+            val splitCfg = ProxyConfiguration(
+                name = "split-download",
+                serverAddress = "127.0.0.1",
+                serverPort = portTls.toUShort(),
+                uuid = id,
+                encryption = "none",
+                outboundProtocol = OutboundProtocol.VMESS,
+                transport = "xhttp",
+                security = "tls",
+                vmessSecurity = VmessSecurity.AES_128_GCM.raw,
+                tls = com.mythaia.data.model.TlsConfiguration(
+                    serverName = "localhost",
+                    alpn = listOf("h2"),
+                    allowInsecure = true
+                ),
+                xhttp = com.mythaia.data.model.XHttpConfiguration.fromExtraJson(
+                    host = "localhost",
+                    path = "/tlsxh",
+                    mode = com.mythaia.data.model.XHttpMode.STREAM_UP,
+                    extraJson = splitExtra
+                )
+            )
+            verifyVmessEcho(splitCfg, echoPort, VmessSecurity.AES_128_GCM, authenticatedLength = false, label = "${xrayBin.parentFile.name}/split-download")
+        } catch (e: Throwable) {
+            Thread.sleep(100)
+            throw AssertionError("${e.message}\n--- Xray log ---\n$xrayLog", e)
+        } finally {
+            process.destroyForcibly()
+            process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+            logReader.join(1000)
+            tempConfig.delete()
+        }
+    }
+
+    private fun verifyVmessEcho(
+        config: ProxyConfiguration,
+        echoPort: Int,
+        security: VmessSecurity,
+        authenticatedLength: Boolean,
+        label: String
+    ) {
+        try {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(10_000) {
+                    val transport = com.mythaia.vpn.protocol.StreamTransports.open(config, config.tls, null).transport
+                    val sealed = VmessProtocol.sealRequest(
+                        id = config.uuid,
+                        host = "127.0.0.1",
+                        port = echoPort,
+                        command = VmessProtocol.COMMAND_TCP,
+                        security = security,
+                        authenticatedLength = authenticatedLength
+                    )
+                    val conn = VmessConnection(transport, sealed.session, sealed.bytes)
+                    try {
+                        val payload1 = "Hello VMess+XHTTP [$label]!".toByteArray(Charsets.UTF_8)
+                        val payload2 = ByteArray(8192) { (it * 31 + 7).toByte() }
+                        conn.send(payload1)
+                        val recv1 = readExactFromConn(conn, payload1.size, "payload1")
+                        assertArrayEquals("mismatch on payload1 for $label", payload1, recv1)
+
+                        conn.send(payload2)
+                        val recv2 = readExactFromConn(conn, payload2.size, "payload2")
+                        assertArrayEquals("mismatch on payload2 for $label", payload2, recv2)
+                    } finally {
+                        conn.cancel()
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            throw AssertionError("Failed on $label: ${e.message}", e)
+        }
+    }
+
+    private suspend fun readExactFromConn(conn: VmessConnection, size: Int, stage: String = ""): ByteArray {
+        val out = java.io.ByteArrayOutputStream(size)
+        try {
+            while (out.size() < size) {
+                val chunk = conn.receive() ?: throw IllegalStateException("unexpected EOF at $stage after ${out.size()}/$size bytes")
+                out.write(chunk)
+            }
+        } catch (e: Throwable) {
+            throw IllegalStateException("at $stage (${out.size()}/$size bytes): ${e.message}", e)
+        }
+        return out.toByteArray()
     }
 }
+

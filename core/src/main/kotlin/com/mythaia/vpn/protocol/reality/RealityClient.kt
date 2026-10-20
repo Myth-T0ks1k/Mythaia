@@ -64,9 +64,9 @@ class RealityClient(
     private var serverHandshakeSeqNum: Long = 0
     private var serverCertVerified = false
 
-    // ML-KEM-768 state (API 35+, null on older Android)
+    // ML-KEM-768 state (FIPS 203 via BouncyCastle, works on all Android/JVM versions)
     private var mlkemEncapsulationKey: ByteArray? = null
-    private var mlkemPrivateKey: java.security.PrivateKey? = null
+    private var mlkemPrivateKey: org.bouncycastle.pqc.crypto.mlkem.MLKEMPrivateKeyParameters? = null
 
     /**
      * Connects to a Reality server and performs the TLS handshake.
@@ -1069,58 +1069,33 @@ class RealityClient(
     }
 
     /**
-     * Tries to generate an ML-KEM-768 keypair on Android 15+ (API 35).
-     * Returns the 1184-byte raw encapsulation key, or null on older Android.
-     * When non-null, sets [mlkemPrivateKey] for later decapsulation.
+     * Generates an ML-KEM-768 keypair via BouncyCastle (FIPS 203).
+     * Returns the 1184-byte raw encapsulation key and sets [mlkemPrivateKey]
+     * for later decapsulation.
      */
     private fun tryGenerateMLKEMKeyPair(): ByteArray? {
-        // `mlkemSupported` probes for the provider once and caches the answer.
-        if (!mlkemSupported) return null
-        return generateMLKEMKeyPairImpl()
-    }
-
-    private fun generateMLKEMKeyPairImpl(): ByteArray? {
         return try {
-            val kpg = java.security.KeyPairGenerator.getInstance("ML-KEM-768")
-            val kp = kpg.generateKeyPair()
-            mlkemPrivateKey = kp.private
-            // Raw encapsulation key is the last 1184 bytes of the DER SubjectPublicKeyInfo
-            val encoded = kp.public.encoded
-            if (encoded.size >= 1184) encoded.copyOfRange(encoded.size - 1184, encoded.size) else null
+            val generator = org.bouncycastle.pqc.crypto.mlkem.MLKEMKeyPairGenerator()
+            generator.init(
+                org.bouncycastle.pqc.crypto.mlkem.MLKEMKeyGenerationParameters(
+                    SecureRandom(),
+                    org.bouncycastle.pqc.crypto.mlkem.MLKEMParameters.ml_kem_768
+                )
+            )
+            val kp = generator.generateKeyPair()
+            mlkemPrivateKey = kp.private as org.bouncycastle.pqc.crypto.mlkem.MLKEMPrivateKeyParameters
+            (kp.public as org.bouncycastle.pqc.crypto.mlkem.MLKEMPublicKeyParameters).encoded
         } catch (e: Exception) {
             logger.debug("[Reality] ML-KEM keypair unavailable: ${e.message}")
             null
         }
     }
 
-    companion object {
-        /**
-         * Whether ML-KEM-768 is usable here. Probed once on first access
-         * (Android 15 / API 35 and Java 24 add the provider). Caching here avoids re-logging
-         * "ML-KEM keypair unavailable" on every Reality handshake on older devices.
-         */
-        private val mlkemSupported: Boolean by lazy {
-            runCatching {
-                java.security.KeyPairGenerator.getInstance("ML-KEM-768")
-                true
-            }.getOrElse {
-                MythaiaLogger("Reality").debug("ML-KEM-768 unavailable on this device: ${it.message}")
-                false
-            }
-        }
-    }
-
     /** Returns the 32-byte shared secret, or null if unavailable. */
     private fun mlkemDecapsulate(ciphertext: ByteArray): ByteArray? {
         val privKey = mlkemPrivateKey ?: return null
-        return mlkemDecapsulateImpl(ciphertext, privKey)
-    }
-
-    private fun mlkemDecapsulateImpl(ciphertext: ByteArray, privKey: java.security.PrivateKey): ByteArray? {
         return try {
-            val kem = javax.crypto.KEM.getInstance("ML-KEM-768")
-            val decapsulator = kem.newDecapsulator(privKey)
-            decapsulator.decapsulate(ciphertext).encoded
+            org.bouncycastle.pqc.crypto.mlkem.MLKEMExtractor(privKey).extractSecret(ciphertext)
         } catch (e: Exception) {
             logger.warning("[Reality] ML-KEM decapsulation failed: ${e.message}")
             null

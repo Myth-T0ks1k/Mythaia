@@ -128,17 +128,23 @@ class XrayJsonImporterTest {
     }
 
     @Test
-    fun `a vmess outbound with Reality is refused rather than imported as plaintext`() {
+    fun `a vmess outbound with Reality and XHTTP imports`() {
         val json = """
-        {"protocol":"vmess","tag":"r","settings":{"vnext":[{"address":"1.2.3.4","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},
-         "streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverName":"www.microsoft.com",
-           "publicKey":"SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc","shortId":"6ba85179e30d4fc2"}}}"""
-        try {
-            XrayJsonImporter.parse(json)
-            fail("expected a refusal")
-        } catch (e: ProxyError.InvalidUrl) {
-            assertTrue(e.message!!.contains("Reality"))
-        }
+        {"outbounds":[
+          {"protocol":"vmess","tag":"r","settings":{"vnext":[{"address":"1.2.3.4","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},
+           "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"serverName":"www.microsoft.com",
+             "publicKey":"SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc","shortId":"6ba85179e30d4fc2"},
+             "xhttpSettings":{"path":"/xh","host":"www.microsoft.com","mode":"stream-one","noGRPCHeader":true,"scMaxBufferedPosts":50}}}
+        ]}"""
+        val c = XrayJsonImporter.parse(json).single()
+        assertEquals(OutboundProtocol.VMESS, c.outboundProtocol)
+        assertEquals("reality", c.security)
+        assertEquals("www.microsoft.com", c.reality?.serverName)
+        assertEquals("xhttp", c.transport)
+        assertEquals("/xh", c.xhttp?.path)
+        assertEquals("stream-one", c.xhttp?.mode?.raw)
+        assertEquals(true, c.xhttp?.noGrpcHeader)
+        assertEquals(50, c.xhttp?.scMaxBufferedPosts)
     }
 
     @Test

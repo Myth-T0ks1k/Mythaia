@@ -95,11 +95,14 @@ object ClashProxyParser {
         // Transport: tcp (default) or ws. Anything else (h2, grpc, httpupgrade,
         // xhttp, kcp) is skipped rather than imported as TCP, which would give
         // a server that can never connect.
-        val network = node.optString("network").ifEmpty { "tcp" }
+        val network = node.optString("network").ifEmpty { "tcp" }.lowercase()
         val transport = when (network) {
             "tcp" -> "tcp"
             "ws" -> "ws"
+            "httpupgrade" -> "httpupgrade"
             "h2", "http" -> "http"
+            "grpc" -> "grpc"
+            "xhttp", "splithttp" -> "xhttp"
             else -> return null
         }
 
@@ -119,6 +122,7 @@ object ClashProxyParser {
         }
 
         val httpConfig = if (transport == "http") parseH2Opts(node) else null
+        val grpcConfig = if (transport == "grpc") parseGrpcOpts(node) else null
 
         // Common TLS/Reality fields
         val serverName = node.optString("servername", "").takeIf { it.isNotEmpty() }
@@ -158,21 +162,31 @@ object ClashProxyParser {
             )
         }
 
+        val xhttpConfig = if (transport == "xhttp") parseXHttpOpts(node, serverName) else null
+
         // Build WebSocket / HTTPUpgrade configuration
         var wsConfig: WebSocketConfiguration? = null
         var httpUpgradeConfig: HttpUpgradeConfiguration? = null
-        if (transport == "ws") {
+        if (transport == "ws" || transport == "httpupgrade") {
             var wsPath = "/"
             var wsHost = server
             val wsHeaders = mutableMapOf<String, String>()
             var maxEarlyData = 0
             var earlyDataHeaderName = ""
-            var isHttpUpgrade = false
+            var isHttpUpgrade = transport == "httpupgrade"
 
-            node.optJSONObject("ws-opts")?.let { woNode ->
+            val optsNode = if (transport == "httpupgrade") {
+                node.optJSONObject("httpupgrade-opts") ?: node.optJSONObject("ws-opts")
+            } else {
+                node.optJSONObject("ws-opts")
+            }
+            optsNode?.let { woNode ->
                 wsPath = woNode.optString("path", "/")
+                if (woNode.has("host")) {
+                    woNode.optString("host", "").takeIf { it.isNotEmpty() }?.let { wsHost = it }
+                }
                 // v2ray-http-upgrade flag: treat as HTTPUpgrade instead of WebSocket
-                isHttpUpgrade = woNode.optBoolean("v2ray-http-upgrade", false)
+                if (woNode.optBoolean("v2ray-http-upgrade", false)) isHttpUpgrade = true
                 maxEarlyData = woNode.optInt("max-early-data", 0)
                 earlyDataHeaderName = woNode.optString("early-data-header-name", "")
                 woNode.optJSONObject("headers")?.let { headers ->
@@ -212,7 +226,9 @@ object ClashProxyParser {
             reality = realityConfig,
             websocket = wsConfig,
             httpUpgrade = httpUpgradeConfig,
-            httpTransport = httpConfig
+            httpTransport = httpConfig,
+            grpc = grpcConfig,
+            xhttp = xhttpConfig
         )
     }
 
@@ -222,6 +238,56 @@ object ClashProxyParser {
         var path = opts.optString("path", "/").trim().ifEmpty { "/" }
         if (!path.startsWith("/")) path = "/$path"
         return com.mythaia.data.model.HttpTransportConfiguration(hosts = hosts, path = path)
+    }
+
+    private fun parseGrpcOpts(node: JSONObject): com.mythaia.vpn.protocol.grpc.GrpcConfiguration {
+        val opts = node.optJSONObject("grpc-opts")
+            ?: return com.mythaia.vpn.protocol.grpc.GrpcConfiguration(serviceName = "")
+        val serviceName = opts.optString("grpc-service-name", "")
+            .ifEmpty { opts.optString("service-name", "") }
+        val authority = opts.optString("authority", "")
+        val multiMode = opts.optBoolean("multi-mode", false) || opts.optBoolean("multiMode", false)
+        return com.mythaia.vpn.protocol.grpc.GrpcConfiguration(
+            serviceName = serviceName,
+            authority = authority,
+            multiMode = multiMode
+        )
+    }
+
+    private fun parseXHttpOpts(node: JSONObject, defaultHost: String): com.mythaia.data.model.XHttpConfiguration {
+        val opts = node.optJSONObject("xhttp-opts")
+            ?: node.optJSONObject("splithttp-opts")
+            ?: return com.mythaia.data.model.XHttpConfiguration(host = defaultHost)
+        val headersObj = opts.optJSONObject("headers")
+        val headerHost = headersObj?.keys()?.asSequence()
+            ?.firstOrNull { it.equals("Host", ignoreCase = true) }
+            ?.let { headersObj.optString(it, "") }
+            ?.takeIf { it.isNotEmpty() }
+        val host = XrayJsonImporter.stringList(opts.opt("host")).firstOrNull()
+            ?: headerHost
+            ?: defaultHost
+        val path = opts.optString("path", "/").ifEmpty { "/" }
+        val mode = com.mythaia.data.model.XHttpMode.fromRaw(opts.optString("mode", "auto"))
+
+        val extra = opts.optJSONObject("extra")?.let { JSONObject(it.toString()) } ?: JSONObject()
+        if (headersObj != null && !extra.has("headers")) {
+            extra.put("headers", headersObj)
+        }
+        if ((opts.optBoolean("no-grpc-header", false) || opts.optBoolean("noGRPCHeader", false)) && !extra.has("noGRPCHeader")) {
+            extra.put("noGRPCHeader", true)
+        }
+        if ((opts.optBoolean("no-sse-header", false) || opts.optBoolean("noSSEHeader", false)) && !extra.has("noSSEHeader")) {
+            extra.put("noSSEHeader", true)
+        }
+        opts.optJSONObject("xmux")?.let { if (!extra.has("xmux")) extra.put("xmux", it) }
+        (opts.optJSONObject("download-settings") ?: opts.optJSONObject("downloadSettings"))?.let {
+            if (!extra.has("downloadSettings")) extra.put("downloadSettings", it)
+        }
+        return if (extra.length() > 0) {
+            com.mythaia.data.model.XHttpConfiguration.fromExtraJson(host, path, mode, extra.toString())
+        } else {
+            com.mythaia.data.model.XHttpConfiguration(host = host, path = path, mode = mode)
+        }
     }
 
     /**
@@ -276,21 +342,25 @@ object ClashProxyParser {
         if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
         val port = portInt.toUShort()
 
-        val network = node.optString("network", "tcp")
+        val network = node.optString("network", "tcp").lowercase()
         val transport = when (network) {
             "tcp" -> "tcp"
+            "ws" -> "ws"
+            "httpupgrade" -> "httpupgrade"
             "h2", "http" -> "http"
+            "grpc" -> "grpc"
+            "xhttp", "splithttp" -> "xhttp"
             else -> return null
         }
 
         if (node.optJSONObject("reality-opts") != null) return null
         if (node.optJSONObject("ech-opts") != null) return null
-        if (node.optJSONObject("grpc-opts") != null) return null
         node.optJSONObject("ss-opts")?.let {
             if (it.optBoolean("enabled", false)) return null
         }
 
         val httpConfig = if (transport == "http") parseH2Opts(node) else null
+        val grpcConfig = if (transport == "grpc") parseGrpcOpts(node) else null
 
         val sni = node.optString("servername", "").takeIf { it.isNotEmpty() }
             ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
@@ -309,16 +379,48 @@ object ClashProxyParser {
             fingerprint = fingerprint
         )
 
+        val xhttpConfig = if (transport == "xhttp") parseXHttpOpts(node, sni) else null
+        var wsConfig: WebSocketConfiguration? = null
+        var httpUpgradeConfig: HttpUpgradeConfiguration? = null
+        if (transport == "ws" || transport == "httpupgrade") {
+            val optsNode = if (transport == "httpupgrade") {
+                node.optJSONObject("httpupgrade-opts") ?: node.optJSONObject("ws-opts")
+            } else {
+                node.optJSONObject("ws-opts")
+            }
+            val wsHeaders = mutableMapOf<String, String>()
+            var wsHost = sni
+            optsNode?.optJSONObject("headers")?.let { headers ->
+                for (key in headers.keys()) {
+                    val value = headers.optString(key, "")
+                    wsHeaders[key] = value
+                    if (key.equals("Host", ignoreCase = true)) wsHost = value
+                }
+            }
+            val wsPath = optsNode?.optString("path", "/") ?: "/"
+            val isHttpUpgrade = transport == "httpupgrade" || optsNode?.optBoolean("v2ray-http-upgrade", false) == true
+            if (isHttpUpgrade) {
+                httpUpgradeConfig = HttpUpgradeConfiguration(host = wsHost, path = wsPath, headers = wsHeaders)
+            } else {
+                wsConfig = WebSocketConfiguration(host = wsHost, path = wsPath, headers = wsHeaders)
+            }
+        }
+        val effectiveTransport = if (httpUpgradeConfig != null) "httpupgrade" else transport
+
         return ProxyConfiguration(
             name = name,
             serverAddress = server,
             serverPort = port,
             uuid = UUID.randomUUID(), // placeholder, not used for Trojan
             encryption = "none",
-            transport = transport,
+            transport = effectiveTransport,
             security = "tls",
             tls = tls,
+            websocket = wsConfig,
+            httpUpgrade = httpUpgradeConfig,
             httpTransport = httpConfig,
+            grpc = grpcConfig,
+            xhttp = xhttpConfig,
             outboundProtocol = OutboundProtocol.TROJAN,
             trojanPassword = password,
             trojanTls = tls
@@ -381,10 +483,7 @@ object ClashProxyParser {
     /**
      * Clash `type: vmess`.
      *
-     * `alterId` must be 0. A non-zero value selects the legacy
-     * MD5-authenticated header that v2ray removed in 2022; importing such a
-     * node would produce an entry that can never authenticate, so it is
-     * skipped instead.
+     * Non-zero `alterId` values are coerced to 0 (AEAD), matching Xray-core.
      */
     private fun parseVmessProxy(node: JSONObject): ProxyConfiguration? {
         val name = node.optString("name").takeIf { it.isNotEmpty() } ?: return null
@@ -396,37 +495,37 @@ object ClashProxyParser {
         if (portInt <= 0 || portInt > UShort.MAX_VALUE.toInt()) return null
         val port = portInt.toUShort()
 
-        if (node.optInt("alterId", 0) != 0) return null
-
-        // Reality is a different handshake, not a variant of TLS. Importing the
-        // node without it would produce an entry that looks fine and can never
-        // connect, so it is skipped and counted as unsupported instead.
-        if (node.optJSONObject("reality-opts") != null) return null
-
-        val network = node.optString("network", "tcp")
+        val network = node.optString("network", "tcp").lowercase()
         val transport = when (network) {
             "ws" -> "ws"
+            "httpupgrade" -> "httpupgrade"
             "tcp" -> "tcp"
             "h2", "http" -> "http"
+            "grpc" -> "grpc"
+            "xhttp", "splithttp" -> "xhttp"
             else -> return null
         }
 
-        // `v2ray-http-upgrade` means the node speaks HTTP Upgrade, not
-        // WebSocket: no frame headers and no masking. Importing it as a
-        // WebSocket would put frame headers on the wire that the server does
-        // not expect.
-        if (node.optJSONObject("ws-opts")?.optBoolean("v2ray-http-upgrade", false) == true) {
-            return null
-        }
-
         val useTls = node.optBoolean("tls", false)
-        val wsOpts = node.optJSONObject("ws-opts")
+        val realityOpts = node.optJSONObject("reality-opts")
+        val hasReality = realityOpts != null
+
+        val wsOpts = if (transport == "httpupgrade") {
+            node.optJSONObject("httpupgrade-opts") ?: node.optJSONObject("ws-opts")
+        } else {
+            node.optJSONObject("ws-opts")
+        }
         val wsHeaders = wsOpts?.optJSONObject("headers")
-        val wsHost = wsHeaders?.optString("Host")?.takeIf { it.isNotEmpty() }
+        val wsHost = wsOpts?.optString("host")?.takeIf { it.isNotEmpty() }
+            ?: wsHeaders?.optString("Host")?.takeIf { it.isNotEmpty() }
             ?: wsHeaders?.optString("host")?.takeIf { it.isNotEmpty() }
         val httpConfig = if (transport == "http") parseH2Opts(node) else null
+        val grpcConfig = if (transport == "grpc") parseGrpcOpts(node) else null
 
-        val websocket = if (transport == "ws") {
+        val isHttpUpgrade = transport == "httpupgrade" ||
+            (transport == "ws" && wsOpts?.optBoolean("v2ray-http-upgrade", false) == true)
+
+        val websocket = if (transport == "ws" && !isHttpUpgrade) {
             WebSocketConfiguration(
                 host = wsHost ?: server,
                 path = wsOpts?.optString("path")?.takeIf { it.isNotEmpty() } ?: "/"
@@ -434,21 +533,56 @@ object ClashProxyParser {
         } else {
             null
         }
+        val httpUpgrade = if (isHttpUpgrade) {
+            HttpUpgradeConfiguration(
+                host = wsHost ?: server,
+                path = wsOpts?.optString("path")?.takeIf { it.isNotEmpty() } ?: "/"
+            )
+        } else null
 
-        val tls = if (useTls) {
+        val sni = node.optString("servername", "").takeIf { it.isNotEmpty() }
+            ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
+            ?: wsHost
+            ?: httpConfig?.hosts?.firstOrNull()
+            ?: server
+        val fingerprint = TlsFingerprint.fromRaw(
+            mapFingerprint(node.optString("client-fingerprint", "").takeIf { it.isNotEmpty() })
+        )
+        val alpn = node.optJSONArray("alpn")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
+        }?.takeIf { it.isNotEmpty() }
+
+        var realityConfig: RealityConfiguration? = null
+        if (realityOpts != null) {
+            val pubKeyStr = realityOpts.optString("public-key", "")
+            val shortIdStr = realityOpts.optString("short-id", "")
+            val publicKey = pubKeyStr.base64UrlToByteArrayOrNull()
+            if (publicKey == null || publicKey.size != 32) return null
+            realityConfig = RealityConfiguration(
+                serverName = sni,
+                publicKey = publicKey,
+                shortId = shortIdStr.hexToByteArrayOrNull() ?: byteArrayOf(),
+                fingerprint = fingerprint
+            )
+        }
+
+        val tls = if (useTls && !hasReality) {
             TlsConfiguration(
-                serverName = node.optString("servername", "").takeIf { it.isNotEmpty() }
-                    ?: node.optString("sni", "").takeIf { it.isNotEmpty() }
-                    ?: wsHost
-                    ?: httpConfig?.hosts?.firstOrNull()
-                    ?: server,
+                serverName = sni,
+                alpn = alpn,
                 allowInsecure = node.optBoolean("skip-cert-verify", false),
-                fingerprint = TlsFingerprint.fromRaw(
-                    mapFingerprint(node.optString("client-fingerprint", "").takeIf { it.isNotEmpty() })
-                )
+                fingerprint = fingerprint
             )
         } else {
             null
+        }
+
+        val xhttpConfig = if (transport == "xhttp") parseXHttpOpts(node, sni) else null
+        val effectiveTransport = if (httpUpgrade != null) "httpupgrade" else transport
+        val security = when {
+            hasReality -> "reality"
+            useTls -> "tls"
+            else -> "none"
         }
 
         return ProxyConfiguration(
@@ -457,11 +591,15 @@ object ClashProxyParser {
             serverPort = port,
             uuid = uuid,
             encryption = "none",
-            transport = transport,
-            security = if (useTls) "tls" else "none",
+            transport = effectiveTransport,
+            security = security,
             tls = tls,
+            reality = realityConfig,
             websocket = websocket,
+            httpUpgrade = httpUpgrade,
             httpTransport = httpConfig,
+            grpc = grpcConfig,
+            xhttp = xhttpConfig,
             outboundProtocol = OutboundProtocol.VMESS,
             vmessSecurity = node.optString("cipher", "").takeIf { it.isNotEmpty() && it != "auto" }
         )
