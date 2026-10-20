@@ -160,7 +160,7 @@ class NowhereClient(
                 // have acted on the request; a replaced one told us it did
                 // not, which makes the retry safe regardless.
                 val replaySafe = !carriesPayload || replaced
-                if (retriesLeft > 0 && replaySafe && (replaced || stale)) {
+                if (retriesLeft > 0 && tunnel == null && replaySafe && (replaced || stale)) {
                     retriesLeft -= 1
                     logger.debug("[Nowhere] Retrying $host:$port after: ${e.message}")
                     continue
@@ -264,7 +264,7 @@ class NowhereClient(
                 val stale = e is NowhereSession.Unavailable
                 if (session != null && (replaced || stale)) NowhereSession.invalidate(session)
 
-                if (retriesLeft > 0 && (replaced || stale)) {
+                if (retriesLeft > 0 && tunnel == null && (replaced || stale)) {
                     retriesLeft -= 1
                     logger.debug("[Nowhere] Retrying UDP $host:$port after: ${e.message}")
                     continue
@@ -313,20 +313,29 @@ class NowhereClient(
         session: NowhereSession?,
         openRequest: ByteArray,
         attachRequest: ByteArray
-    ): Pair<OpenedCarrierFlow, OpenedCarrierFlow> = coroutineScope {
+    ): Pair<OpenedCarrierFlow, OpenedCarrierFlow> {
         var openedUp: OpenedCarrierFlow? = null
         var openedDown: OpenedCarrierFlow? = null
-        try {
-            val upJob = async {
-                openStreamHalf(settings.uplink, settings, session, openRequest).also { openedUp = it }
+        val refLock = Any()
+        return try {
+            coroutineScope {
+                val upJob = async {
+                    openStreamHalf(settings.uplink, settings, session, openRequest).also {
+                        synchronized(refLock) { openedUp = it }
+                    }
+                }
+                val downJob = async {
+                    openStreamHalf(settings.downlink, settings, session, attachRequest).also {
+                        synchronized(refLock) { openedDown = it }
+                    }
+                }
+                Pair(upJob.await(), downJob.await())
             }
-            val downJob = async {
-                openStreamHalf(settings.downlink, settings, session, attachRequest).also { openedDown = it }
-            }
-            Pair(upJob.await(), downJob.await())
         } catch (e: Exception) {
-            openedUp?.close()
-            openedDown?.close()
+            synchronized(refLock) {
+                openedUp?.close()
+                openedDown?.close()
+            }
             throw e
         }
     }
@@ -338,52 +347,69 @@ class NowhereClient(
         openRequest: ByteArray,
         attachRequest: ByteArray,
         onClosed: () -> Unit
-    ): ProxyConnection = coroutineScope {
+    ): ProxyConnection {
+        val refLock = Any()
         if (settings.uplink == NowhereNetwork.TCP && settings.downlink == NowhereNetwork.UDP) {
             var upTls: OpenedCarrierFlow? = null
             var downQuic: NowhereSession.OpenedUdpFlow? = null
-            try {
-                val upJob = async { openTlsFlow(settings, openRequest).also { upTls = it } }
-                val downJob = async { session.openUdpFlow(flowId, attachRequest).also { downQuic = it } }
-                val up = upJob.await()
-                val down = downJob.await()
-                if (up.pending.isNotEmpty()) {
-                    throw NowhereError.ProtocolViolation(
-                        "Unexpected downlink payload on Nowhere UDP uplink stream"
+            return try {
+                coroutineScope {
+                    val upJob = async {
+                        openTlsFlow(settings, openRequest).also { synchronized(refLock) { upTls = it } }
+                    }
+                    val downJob = async {
+                        session.openUdpFlow(flowId, attachRequest).also { synchronized(refLock) { downQuic = it } }
+                    }
+                    val up = upJob.await()
+                    val down = downJob.await()
+                    if (up.pending.isNotEmpty()) {
+                        throw NowhereError.ProtocolViolation(
+                            "Unexpected downlink payload on Nowhere UDP uplink stream"
+                        )
+                    }
+                    val streamUp = NowhereUdpStreamConnection(up.connection, ByteArray(0), up.onClosed)
+                    val quicDown = NowhereQuicUdpConnection(down) {}
+                    NowhereAsymmetricStreamConnection(
+                        uplink = streamUp,
+                        downlink = quicDown,
+                        pending = ByteArray(0),
+                        onClosed = onClosed
                     )
                 }
-                val streamUp = NowhereUdpStreamConnection(up.connection, ByteArray(0), up.onClosed)
-                val quicDown = NowhereQuicUdpConnection(down) {}
-                NowhereAsymmetricStreamConnection(
-                    uplink = streamUp,
-                    downlink = quicDown,
-                    pending = ByteArray(0),
-                    onClosed = onClosed
-                )
             } catch (e: Exception) {
-                upTls?.close()
-                downQuic?.close(sendCloseControl = true)
+                synchronized(refLock) {
+                    upTls?.close()
+                    downQuic?.close(sendCloseControl = true)
+                }
                 throw e
             }
         } else {
             var upQuic: NowhereSession.OpenedUdpFlow? = null
             var downTls: OpenedCarrierFlow? = null
-            try {
-                val upJob = async { session.openUdpFlow(flowId, openRequest).also { upQuic = it } }
-                val downJob = async { openTlsFlow(settings, attachRequest).also { downTls = it } }
-                val up = upJob.await()
-                val down = downJob.await()
-                val quicUp = NowhereQuicUdpConnection(up) {}
-                val streamDown = NowhereUdpStreamConnection(down.connection, down.pending, down.onClosed)
-                NowhereAsymmetricStreamConnection(
-                    uplink = quicUp,
-                    downlink = streamDown,
-                    pending = ByteArray(0),
-                    onClosed = onClosed
-                )
+            return try {
+                coroutineScope {
+                    val upJob = async {
+                        session.openUdpFlow(flowId, openRequest).also { synchronized(refLock) { upQuic = it } }
+                    }
+                    val downJob = async {
+                        openTlsFlow(settings, attachRequest).also { synchronized(refLock) { downTls = it } }
+                    }
+                    val up = upJob.await()
+                    val down = downJob.await()
+                    val quicUp = NowhereQuicUdpConnection(up) {}
+                    val streamDown = NowhereUdpStreamConnection(down.connection, down.pending, down.onClosed)
+                    NowhereAsymmetricStreamConnection(
+                        uplink = quicUp,
+                        downlink = streamDown,
+                        pending = ByteArray(0),
+                        onClosed = onClosed
+                    )
+                }
             } catch (e: Exception) {
-                upQuic?.close(sendCloseControl = true)
-                downTls?.close()
+                synchronized(refLock) {
+                    upQuic?.close(sendCloseControl = true)
+                    downTls?.close()
+                }
                 throw e
             }
         }
@@ -736,9 +762,14 @@ class NowhereStreamConnection(
             }
         }
         if (closed.get()) return null
-        val data = inner.receiveRaw()
-        if (data == null) finish()
-        return data
+        return try {
+            val data = inner.receiveRaw()
+            if (data == null) finish()
+            data
+        } catch (e: Throwable) {
+            finish()
+            throw e
+        }
     }
 
     override fun cancel() {
@@ -791,11 +822,16 @@ class NowhereAsymmetricStreamConnection(
             }
         }
         if (closed.get()) return null
-        val data = downlink.receiveRaw()
-        if (data == null) {
+        return try {
+            val data = downlink.receiveRaw()
+            if (data == null) {
+                finish()
+            }
+            data
+        } catch (e: Throwable) {
             finish()
+            throw e
         }
-        return data
     }
 
     override fun cancel() {

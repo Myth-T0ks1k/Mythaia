@@ -130,6 +130,24 @@ class ShareLinkTest {
         }
     }
 
+    @Test
+    fun `vmess over quic does not mistake the quic security field for sni and round-trips`() {
+        // v2rayN stores the QUIC packet-encryption mode ("none") in `host`;
+        // without an explicit `sni` the server name must fall back to `add`.
+        val config = ProxyConfiguration.fromUrl(vmessLink(
+            "v" to "2", "ps" to "Quic", "add" to "example.com", "port" to "443",
+            "id" to "b1a2c3d4-0000-4000-8000-000000000001", "aid" to "0",
+            "net" to "quic", "type" to "none", "host" to "none", "tls" to "tls"
+        ))
+        assertEquals("quic", config.transport)
+        assertEquals("example.com", config.tls?.serverName)
+
+        val reparsed = ProxyConfiguration.fromUrl(config.toUrl())
+        assertEquals("quic", reparsed.transport)
+        assertEquals("example.com", reparsed.tls?.serverName)
+        assertEquals(config.uuid, reparsed.uuid)
+    }
+
     // MARK: - VLESS
 
     @Test

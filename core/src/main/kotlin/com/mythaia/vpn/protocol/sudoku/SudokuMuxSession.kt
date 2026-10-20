@@ -68,7 +68,8 @@ internal class SudokuMuxSession private constructor(
     suspend fun dialTcp(
         host: String,
         port: Int,
-        initialData: ByteArray?
+        initialData: ByteArray?,
+        closesSessionOnCancel: Boolean = false
     ): SudokuMuxStreamConnection {
         if (!isConnected) {
             throw SudokuError.StreamClosed("Sudoku mux session is closed")
@@ -82,7 +83,8 @@ internal class SudokuMuxSession private constructor(
         val streamConn = SudokuMuxStreamConnection(
             muxSession = this,
             streamId = streamId,
-            outerTlsVersion = session.outerTlsVersion
+            outerTlsVersion = session.outerTlsVersion,
+            closesSessionOnCancel = closesSessionOnCancel
         )
         streams[streamId] = streamConn
         try {
@@ -260,7 +262,8 @@ internal class SudokuMuxSession private constructor(
 class SudokuMuxStreamConnection internal constructor(
     private val muxSession: SudokuMuxSession,
     val streamId: Long,
-    override val outerTlsVersion: TlsVersion?
+    override val outerTlsVersion: TlsVersion?,
+    private val closesSessionOnCancel: Boolean = false
 ) : ProxyConnection() {
 
     private sealed class StreamEvent {
@@ -323,7 +326,11 @@ class SudokuMuxStreamConnection internal constructor(
         if (!closed.compareAndSet(false, true)) return
         val shouldSendClose = !remoteClosed.get()
         events.close()
-        muxSession.closeStreamFromClient(streamId, sendCloseFrame = shouldSendClose)
+        if (closesSessionOnCancel) {
+            muxSession.close()
+        } else {
+            muxSession.closeStreamFromClient(streamId, sendCloseFrame = shouldSendClose)
+        }
         scope.cancel()
     }
 
@@ -421,7 +428,7 @@ internal object SudokuMuxPool {
             if (existing != null && existing.isConnected) {
                 existing
             } else {
-                sessions.remove(key)
+                sessions.remove(key)?.close()
                 lateinit var created: SudokuMuxSession
                 created = SudokuMuxSession.open(
                     settings = settings,

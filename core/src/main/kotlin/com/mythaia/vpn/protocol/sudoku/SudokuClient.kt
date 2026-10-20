@@ -41,7 +41,12 @@ class SudokuClient(
             return try {
                 if (tunnel != null) {
                     val mux = SudokuMuxSession.open(settings, tunnel, rawTransportFactory)
-                    mux.dialTcp(host, port, initialData)
+                    try {
+                        mux.dialTcp(host, port, initialData, closesSessionOnCancel = true)
+                    } catch (e: Exception) {
+                        mux.close()
+                        throw e
+                    }
                 } else {
                     val key = SudokuMuxPool.keyFor(configuration, sudoku)
                     SudokuMuxPool.dialTcp(key, settings, host, port, initialData, rawTransportFactory)

@@ -2192,7 +2192,7 @@ data class ProxyConfiguration(
                 throw ProxyError.InvalidUrl("vmess: quic transport requires TLS")
             }
             val sni = json.optString("sni").takeIf { it.isNotEmpty() }
-                ?: json.optString("host").substringBefore(',').trim().takeIf { it.isNotEmpty() }
+                ?: json.optString("host").takeIf { transport != "quic" }?.substringBefore(',')?.trim()?.takeIf { it.isNotEmpty() }
                 ?: host
             val alpn = json.optString("alpn").takeIf { it.isNotEmpty() }?.split(",")
             // v2rayN writes this either way round depending on its version.

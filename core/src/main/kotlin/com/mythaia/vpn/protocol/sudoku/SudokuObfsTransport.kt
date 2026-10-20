@@ -57,8 +57,10 @@ internal class SudokuObfsTransport(
     /** Encodes [plain] and writes the puzzles to the wire. */
     suspend fun send(plain: ByteArray) {
         if (plain.isEmpty()) return
-        val encoded = sendMutex.withLock { uplink.encode(plain, rng, threshold) }
-        transport.send(encoded)
+        sendMutex.withLock {
+            val encoded = uplink.encode(plain, rng, threshold)
+            transport.send(encoded)
+        }
     }
 
     /**

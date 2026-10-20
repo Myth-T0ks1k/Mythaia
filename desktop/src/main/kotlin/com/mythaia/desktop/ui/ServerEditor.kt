@@ -303,8 +303,9 @@ private fun ServerEditorForm(
         (hyDown.isBlank() || hyDown.trim().toIntOrNull()?.let { it > 0 } == true) &&
         (hyUp.isBlank() == hyDown.isBlank())
     // Port hopping: a list of more than one port, and an interval only with it.
-    val hopPorts = PortUnion.parse(hyPorts)?.takeIf { it.hops }
-    val hopPortsValid = hyPorts.isBlank() || hopPorts != null
+    val parsedHopPorts = PortUnion.parse(hyPorts)
+    val hopPorts = parsedHopPorts?.takeIf { it.hops }
+    val hopPortsValid = hyPorts.isBlank() || parsedHopPorts != null
     val hopInterval = HopInterval.parse(hyHop)
     val hopIntervalValid = hyHop.isBlank() || hopInterval != null
 

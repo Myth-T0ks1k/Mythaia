@@ -146,6 +146,32 @@ sb_in = [
     {"type": "shadowsocks", "tag": "ss2022-256", "listen": "127.0.0.1", "listen_port": 21007, "method": "2022-blake3-aes-256-gcm", "password": SS2022_256},
     {"type": "shadowsocks", "tag": "ss2022-chacha", "listen": "127.0.0.1", "listen_port": 21008, "method": "2022-blake3-chacha20-poly1305", "password": SS2022_256},
 ]
+
+# sing-box V2Ray transports: `http` (HTTP/2 over TLS, HTTP/1.1 in the clear) and `quic`.
+# The servers check host and path, so a client sending the wrong ones fails here.
+SB_H2 = {"type": "http", "host": [SNI], "path": "/h2"}
+sb_in += [
+    {"type": "vless", "tag": "vless-h2", "listen": "127.0.0.1", "listen_port": 21020, "users": [{"uuid": UUID}], "tls": sb_tls, "transport": SB_H2},
+    {"type": "vless", "tag": "vless-h1", "listen": "127.0.0.1", "listen_port": 21021, "users": [{"uuid": UUID}], "transport": SB_H2},
+    {"type": "vmess", "tag": "vmess-h2", "listen": "127.0.0.1", "listen_port": 21022, "users": [{"uuid": UUID}], "tls": sb_tls, "transport": SB_H2},
+    {"type": "trojan", "tag": "trojan-h2", "listen": "127.0.0.1", "listen_port": 21023, "users": [{"password": PW}], "tls": sb_tls, "transport": SB_H2},
+    {"type": "vless", "tag": "vless-quic", "listen": "127.0.0.1", "listen_port": 21024, "users": [{"uuid": UUID}], "tls": sb_tls, "transport": {"type": "quic"}},
+    {"type": "vmess", "tag": "vmess-quic", "listen": "127.0.0.1", "listen_port": 21025, "users": [{"uuid": UUID}], "tls": sb_tls, "transport": {"type": "quic"}},
+    {"type": "trojan", "tag": "trojan-quic", "listen": "127.0.0.1", "listen_port": 21026, "users": [{"password": PW}], "tls": sb_tls, "transport": {"type": "quic"}},
+]
+H2_LINK = {"host": SNI, "path": "/h2"}
+TLS_LINK = {"security": "tls", "sni": SNI, "allowInsecure": "1", "fp": "chrome"}
+links_sb_transport = [
+    f"vless://{UUID}@{HOST}:21020?{q({'type': 'http', 'encryption': 'none', **TLS_LINK, **H2_LINK})}#{name('VLESS HTTP2 TLS (sing-box)')}",
+    f"vless://{UUID}@{HOST}:21021?{q({'type': 'http', 'encryption': 'none', 'security': 'none', **H2_LINK})}#{name('VLESS HTTP1.1 plain (sing-box)')}",
+    "vmess://" + base64.b64encode(json.dumps({"v": "2", "ps": "VMess HTTP2 TLS (sing-box)", "add": HOST, "port": "21022", "id": UUID, "aid": "0", "scy": "auto",
+                                               "net": "h2", "type": "none", "host": SNI, "path": "/h2", "tls": "tls", "sni": SNI, "allowInsecure": "1"}).encode()).decode(),
+    f"trojan://{PW}@{HOST}:21023?{q({'type': 'http', **TLS_LINK, **H2_LINK})}#{name('Trojan HTTP2 TLS (sing-box)')}",
+    f"vless://{UUID}@{HOST}:21024?{q({'type': 'quic', 'encryption': 'none', **TLS_LINK})}#{name('VLESS QUIC (sing-box)')}",
+    "vmess://" + base64.b64encode(json.dumps({"v": "2", "ps": "VMess QUIC (sing-box)", "add": HOST, "port": "21025", "id": UUID, "aid": "0", "scy": "auto",
+                                               "net": "quic", "type": "none", "host": "none", "path": "", "tls": "tls", "sni": SNI, "allowInsecure": "1"}).encode()).decode(),
+    f"trojan://{PW}@{HOST}:21026?{q({'type': 'quic', **TLS_LINK})}#{name('Trojan QUIC (sing-box)')}",
+]
 sb = {"log": {"level": "warn", "output": os.path.join(HERE, "sb.log").replace("\\", "/")},
       "inbounds": sb_in,
       "endpoints": [{"type": "wireguard", "tag": "wg", "system": False, "listen_port": 21009, "address": ["10.77.0.1/24"], "private_key": WG_SERVER_PRIV,
@@ -168,6 +194,7 @@ links.append(f"anytls://{PW}@{HOST}:21004?{q({'sni': SNI, 'insecure': '1'})}#{na
 links.append(f"https://lab:{PW}@{HOST}:21005#{name('Naive HTTP2')}")
 links.append(f"ss://{base64.urlsafe_b64encode(('2022-blake3-aes-256-gcm:' + SS2022_256).encode()).decode().rstrip('=')}@{HOST}:21007#{name('Shadowsocks 2022 AES-256')}")
 links.append(f"ss://{base64.urlsafe_b64encode(('2022-blake3-chacha20-poly1305:' + SS2022_256).encode()).decode().rstrip('=')}@{HOST}:21008#{name('Shadowsocks 2022 ChaCha20')}")
+links += links_sb_transport
 
 # Naive over HTTP/1.1 has no link scheme of its own; the matrix file marks it.
 naive11 = f"https://lab:{PW}@{HOST}:21006#{name('Naive HTTP1.1 (HTTPS proxy)')}"
@@ -199,14 +226,15 @@ print(len(links), "links;", len(inbounds), "xray inbounds;", len(sb_in), "sing-b
 # which cannot reach 10.0.2.2: TCP protocols go to 127.0.0.1 via `adb reverse`.
 emu = []
 for line in (header + "\n".join(links)).splitlines():
-    if line.startswith(("hysteria2://", "tuic://")) or line.startswith("#"):
+    if line.startswith(("hysteria2://", "tuic://")) or line.startswith("#") or "type=quic" in line:
         emu.append(line)
     elif line.startswith("vmess://"):
         j = json.loads(base64.b64decode(line[8:]))
-        j["add"] = "127.0.0.1"
+        if j.get("net") != "quic":
+            j["add"] = "127.0.0.1"
         emu.append("vmess://" + base64.b64encode(json.dumps(j).encode()).decode())
     else:
         emu.append(line.replace("@10.0.2.2:", "@127.0.0.1:"))
 open(os.path.join(HERE, "lab-emu.txt"), "w", encoding="utf-8").write("\n".join(emu) + "\n")
-tcp_ports = sorted({int(i["port"]) for i in inbounds} | {21004, 21005, 21006, 21007, 21008})
+tcp_ports = sorted({int(i["port"]) for i in inbounds} | {21004, 21005, 21006, 21007, 21008, 21020, 21021, 21022, 21023})
 print("adb reverse for the emulator:", " ".join(f"tcp:{p}" for p in tcp_ports))
