@@ -286,7 +286,7 @@ fun TvHomeScreen(
         else -> selectedName ?: groupName(activeGroup)
     }
 
-    val visibleConfigs = remember(activeGroup, sortByLatency, latencyResults) {
+    val visibleConfigs = remember(activeGroup, sortByLatency, if (sortByLatency) latencyResults else null) {
         if (!sortByLatency) activeGroup.configs
         else activeGroup.configs.sortedBy { config ->
             (latencyResults[config.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
@@ -294,7 +294,7 @@ fun TvHomeScreen(
     }
 
     val sections = rememberCountrySections(
-        configs = visibleConfigs,
+        configs = activeGroup.configs,
         enabled = groupByCountry,
         sortByLatency = sortByLatency,
         latencies = latencyResults,

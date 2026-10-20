@@ -144,29 +144,40 @@ private fun ServersTab(state: AppState) {
     val present = configs.map { it.id }.toSet()
     if (selected.any { it !in present }) selected = selected.filter { it in present }.toSet()
 
-    val visible = remember(configs, sortKey, sortAscending, search, latencies) {
+    val base = remember(configs, sortKey, sortAscending, search) {
         val filtered = if (search.isBlank()) configs else configs.filter {
             it.name.contains(search, ignoreCase = true) || it.displayEndpoint.contains(search, ignoreCase = true) ||
                 it.outboundProtocol.displayName.contains(search, ignoreCase = true)
         }
         val sorted = when (sortKey) {
-            SortKey.NONE -> filtered
+            SortKey.NONE, SortKey.LATENCY -> filtered
             SortKey.NAME -> filtered.sortedBy { it.name.lowercase() }
             SortKey.PROTOCOL -> filtered.sortedBy { it.outboundProtocol.displayName }
             SortKey.TRANSPORT -> filtered.sortedBy { transportLabel(it) }
             SortKey.ADDRESS -> filtered.sortedBy { it.displayEndpoint }
-            SortKey.LATENCY -> filtered.sortedBy { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE }
         }
-        if (sortAscending || sortKey == SortKey.NONE) sorted else sorted.reversed()
+        if (sortAscending || sortKey == SortKey.NONE || sortKey == SortKey.LATENCY) sorted else sorted.reversed()
+    }
+
+    val visible = remember(base, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
+        if (sortKey != SortKey.LATENCY) base
+        else {
+            val sorted = base.sortedBy { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE }
+            if (sortAscending) sorted else sorted.reversed()
+        }
     }
 
     // Country sections, unless they would show nothing new: off, or one country.
-    val sections = remember(visible, settings.groupByCountry, sortKey, sortAscending) {
-        if (!settings.groupByCountry) return@remember null
-        val byName = CountryGrouping.sections(visible, { state.countryOf(it) }).takeIf { it.size >= 2 }
-            ?: return@remember null
-        if (sortKey != SortKey.LATENCY) byName
-        else byName.sortedBy { section ->
+    val byCountry = remember(base, settings.groupByCountry) {
+        if (!settings.groupByCountry) null
+        else CountryGrouping.sections(base, { state.countryOf(it) }).takeIf { it.size >= 2 }
+    }
+    val sections = remember(byCountry, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
+        if (byCountry == null || sortKey != SortKey.LATENCY) byCountry
+        else byCountry.map { section ->
+            val items = section.items.sortedBy { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE }
+            section.copy(items = if (sortAscending) items else items.reversed())
+        }.sortedBy { section ->
             section.items.minOfOrNull { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
         }.let { if (sortAscending) it else it.reversed() }
     }

@@ -188,18 +188,9 @@ class DesktopUpdater(private val app: AppState) {
         runCatching { Desktop.getDesktop().browse(URI(page)) }
     }
 
-    /**
-     * Direct first. With the tunnel up in proxy mode the app's own HTTP port
-     * reaches GitHub through the server too; in TUN mode the direct request
-     * already goes through the tunnel.
-     */
     private fun routes(): List<UpdateRoute> {
         val settings = app.settings.value
-        val viaProxy = app.connection.value is ConnectionState.Connected && settings.tunnelMode == "proxy"
-        return listOfNotNull(
-            UpdateRoute.Direct,
-            if (viaProxy) UpdateRoute.LocalProxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", settings.httpPort))) else null
-        )
+        return routesFor(app.connection.value is ConnectionState.Connected, settings.tunnelMode, settings.httpPort)
     }
 
     private fun isInstalledLocation(exe: File): Boolean {
@@ -213,8 +204,23 @@ class DesktopUpdater(private val app: AppState) {
         return roots.any { path.startsWith(it) }
     }
 
-    private companion object {
+    internal companion object {
         const val CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
         const val PROGRESS_STEP = 512 * 1024L
+
+        /**
+         * How the update reaches GitHub. With the tunnel up in proxy mode the
+         * request goes through the app's own HTTP port and nowhere else: a
+         * direct attempt would bypass the system proxy and show GitHub the
+         * user's real address while they believe they are behind the tunnel.
+         * In TUN mode, and with the tunnel down, the plain request is the one
+         * the system routes (through Wintun when TUN is up).
+         */
+        fun routesFor(connected: Boolean, tunnelMode: String, httpPort: Int): List<UpdateRoute> =
+            if (connected && tunnelMode == "proxy") {
+                listOf(UpdateRoute.LocalProxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", httpPort))))
+            } else {
+                listOf(UpdateRoute.Direct)
+            }
     }
 }

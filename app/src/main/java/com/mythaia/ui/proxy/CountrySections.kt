@@ -59,10 +59,16 @@ fun rememberCountrySections(
     val byName = remember(configs, enabled, geoIpGeneration) {
         if (!enabled) null else CountryGrouping.sections(configs, countryOf).takeIf { it.size >= 2 }
     }
-    return remember(byName, sortByLatency, latencies) {
+    return remember(byName, sortByLatency, if (sortByLatency) latencies else null) {
         if (byName == null || !sortByLatency) byName
-        else byName.sortedBy { section ->
-            section.items.minOfOrNull { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
+        else byName.map { section ->
+            section.copy(
+                items = section.items.sortedBy {
+                    (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
+                }
+            )
+        }.sortedBy { section ->
+            (latencies[section.items.first().id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
         }
     }
 }

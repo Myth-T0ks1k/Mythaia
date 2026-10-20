@@ -55,6 +55,24 @@ class ServerCountryTest {
     }
 
     @Test
+    fun `protocol tags and traffic amounts are not countries`() {
+        // SS is Shadowsocks, CF Cloudflare, TG Telegram — not South Sudan, CAR, Togo.
+        assertEquals("HK", ServerCountry.fromName("SS-HK 01"))
+        assertNull(ServerCountry.fromName("SS-01"))
+        assertNull(ServerCountry.fromName("CF | vless ws 3"))
+        assertEquals("DE", ServerCountry.fromName("CF DE 2"))
+        assertNull(ServerCountry.fromName("TG @example_channel"))
+        // Subscription info entries: a traffic amount is not Great Britain.
+        assertNull(ServerCountry.fromName("Traffic: 12.5 GB / 100 GB"))
+        assertNull(ServerCountry.fromName("Remaining 50GB"))
+        assertEquals("GB", ServerCountry.fromName("Premium GB 2"))
+        assertEquals("GB", ServerCountry.fromName("GB London"))
+        // LA mid-name is Los Angeles; New Jersey is not the island of Jersey.
+        assertNull(ServerCountry.fromName("vless LA 01"))
+        assertEquals("US", ServerCountry.fromName("New Jersey 01"))
+    }
+
+    @Test
     fun `flags come out of codes`() {
         assertEquals("🇯🇵", ServerCountry.flag("JP"))
         assertEquals("", ServerCountry.flag("j"))

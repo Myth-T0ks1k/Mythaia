@@ -63,7 +63,8 @@ object ServerCountry {
     private fun detect(name: String): String? {
         flagCode(name)?.let { return it }
         LEADING_CODE.find(name)?.let { match ->
-            normalizeCode(match.groupValues[1])?.let { return it }
+            val token = match.groupValues[1]
+            if (token !in TAG_CODES) normalizeCode(token)?.let { return it }
         }
         val words = words(name)
         byWords(words)?.let { return it }
@@ -72,7 +73,9 @@ object ServerCountry {
         }
         for (match in ANY_CODE.findAll(name)) {
             val token = match.groupValues[1]
-            if (token in AMBIGUOUS_CODES) continue
+            if (token in AMBIGUOUS_CODES || token in TAG_CODES) continue
+            // "100 GB", "50GB left": a traffic amount, not Great Britain.
+            if (token == "GB" && name.substring(0, match.range.first).trimEnd().lastOrNull()?.isDigit() == true) continue
             normalizeCode(token)?.let { return it }
         }
         return null
@@ -107,8 +110,16 @@ object ServerCountry {
     /** A standalone uppercase code anywhere: weaker, so the ones that double as words are skipped. */
     private val ANY_CODE = Regex("(?<!\\p{L})([A-Z]{2})(?!\\p{L})")
 
-    /** Codes that mean something else in a server name: WebSocket, a TV box, AI, AM/PM, a CC. */
-    private val AMBIGUOUS_CODES = setOf("WS", "TV", "AI", "AM", "PM", "CC", "IP", "ID", "IN", "IS", "IT", "ME", "MY", "NO", "SO", "TO", "BE", "DO", "GO", "OR", "AS", "AT", "BY", "ON", "UP")
+    /** Codes that mean something else in a server name: WebSocket, a TV box, AI, AM/PM, a CC, Los Angeles. */
+    private val AMBIGUOUS_CODES = setOf("WS", "TV", "AI", "AM", "PM", "CC", "IP", "ID", "IN", "IS", "IT", "ME", "MY", "NO", "SO", "TO", "BE", "DO", "GO", "OR", "AS", "AT", "BY", "ON", "UP", "LA")
+
+    /**
+     * Protocol and provider tags that lead server names as often as country
+     * codes do — "SS-HK 01" is Shadowsocks in Hong Kong, "CF | …" is behind
+     * Cloudflare, "TG @channel" is a Telegram ad — never South Sudan, the
+     * Central African Republic or Togo, not even at the start.
+     */
+    private val TAG_CODES = setOf("SS", "CF", "TG")
 
     private val codes: Set<String> = Locale.getISOCountries().toHashSet() + "XK"
 
@@ -232,7 +243,7 @@ object ServerCountry {
         "riga" to "LV", "vilnius" to "LT", "tbilisi" to "GE", "yerevan" to "AM", "tashkent" to "UZ",
         "bishkek" to "KG", "new york" to "US", "los angeles" to "US", "chicago" to "US", "dallas" to "US",
         "miami" to "US", "seattle" to "US", "san jose" to "US", "ashburn" to "US", "atlanta" to "US",
-        "silicon valley" to "US", "johannesburg" to "ZA",
+        "silicon valley" to "US", "new jersey" to "US", "johannesburg" to "ZA",
         "амстердам" to "NL", "франкфурт" to "DE", "берлин" to "DE", "мюнхен" to "DE", "лондон" to "GB",
         "париж" to "FR", "хельсинки" to "FI", "стокгольм" to "SE", "варшава" to "PL", "прага" to "CZ",
         "вена" to "AT", "москва" to "RU", "петербург" to "RU", "стамбул" to "TR", "алматы" to "KZ",

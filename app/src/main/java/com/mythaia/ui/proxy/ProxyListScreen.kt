@@ -180,15 +180,18 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
             config.serverAddress.contains(searchQuery, ignoreCase = true)
     }
 
-    val visible = remember(group, searchQuery, sortByLatency, latencyResults) {
-        val filtered = group.configs.filter { matchesQuery(it) }
+    val filtered = remember(group, searchQuery) {
+        if (searchQuery.isBlank()) group.configs else group.configs.filter { matchesQuery(it) }
+    }
+
+    val visible = remember(filtered, sortByLatency, if (sortByLatency) latencyResults else null) {
         if (!sortByLatency) filtered else filtered.sortedBy { config ->
             (latencyResults[config.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE
         }
     }
 
     val sections = rememberCountrySections(
-        configs = visible,
+        configs = filtered,
         enabled = groupByCountry,
         sortByLatency = sortByLatency,
         latencies = latencyResults,
@@ -572,8 +575,8 @@ fun ProxyListScreen(viewModel: VpnViewModel) {
                             autoActive = autoHere,
                             autoBusy = autoSelecting,
                             onToggle = { viewModel.toggleCountryCollapsed(group.id, code) },
-                            onPing = { viewModel.testLatencies(forConfigs = section.items, kind = LatencyKind.HTTP) },
-                            onAuto = if (canAuto && code != null) {
+                            onPing = { viewModel.testLatencies(forConfigs = section.items) },
+                            onAuto = if (canAuto) {
                                 { if (autoHere) viewModel.useAuto(group.id) else viewModel.useAutoIn(group.id, code) }
                             } else null,
                             modifier = Modifier.padding(top = 6.dp)
