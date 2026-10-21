@@ -760,12 +760,7 @@ fun TvHomeScreen(
                                         autoBusy = autoSelecting && autoHere,
                                         onDarkGround = isConnected,
                                         onToggle = { viewModel.toggleCountryCollapsed(activeGroup.id, code) },
-                                        onPing = {
-                                            viewModel.testLatencies(
-                                                forConfigs = section.items,
-                                                kind = LatencyKind.HTTP
-                                            )
-                                        },
+                                        onPing = { viewModel.testLatencies(forConfigs = section.items) },
                                         onAuto = if (canAuto) {
                                             {
                                                 if (autoHere) viewModel.useAuto(activeGroup.id)
@@ -799,10 +794,12 @@ fun TvHomeScreen(
                 },
                 onImport = { config ->
                     viewModel.addConfiguration(config)
+                    browsingChains = false
                     showingAddSheet = false
                 },
                 onSubscriptionImport = { configs, subscription ->
                     viewModel.addSubscription(configs, subscription)
+                    browsingChains = false
                     showingAddSheet = false
                 }
             )
@@ -818,6 +815,7 @@ fun TvHomeScreen(
             NewServerFlow(
                 onSave = { config ->
                     viewModel.addConfiguration(config)
+                    browsingChains = false
                     showingManualAddSheet = false
                 },
                 onDismiss = { showingManualAddSheet = false }
