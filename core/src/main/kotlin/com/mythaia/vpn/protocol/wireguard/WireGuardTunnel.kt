@@ -695,7 +695,9 @@ class WireGuardTunnel(
             return when (packet[0].toInt() ushr 4 and 0x0F) {
                 4 -> {
                     if (packet.size < 20) return null
-                    ((packet[2].toInt() and 0xFF) shl 8) or (packet[3].toInt() and 0xFF)
+                    val ihl = (packet[0].toInt() and 0x0F) * 4
+                    val total = ((packet[2].toInt() and 0xFF) shl 8) or (packet[3].toInt() and 0xFF)
+                    if (ihl < 20 || total < ihl) null else total
                 }
                 6 -> {
                     if (packet.size < 40) return null

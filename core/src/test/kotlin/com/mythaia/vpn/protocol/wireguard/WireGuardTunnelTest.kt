@@ -547,6 +547,37 @@ class WireGuardTunnelTest {
         pkt[27] = (udpChecksum and 0xFF).toByte()
         return pkt
     }
+
+    @Test
+    fun `ipPacketLength rejects malformed IPv4 header and total lengths`() {
+        org.junit.Assert.assertNull(WireGuardTunnel.ipPacketLength(ByteArray(0)))
+        org.junit.Assert.assertNull(WireGuardTunnel.ipPacketLength(ByteArray(19) { 0x45 }))
+        // IHL < 5 (header length < 20 bytes) is invalid even if total length >= 20.
+        val badIhl = ByteArray(20).apply {
+            this[0] = 0x44
+            this[2] = 0
+            this[3] = 20
+        }
+        org.junit.Assert.assertNull(WireGuardTunnel.ipPacketLength(badIhl))
+        // Total length < IHL (e.g. total = 10 or 0 with IHL = 20, or total = 20 with IHL = 24) is invalid.
+        val runtTotal = ByteArray(24).apply {
+            this[0] = 0x45
+            this[2] = 0
+            this[3] = 10
+        }
+        org.junit.Assert.assertNull(WireGuardTunnel.ipPacketLength(runtTotal))
+        val smallerThanOptionsHeader = ByteArray(24).apply {
+            this[0] = 0x46 // IHL = 24
+            this[2] = 0
+            this[3] = 20   // total = 20 < 24
+        }
+        org.junit.Assert.assertNull(WireGuardTunnel.ipPacketLength(smallerThanOptionsHeader))
+        // Valid 24-byte IPv4 header with options.
+        val validWithOptions = ByteArray(24).apply {
+            this[0] = 0x46
+            this[2] = 0
+            this[3] = 24
+        }
+        assertEquals(24, WireGuardTunnel.ipPacketLength(validWithOptions))
+    }
 }
-
-

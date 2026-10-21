@@ -312,6 +312,7 @@ object RoutePlan {
 
     /** The commands that keep one more host on the physical side, added while running. */
     fun excludeHost(c: TunNetConfig, ip: String): NetCommand? {
+        if (ip.contains(':')) return null
         val gw = c.physicalGateway ?: return null
         return NetCommand(routeAdd(ip, "255.255.255.255", gw, c.physicalInterfaceIndex), essential = false)
     }
@@ -319,6 +320,7 @@ object RoutePlan {
     fun includeHost(c: TunNetConfig, ip: String): NetCommand? = includeHostEntry(c, ip)?.deleteCommand()
 
     fun includeHostEntry(c: TunNetConfig, ip: String): RouteEntry? {
+        if (ip.contains(':')) return null
         val gw = c.physicalGateway ?: return null
         return RouteEntry.v4(ip, 32, gw, c.physicalInterfaceIndex)
     }
@@ -330,14 +332,18 @@ object RoutePlan {
             val (net, prefix) = splitCidr(network) ?: continue
             out += routeAdd(net, maskOf(prefix), gw, c.physicalInterfaceIndex)
         }
-        for (host in c.excludedHosts.distinct()) out += routeAdd(host, "255.255.255.255", gw, c.physicalInterfaceIndex)
+        for (host in c.excludedHosts.distinct()) {
+            if (!host.contains(':')) out += routeAdd(host, "255.255.255.255", gw, c.physicalInterfaceIndex)
+        }
         return out
     }
 
     private fun physicalSideTeardown(c: TunNetConfig): List<RouteEntry> {
         val gw = c.physicalGateway ?: return emptyList()
         val out = ArrayList<RouteEntry>()
-        for (host in c.excludedHosts.distinct()) out += RouteEntry.v4(host, 32, gw, c.physicalInterfaceIndex)
+        for (host in c.excludedHosts.distinct()) {
+            if (!host.contains(':')) out += RouteEntry.v4(host, 32, gw, c.physicalInterfaceIndex)
+        }
         for (network in c.excludedNetworks) {
             val (net, prefix) = splitCidr(network) ?: continue
             out += RouteEntry.v4(net, prefix, gw, c.physicalInterfaceIndex)
@@ -370,7 +376,12 @@ object RoutePlan {
  * has to be undone — so a crash leaves nothing behind that the next start
  * cannot clean up.
  */
-class WindowsRoutes(private val snapshot: File) {
+class WindowsRoutes(
+    private val snapshot: File,
+    private val runCommand: (List<String>) -> WindowsNet.Result = { WindowsNet.run(it) },
+    private val ownerSid: (File) -> String? = { if (WindowsNet.isWindows) WindowsNet.fileOwnerSid(it) else null },
+    private val retryDelayMs: Long = 400L
+) {
     private val logger = MythaiaLogger("Routes")
 
     /** `version` defaults to nothing so a file from an older format, which held command lines, is rejected. */
@@ -410,9 +421,10 @@ class WindowsRoutes(private val snapshot: File) {
     /** Keeps [ip] on the physical side from now on (a newly selected proxy server, say). */
     fun excludeHost(ip: String) {
         val config = applied ?: return
-        if (ip in config.excludedHosts || !extraHosts.add(ip)) return
+        if (ip in config.excludedHosts || ip in extraHosts) return
         val command = RoutePlan.excludeHost(config, ip) ?: return
-        val result = WindowsNet.run(command.argv)
+        extraHosts.add(ip)
+        val result = runCommand(command.argv)
         if (!result.ok) logger.warning("Could not exclude $ip: ${result.output.lineSequence().firstOrNull()}")
         writeSnapshot(currentTeardown(config))
     }
@@ -425,13 +437,13 @@ class WindowsRoutes(private val snapshot: File) {
     fun repointPhysical(interfaceIndex: Int, gateway: String?, excludedHosts: List<String>): Boolean {
         val old = applied ?: return false
         for (command in currentTeardown(old).filter { it.interfaceIndex == old.physicalInterfaceIndex }.map { it.deleteCommand() }) {
-            WindowsNet.run(command.argv)
+            runCommand(command.argv)
         }
         extraHosts.clear()
         val moved = old.copy(physicalInterfaceIndex = interfaceIndex, physicalGateway = gateway, excludedHosts = excludedHosts)
         writeSnapshot(RoutePlan.teardownEntries(moved))
         for (command in RoutePlan.physicalSideCommands(moved)) {
-            val result = WindowsNet.run(command.argv)
+            val result = runCommand(command.argv)
             if (!result.ok) logger.warning("Route on the new network refused: ${command.argv.take(3).joinToString(" ")}: ${result.output.lineSequence().firstOrNull()}")
         }
         applied = moved
@@ -446,7 +458,7 @@ class WindowsRoutes(private val snapshot: File) {
             return
         }
         for (command in currentTeardown(config).map { it.deleteCommand() }) {
-            val result = WindowsNet.run(command.argv)
+            val result = runCommand(command.argv)
             if (!result.ok) logger.debug("Teardown (ignored): $command -> ${result.output.lineSequence().firstOrNull()}")
         }
         extraHosts.clear()
@@ -464,7 +476,7 @@ class WindowsRoutes(private val snapshot: File) {
      */
     fun cleanupLeftovers() {
         if (!snapshot.isFile) return
-        val owner = if (WindowsNet.isWindows) WindowsNet.fileOwnerSid(snapshot) else null
+        val owner = ownerSid(snapshot)
         val trusted = !WindowsNet.isWindows || (owner != null && (owner in TRUSTED_OWNERS || owner == WindowsNet.currentUserSid))
         val routes = if (trusted) parseSnapshot(runCatching { snapshot.readText() }.getOrNull()) else null
         when {
@@ -472,7 +484,7 @@ class WindowsRoutes(private val snapshot: File) {
             routes == null -> logger.warning("Ignoring the route snapshot: not in this version's format")
             else -> {
                 logger.info("Removing ${routes.size} routes left by a previous run")
-                for (route in routes) WindowsNet.run(route.deleteCommand().argv)
+                for (route in routes) runCommand(route.deleteCommand().argv)
             }
         }
         snapshot.delete()
@@ -547,12 +559,12 @@ class WindowsRoutes(private val snapshot: File) {
 
     /** A freshly created adapter is not always addressable at once; the essentials get a few tries. */
     private fun runWithRetry(command: NetCommand): WindowsNet.Result {
-        var result = WindowsNet.run(command.argv)
+        var result = runCommand(command.argv)
         var attempt = 0
         while (!result.ok && command.essential && attempt < 5) {
             attempt++
-            Thread.sleep(400)
-            result = WindowsNet.run(command.argv)
+            if (retryDelayMs > 0) Thread.sleep(retryDelayMs)
+            result = runCommand(command.argv)
         }
         return result
     }

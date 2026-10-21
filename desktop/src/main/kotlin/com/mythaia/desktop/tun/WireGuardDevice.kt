@@ -35,6 +35,7 @@ internal class WintunPacketDevice(
     private var open = true
 
     override fun read(buffer: ByteArray): Int {
+        if (buffer.isEmpty()) return -1
         while (open) {
             val n = receivePacket(buffer) { open }
             if (n <= 0) return if (open) n else -1
@@ -46,7 +47,7 @@ internal class WintunPacketDevice(
     }
 
     override fun write(packet: ByteArray, length: Int) {
-        if (!open || length <= 0) return
+        if (!open || length <= 0 || length > packet.size) return
         if (dropIpv6 && (packet[0].toInt() and 0xF0) == 0x60) return
         if (sendPacket(packet, length)) stats.down.addAndGet(length.toLong())
     }
