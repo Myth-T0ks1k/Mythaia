@@ -112,9 +112,10 @@ fun ProxyCardContent(
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ProtocolPill(configuration.outboundProtocol.displayName)
-                    // Transport is only meaningful for VLESS — every other
-                    // protocol's `transport` field is just a "tcp" placeholder.
-                    if (configuration.outboundProtocol == OutboundProtocol.VLESS && configuration.transport != "tcp") {
+                    val usesStreamTransport = configuration.outboundProtocol == OutboundProtocol.VLESS ||
+                        configuration.outboundProtocol == OutboundProtocol.VMESS ||
+                        configuration.outboundProtocol == OutboundProtocol.TROJAN
+                    if (usesStreamTransport && configuration.transport != "tcp") {
                         ProtocolPill(configuration.transport.uppercase())
                     }
                     val security = configuration.security.uppercase()
