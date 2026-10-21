@@ -299,7 +299,7 @@ fun ProxyEditorScreen(
                 isNaive -> naiveUsername.isNotEmpty() && naivePassword.isNotEmpty()
                 isShadowsocks -> ssPassword.isNotEmpty()
                 isSocks5 -> true
-                isTrojan -> trojanPassword.isNotEmpty()
+                isTrojan -> trojanPassword.isNotEmpty() && (transport != "xhttp" || xhttpExtraValid)
                 isHysteria2 -> password.isNotEmpty() && mbpsValid && hopPortsValid && hopIntervalValid &&
                     (obfs == "none" || obfsPassword.isNotEmpty())
                 isAnyTls || isNowhere -> password.isNotEmpty()
@@ -307,7 +307,8 @@ fun ProxyEditorScreen(
                 isSudoku -> sudokuKey.isNotBlank()
                 else -> uuidValid &&
                         (!isReality || (sni.isNotBlank() && publicKeyValid && shortIdValid)) &&
-                        (transport != "xhttp" || xhttpExtraValid)
+                        (transport != "xhttp" || xhttpExtraValid) &&
+                        (transport != "quic" || isTLS)
             })
 
     Scaffold(
@@ -879,14 +880,18 @@ fun ProxyEditorScreen(
                         DropdownField(
                             label = stringResource(R.string.security),
                             selectedValue = security,
-                            options = if (isVless || isVmess) listOf(
-                                "none" to stringResource(R.string.none),
-                                "tls" to "TLS",
-                                "reality" to "Reality"
-                            ) else listOf(
-                                "none" to stringResource(R.string.none),
-                                "tls" to "TLS"
-                            ),
+                            options = when {
+                                transport == "quic" -> listOf("tls" to "TLS")
+                                isVless || isVmess -> listOf(
+                                    "none" to stringResource(R.string.none),
+                                    "tls" to "TLS",
+                                    "reality" to "Reality"
+                                )
+                                else -> listOf(
+                                    "none" to stringResource(R.string.none),
+                                    "tls" to "TLS"
+                                )
+                            },
                             onSelect = { security = it }
                         )
                     }

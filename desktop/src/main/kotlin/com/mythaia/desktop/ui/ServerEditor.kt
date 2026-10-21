@@ -317,7 +317,7 @@ private fun ServerEditorForm(
                 isNaive -> naiveUsername.isNotEmpty() && naivePassword.isNotEmpty()
                 isShadowsocks -> ssPassword.isNotEmpty()
                 isSocks5 -> true
-                isTrojan -> trojanPassword.isNotEmpty()
+                isTrojan -> trojanPassword.isNotEmpty() && (transport != "xhttp" || xhttpExtraValid)
                 isHysteria2 -> password.isNotEmpty() && mbpsValid && hopPortsValid && hopIntervalValid &&
                     (obfs == "none" || obfsPassword.isNotEmpty())
                 isAnyTls || isNowhere -> password.isNotEmpty()
@@ -325,7 +325,8 @@ private fun ServerEditorForm(
                 isSudoku -> sudokuKey.isNotBlank()
                 else -> uuidValid &&
                         (!isReality || (sni.isNotBlank() && publicKeyValid && shortIdValid)) &&
-                        (transport != "xhttp" || xhttpExtraValid)
+                        (transport != "xhttp" || xhttpExtraValid) &&
+                        (transport != "quic" || isTLS)
             })
 
     Scaffold(
@@ -897,14 +898,18 @@ private fun ServerEditorForm(
                         EditorDropdownField(
                             label = tr("security"),
                             selectedValue = security,
-                            options = if (isVless || isVmess) listOf(
-                                "none" to tr("none"),
-                                "tls" to "TLS",
-                                "reality" to "Reality"
-                            ) else listOf(
-                                "none" to tr("none"),
-                                "tls" to "TLS"
-                            ),
+                            options = when {
+                                transport == "quic" -> listOf("tls" to "TLS")
+                                isVless || isVmess -> listOf(
+                                    "none" to tr("none"),
+                                    "tls" to "TLS",
+                                    "reality" to "Reality"
+                                )
+                                else -> listOf(
+                                    "none" to tr("none"),
+                                    "tls" to "TLS"
+                                )
+                            },
                             onSelect = { security = it }
                         )
                     }

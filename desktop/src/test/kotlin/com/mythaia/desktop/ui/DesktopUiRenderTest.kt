@@ -7,22 +7,41 @@ import com.mythaia.data.model.OutboundProtocol
 import com.mythaia.data.model.ProxyChain
 import com.mythaia.data.model.ProxyConfiguration
 import com.mythaia.data.model.WireGuardForm
+import com.mythaia.desktop.AppPaths
 import com.mythaia.desktop.AppState
 import com.mythaia.desktop.S
 import com.mythaia.desktop.store.DesktopStore
 import com.mythaia.vpn.protocol.wireguard.WireGuardConfig
 import com.mythaia.vpn.protocol.wireguard.WireGuardCrypto
 import com.mythaia.vpn.util.MythaiaLogger
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 import java.util.Locale
 import java.util.UUID
 
 class DesktopUiRenderTest {
+
+    private lateinit var tempDir: File
+
+    @Before
+    fun setUp() {
+        tempDir = Files.createTempDirectory("mythaia-desktop-ui-render-test-").toFile()
+        AppPaths.overrideDataDir = tempDir
+    }
+
+    @After
+    fun tearDown() {
+        AppPaths.overrideDataDir = null
+        runCatching { tempDir.deleteRecursively() }
+    }
 
     private fun sampleServer(
         name: String,
