@@ -194,12 +194,13 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
 
         // The live (or would-be) server.
         WingPanel(modifier = Modifier.widthIn(max = 620.dp)) {
+            val autoActive = state.isAuto(groupId) && settings.selectedChainId == null
             Row(
                 modifier = Modifier.fillMaxWidth().clickable { onOpenProxies() }.padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 WingIconTile(size = 40.dp) {
-                    if (state.isAuto(groupId)) Icon(Icons.Default.Bolt, null, tint = Paper, modifier = Modifier.size(22.dp))
+                    if (autoActive) Icon(Icons.Default.Bolt, null, tint = Paper, modifier = Modifier.size(22.dp))
                     else WingMark(modifier = Modifier.size(22.dp), color = Paper)
                 }
                 Spacer(Modifier.width(14.dp))
@@ -209,7 +210,7 @@ fun HomeScreen(state: AppState, onOpenProxies: () -> Unit) {
                         Text(tr("no_servers_hint"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Text(
-                            if (state.isAuto(groupId)) tr("auto_switching", shown.name) else shown.name,
+                            if (autoActive) tr("auto_switching", shown.name) else shown.name,
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1

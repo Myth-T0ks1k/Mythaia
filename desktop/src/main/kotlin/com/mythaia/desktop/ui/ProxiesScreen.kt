@@ -159,27 +159,30 @@ private fun ServersTab(state: AppState) {
         if (sortAscending || sortKey == SortKey.NONE || sortKey == SortKey.LATENCY) sorted else sorted.reversed()
     }
 
-    val visible = remember(base, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
-        if (sortKey != SortKey.LATENCY) base
-        else {
-            val sorted = base.sortedBy { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE }
-            if (sortAscending) sorted else sorted.reversed()
-        }
+    fun latencyRank(id: UUID): Int {
+        val ms = (latencies[id] as? LatencyResult.Success)?.ms ?: return Int.MAX_VALUE
+        return if (sortAscending) ms else -ms
     }
 
+    val visible = remember(base, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
+        if (sortKey != SortKey.LATENCY) base
+        else base.sortedBy { latencyRank(it.id) }
+    }
+
+    val locale = remember(com.mythaia.desktop.S.lang) { java.util.Locale.forLanguageTag(com.mythaia.desktop.S.lang.code) }
+
     // Country sections, unless they would show nothing new: off, or one country.
-    val byCountry = remember(base, settings.groupByCountry) {
+    val byCountry = remember(base, settings.groupByCountry, locale) {
         if (!settings.groupByCountry) null
-        else CountryGrouping.sections(base, { state.countryOf(it) }).takeIf { it.size >= 2 }
+        else CountryGrouping.sections(base, { state.countryOf(it) }, locale).takeIf { it.size >= 2 }
     }
     val sections = remember(byCountry, sortKey, sortAscending, if (sortKey == SortKey.LATENCY) latencies else null) {
         if (byCountry == null || sortKey != SortKey.LATENCY) byCountry
         else byCountry.map { section ->
-            val items = section.items.sortedBy { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE }
-            section.copy(items = if (sortAscending) items else items.reversed())
+            section.copy(items = section.items.sortedBy { latencyRank(it.id) })
         }.sortedBy { section ->
-            section.items.minOfOrNull { (latencies[it.id] as? LatencyResult.Success)?.ms ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
-        }.let { if (sortAscending) it else it.reversed() }
+            section.items.minOfOrNull { latencyRank(it.id) } ?: Int.MAX_VALUE
+        }
     }
 
     var showAdd by remember { mutableStateOf(false) }
@@ -314,7 +317,7 @@ private fun ServersTab(state: AppState) {
             val line = when {
                 // Auto is on, but kept to one country's servers.
                 autoActive && scopedCountry != null ->
-                    tr("auto_in_country", CountryGrouping.displayName(scopedCountry)) + (pick?.let { " · $it" } ?: "")
+                    tr("auto_in_country", CountryGrouping.displayName(scopedCountry, locale)) + (pick?.let { " · $it" } ?: "")
                 else -> pick ?: tr("auto_row_hint")
             }
             Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -373,6 +376,7 @@ private fun ServersTab(state: AppState) {
                                 count = section.items.size,
                                 collapsed = collapsed,
                                 autoActive = autoHere,
+                                locale = locale,
                                 onToggle = { state.toggleCountryCollapsed(shownGroup, code) },
                                 onPing = { state.pingConfigs(section.items, LatencyKind.HTTP) },
                                 onAuto = code?.let { c -> { if (autoHere) state.useAuto(shownGroup) else state.useAutoIn(shownGroup, c) } }
@@ -464,11 +468,12 @@ private fun CountryHeaderRow(
     count: Int,
     collapsed: Boolean,
     autoActive: Boolean,
+    locale: java.util.Locale,
     onToggle: () -> Unit,
     onPing: () -> Unit,
     onAuto: (() -> Unit)?
 ) {
-    val name = code?.let { CountryGrouping.displayName(it) } ?: tr("country_other")
+    val name = code?.let { CountryGrouping.displayName(it, locale) } ?: tr("country_other")
     Row(
         modifier = Modifier
             .fillMaxWidth()
