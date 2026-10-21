@@ -201,6 +201,7 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
     private var pingJob: Job? = null
     private val connectLock = Mutex()
     private val autoRoundLock = Mutex()
+    private val geoFetchLock = Mutex()
     private var messageJob: Job? = null
 
     /** Set once Auto has measured the group at least once since the last connect. */
@@ -947,7 +948,12 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         mutateRoutingProfiles { if (name == null) it.off() else it.activate(name, geoFiles::ready) }
         syncActiveRoutingProfile()
         val target = _routingProfiles.value.activeEntry ?: _routingProfiles.value.pendingEntry
-        if (target != null) scope.launch { ensureGeoFiles(target.profile) }
+        if (target != null) scope.launch { ensureGeoFiles(target.profile, force = target.filesError != null) }
+    }
+
+    fun retryRoutingFiles(name: String) {
+        val entry = _routingProfiles.value.find(name) ?: return
+        scope.launch { ensureGeoFiles(entry.profile, force = true) }
     }
 
     fun removeRoutingProfile(name: String) {
@@ -991,14 +997,18 @@ class AppState(private val store: DesktopStore, val nativeAvailable: Boolean) {
         }
     }
 
-    private suspend fun ensureGeoFiles(profile: com.mythaia.data.routing.RoutingProfile) {
-        val entry = _routingProfiles.value.find(profile.name) ?: return
-        if (!_routingProfiles.value.filesDue(entry, System.currentTimeMillis())) return
+    private suspend fun ensureGeoFiles(profile: com.mythaia.data.routing.RoutingProfile, force: Boolean = false) = geoFetchLock.withLock {
+        val state = _routingProfiles.value
+        val entry = state.find(profile.name) ?: return@withLock
+        val wanted = state.active.equals(entry.name, ignoreCase = true) ||
+            state.pending.equals(entry.name, ignoreCase = true)
+        if (!wanted) return@withLock
+        if (!force && !state.filesDue(entry, System.currentTimeMillis())) return@withLock
         _routingFilesFetching.value = profile.name
         try {
             val error = geoFiles.fetch(profile) {
-                val subId = entry.subscriptionId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                if (subId != null) serversThatWork(subId) else emptyList()
+                val subId = entry.subscriptionId?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: UUID(0, 0)
+                serversThatWork(subId)
             }
             mutateRoutingProfiles { it.filesFetched(profile.name, System.currentTimeMillis(), error) }
             if (error == null) geoFiles.prune(_routingProfiles.value.fileUrls)

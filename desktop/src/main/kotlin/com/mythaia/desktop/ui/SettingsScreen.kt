@@ -204,6 +204,7 @@ fun SettingsScreen(state: AppState) {
                 if (routingProfiles.entries.isNotEmpty()) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(horizontal = 18.dp))
                     val selectedProfile = routingProfiles.active ?: routingProfiles.pending ?: ""
+                    val selectedEntry = routingProfiles.find(selectedProfile)
                     Row(modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         DropdownField(
                             tr("routing_profile"),
@@ -213,6 +214,11 @@ fun SettingsScreen(state: AppState) {
                         ) { v -> state.selectRoutingProfile(v.ifEmpty { null }) }
                         selectedProfile.takeIf { it.isNotEmpty() }?.let { activeName ->
                             Spacer(Modifier.width(8.dp))
+                            if (selectedEntry?.filesError != null) {
+                                TextButton(onClick = { state.retryRoutingFiles(activeName) }) {
+                                    Text(tr("update"))
+                                }
+                            }
                             TextButton(onClick = { state.selectRoutingProfile(null) }) {
                                 Text(tr("routing_profile_turn_off"))
                             }
@@ -221,11 +227,36 @@ fun SettingsScreen(state: AppState) {
                             }
                         }
                     }
-                    routingFilesFetching?.let { fetching ->
+                    selectedEntry?.profile?.let { p ->
+                        val summary = buildList {
+                            if (p.directSites.isNotEmpty()) add("direct site: ${p.directSites.size}")
+                            if (p.proxySites.isNotEmpty()) add("proxy site: ${p.proxySites.size}")
+                            if (p.blockSites.isNotEmpty()) add("block site: ${p.blockSites.size}")
+                            if (p.directIp.isNotEmpty()) add("direct ip: ${p.directIp.size}")
+                            if (p.proxyIp.isNotEmpty()) add("proxy ip: ${p.proxyIp.size}")
+                            if (p.blockIp.isNotEmpty()) add("block ip: ${p.blockIp.size}")
+                        }.joinToString(" · ")
+                        if (summary.isNotEmpty()) {
+                            Text(
+                                summary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (routingFilesFetching != null) {
                         Text(
-                            tr("routing_profile_fetching_geo", fetching),
+                            tr("routing_profile_fetching_geo", routingFilesFetching!!),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
+                        )
+                    } else if (!selectedEntry?.filesError.isNullOrBlank()) {
+                        Text(
+                            selectedEntry!!.filesError!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
                         )
                     }

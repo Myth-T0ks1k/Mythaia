@@ -382,19 +382,17 @@ private fun watchShowRequests(state: AppState) {
  * installed launcher; a running instance receives the link through the
  * import request file.
  */
-private object DeepLinks {
-    private val schemes = listOf("mythaia", "happ", "vless", "vmess", "trojan", "ss", "socks5", "hysteria2", "hy2", "anytls", "tuic")
+internal object DeepLinks {
+    private val schemes = listOf(
+        "mythaia", "happ", "vless", "vmess", "trojan", "ss", "socks5", "socks",
+        "hysteria2", "hy2", "anytls", "tuic", "wireguard", "wg", "sudoku", "nowhere"
+    )
 
     fun isLink(arg: String): Boolean = schemes.any { arg.startsWith("$it://", ignoreCase = true) }
 
-    /** The proxy link inside a `mythaia://add-proxy?link=` URL, or the argument itself. */
-    fun extract(arg: String): String {
-        if (!arg.startsWith("mythaia://", ignoreCase = true)) return arg
-        val query = arg.substringAfter('?', "")
-        val link = query.split('&').map { it.substringBefore('=') to it.substringAfter('=', "") }
-            .firstOrNull { it.first == "link" || it.first == "url" }?.second
-        return link?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) } ?: arg
-    }
+    /** The proxy or subscription link inside a wrapper URL, or the argument itself. */
+    fun extract(arg: String): String =
+        com.mythaia.data.network.LinkExtractor.unwrap(arg.trim()) ?: arg
 
     fun register() {
         if (!com.mythaia.desktop.engine.SystemProxy.isWindows) return

@@ -801,7 +801,13 @@ private fun AddDialog(onDismiss: () -> Unit, onAdd: (String, String?, String?, L
                     }) { Text(tr("add_from_clipboard")) }
                     TextButton(onClick = { fronting = !fronting }) { Text(tr("front_sni")) }
                 }
-                if (isWgConf || text.lineSequence().any { it.trim().let { l -> l.startsWith("http", ignoreCase = true) || l.startsWith("mythaia://import", ignoreCase = true) } } || fronting) {
+                val hasSub = text.lineSequence().any { raw ->
+                    val l = com.mythaia.data.network.LinkExtractor.unwrap(raw.trim()) ?: raw.trim()
+                    l.startsWith("http://", ignoreCase = true) ||
+                        l.startsWith("https://", ignoreCase = true) ||
+                        l.startsWith("mythaia://import", ignoreCase = true)
+                }
+                if (isWgConf || hasSub || fronting) {
                     WingField(name, { name = it }, if (isWgConf) tr("name") else tr("subscription_name"))
                 }
                 if (fronting) {

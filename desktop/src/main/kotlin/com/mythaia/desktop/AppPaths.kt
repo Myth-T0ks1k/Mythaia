@@ -8,12 +8,14 @@ object AppPaths {
     @Volatile
     var overrideDataDir: File? = null
 
-    val dataDir: File by lazy {
-        overrideDataDir?.let { return@lazy it.apply { mkdirs() } }
+    private val defaultDataDir: File by lazy {
         val base = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
             ?: System.getProperty("user.home")
         File(base, "Mythaia").apply { mkdirs() }
     }
+
+    val dataDir: File
+        get() = overrideDataDir?.apply { mkdirs() } ?: defaultDataDir
 
     /** Where the service, running as SYSTEM, keeps its snapshot and log. */
     val programData: File
