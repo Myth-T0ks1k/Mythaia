@@ -5,6 +5,8 @@ import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.MythaiaLogger
 import java.io.ByteArrayOutputStream
 import java.security.SecureRandom
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val logger = MythaiaLogger("SS2022")
 
@@ -52,10 +54,32 @@ class Shadowsocks2022Connection(
     }
 
     private val sendLock = Any()
+    private val sendMutex = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
 
     override val isConnected: Boolean get() = true
 
     override suspend fun sendRaw(data: ByteArray) {
+        sendMutex.withLock {
+            drainAsyncQueueLocked()
+            val encrypted = encodeOutboundLocked(data)
+            try {
+                transport.send(encrypted)
+            } finally {
+                drainAsyncQueueLocked()
+            }
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    override fun sendRawAsync(data: ByteArray) {
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    private fun encodeOutboundLocked(data: ByteArray): ByteArray {
         val needsHandshake: Boolean
         val header: ByteArray?
         synchronized(sendLock) {
@@ -66,38 +90,35 @@ class Shadowsocks2022Connection(
                 addressHeader = null
             }
         }
-
-        if (needsHandshake) {
-            val output = buildRequest(data, header!!)
-            transport.send(output)
+        return if (needsHandshake) {
+            buildRequest(data, header!!)
         } else {
-            val encrypted = sealChunks(data)
-            transport.send(encrypted)
+            sealChunks(data)
         }
     }
 
-    override fun sendRawAsync(data: ByteArray) {
-        try {
-            val needsHandshake: Boolean
-            val header: ByteArray?
-            synchronized(sendLock) {
-                needsHandshake = !handshakeSent
-                header = addressHeader
-                if (needsHandshake) {
-                    handshakeSent = true
-                    addressHeader = null
-                }
-            }
-
-            if (needsHandshake) {
-                val output = buildRequest(data, header!!)
-                transport.sendAsync(output)
-            } else {
-                val encrypted = sealChunks(data)
+    private fun drainAsyncQueueLocked() {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            try {
+                val encrypted = encodeOutboundLocked(next)
                 transport.sendAsync(encrypted)
+            } catch (e: Exception) {
+                logger.error("[SS2022] Send error: ${e.message}")
             }
-        } catch (e: Exception) {
-            logger.error("[SS2022] Send error: ${e.message}")
+        }
+    }
+
+    private fun flushAsyncIfUnlocked() {
+        while (synchronized(asyncQueue) { asyncQueue.isNotEmpty() }) {
+            if (!sendMutex.tryLock()) return
+            try {
+                drainAsyncQueueLocked()
+            } finally {
+                sendMutex.unlock()
+            }
         }
     }
 
@@ -111,6 +132,7 @@ class Shadowsocks2022Connection(
     }
 
     override fun cancel() {
+        synchronized(asyncQueue) { asyncQueue.clear() }
         transport.forceCancel()
     }
 

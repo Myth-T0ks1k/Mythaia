@@ -18,6 +18,13 @@ import com.mythaia.vpn.protocol.xhttp.TransportClosures
 import com.mythaia.vpn.protocol.xhttp.XHttpConnection
 import com.mythaia.vpn.util.NioSocket
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The byte pipe a stream protocol (VMess, Trojan) runs on: TCP or the chain
@@ -314,14 +321,49 @@ object StreamTransports {
     private val pooledTlsVersions = java.util.concurrent.ConcurrentHashMap<String, TlsVersion>()
 
     private fun grpcTransport(connection: com.mythaia.vpn.protocol.grpc.GrpcTunnel): Transport = object : Transport {
-        override suspend fun send(data: ByteArray) = connection.send(data)
-        override fun sendAsync(data: ByteArray) {
-            // gRPC frames carry sequence state, so the write goes
-            // through the ordered suspend path.
-            kotlinx.coroutines.runBlocking { connection.send(data) }
+        private val sendMutex = Mutex()
+        private val asyncQueue = java.util.ArrayDeque<ByteArray>()
+        private val asyncScope by lazy {
+            CoroutineScope(Dispatchers.IO + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
         }
+
+        private suspend fun drainAsyncQueueLocked() {
+            while (true) {
+                val next = synchronized(asyncQueue) {
+                    if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+                } ?: break
+                runCatching { connection.send(next) }
+            }
+        }
+
+        override suspend fun send(data: ByteArray) {
+            sendMutex.withLock {
+                drainAsyncQueueLocked()
+                try {
+                    connection.send(data)
+                } finally {
+                    drainAsyncQueueLocked()
+                }
+            }
+        }
+
+        override fun sendAsync(data: ByteArray) {
+            synchronized(asyncQueue) {
+                asyncQueue.addLast(data)
+            }
+            asyncScope.launch {
+                sendMutex.withLock {
+                    drainAsyncQueueLocked()
+                }
+            }
+        }
+
         override suspend fun receive(): ByteArray? = connection.receive()
-        override fun forceCancel() = connection.cancel()
+        override fun forceCancel() {
+            synchronized(asyncQueue) { asyncQueue.clear() }
+            runCatching { asyncScope.cancel() }
+            connection.cancel()
+        }
     }
 
     private inline fun wrap(inner: Opened, build: () -> Transport): Opened = try {
@@ -356,4 +398,3 @@ object StreamTransports {
         return Opened(socket, null)
     }
 }
-

@@ -12,6 +12,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.security.SecureRandom
 import java.util.concurrent.locks.ReentrantLock
@@ -30,6 +32,8 @@ class WebSocketConnection private constructor(
     private var receiveBuffer = ByteArray(0)
     private var receiveBufferLen = 0
     private val lock = ReentrantLock()
+    private val sendMutex = Mutex()
+    private val sendScope = CoroutineScope(Dispatchers.IO.limitedParallelism(1) + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
     private var _isConnected = true
     private var upgraded = false
     private val heartbeatScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
@@ -45,6 +49,13 @@ class WebSocketConnection private constructor(
          * relays, so frames of some hundred kilobytes are normal.
          */
         private const val MAX_FRAME_PAYLOAD = 16 * 1024 * 1024
+
+        /**
+         * Maximum payload size per outbound WebSocket binary frame (32 KB) so
+         * servers and CDNs with strict per-frame read limits never reject large
+         * coalesced uploads with 1009 Message Too Big.
+         */
+        private const val MAX_OUTBOUND_FRAME_PAYLOAD = 32_768
 
         /** Normal closure, going away, and a close with no status code (RFC 6455 §7.4.1). */
         private val NORMAL_CLOSE_CODES = setOf(1000, 1001, 1005)
@@ -174,15 +185,33 @@ class WebSocketConnection private constructor(
         }
     }
 
-    /** Sends data as a binary WebSocket frame (masked, opcode 0x02). */
+    /** Sends data as binary WebSocket frame(s) (masked, opcode 0x02). */
     suspend fun send(data: ByteArray) {
-        val frame = buildFrame(0x02, data)
-        transportSend(frame)
+        if (data.isEmpty()) {
+            val frame = buildFrame(0x02, data)
+            sendMutex.withLock { transportSend(frame) }
+            return
+        }
+        var offset = 0
+        while (offset < data.size) {
+            val chunkSize = minOf(MAX_OUTBOUND_FRAME_PAYLOAD, data.size - offset)
+            val chunk = if (offset == 0 && chunkSize == data.size) {
+                data
+            } else {
+                data.copyOfRange(offset, offset + chunkSize)
+            }
+            val frame = buildFrame(0x02, chunk)
+            sendMutex.withLock {
+                transportSend(frame)
+            }
+            offset += chunkSize
+        }
     }
 
     fun sendAsync(data: ByteArray) {
-        val frame = buildFrame(0x02, data)
-        transportSendAsync(frame)
+        sendScope.launch {
+            runCatching { send(data) }
+        }
     }
 
     /**
@@ -200,7 +229,7 @@ class WebSocketConnection private constructor(
                     is FrameResult.Binary -> return result.data
                     is FrameResult.Ping -> {
                         val pongFrame = buildFrame(0x0A, result.data)
-                        try { transportSend(pongFrame) } catch (_: Exception) {}
+                        try { sendMutex.withLock { transportSend(pongFrame) } } catch (_: Exception) {}
                         continue
                     }
                     is FrameResult.Pong -> continue
@@ -213,7 +242,7 @@ class WebSocketConnection private constructor(
                             (result.code and 0xFF).toByte()
                         )
                         val closeFrame = buildFrame(0x08, closePayload)
-                        try { transportSend(closeFrame) } catch (_: Exception) {}
+                        try { sendMutex.withLock { transportSend(closeFrame) } } catch (_: Exception) {}
                         lock.withLock { _isConnected = false }
                         // A close frame is how a WebSocket server ends the
                         // stream: Xray sends 1000 when the target hangs up,
@@ -244,6 +273,7 @@ class WebSocketConnection private constructor(
             heartbeatJob?.cancel()
             heartbeatJob = null
         }
+        sendScope.cancel()
         heartbeatScope.cancel()
         transportCancel()
     }
@@ -262,7 +292,7 @@ class WebSocketConnection private constructor(
                 if (!isConnected) break
                 try {
                     val pingFrame = buildFrame(0x09, byteArrayOf())
-                    transportSend(pingFrame)
+                    sendMutex.withLock { transportSend(pingFrame) }
                 } catch (e: Exception) {
                     lock.withLock {
                         heartbeatJob?.cancel()

@@ -293,7 +293,7 @@ class HysteriaClient(private val configuration: ProxyConfiguration) {
             alpn = listOf(ALPN),
             // NAIVE grants the unidirectional stream credit HTTP/3 needs for the
             // server's control stream, which is what the authentication rides on.
-            tuning = QuicTuning.NAIVE,
+            tuning = QuicTuning.hysteria(uploadMbps = configuration.hysteriaUpMbps ?: 0),
             fingerprint = tls?.fingerprint ?: com.mythaia.data.model.TlsFingerprint.CHROME_133,
             tlsServerName = tls?.serverName?.takeIf { it.isNotBlank() } ?: configuration.serverAddress,
             allowInsecure = tls?.allowInsecure == true,

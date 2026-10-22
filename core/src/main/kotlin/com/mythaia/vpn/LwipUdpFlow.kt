@@ -44,9 +44,10 @@ class LwipUdpFlow(
     /** The stack this flow belongs to; see [LwipHost]. */
     private val host: LwipHost
 ) {
-    // Coroutine scope for protocol operations, dispatched on the lwIP executor
+    // Coroutine scope for protocol operations, dispatched on Dispatchers.IO
+    // so UDP proxy handshakes, framing, and socket I/O do not block lwipExecutor.
     private val scopeJob = SupervisorJob()
-    private val scope = CoroutineScope(lwipExecutor.asCoroutineDispatcher() + scopeJob + com.mythaia.vpn.tunnelCrashGuard)
+    private val scope = CoroutineScope(Dispatchers.IO + scopeJob + com.mythaia.vpn.tunnelCrashGuard)
 
     var lastActivity: Double = System.nanoTime() / 1_000_000_000.0
         private set
@@ -74,6 +75,7 @@ class LwipUdpFlow(
      * for the user to see that datagrams are being dropped.
      */
     private var didWarnPendingOverflow = false
+    @Volatile
     var closed = false
         private set
 
@@ -226,12 +228,14 @@ class LwipUdpFlow(
 
             scope.launch {
                 try {
-                    val session = muxManager.dispatch(
-                        network = MuxNetwork.UDP,
-                        host = dstHost,
-                        port = dstPort,
-                        globalID = globalId
-                    )
+                    val session = withContext(lwipExecutor.asCoroutineDispatcher()) {
+                        muxManager.dispatch(
+                            network = MuxNetwork.UDP,
+                            host = dstHost,
+                            port = dstPort,
+                            globalID = globalId
+                        )
+                    }
 
                     lwipExecutor.execute {
                         proxyConnecting = false
@@ -488,12 +492,11 @@ class LwipUdpFlow(
                     return@launch
                 }
                 if (ips.isEmpty()) return@launch
-                // Resumed on lwipExecutor (scope dispatcher) after the IO hop.
-                // Re-check our binding to the same session+token in case the
-                // flow was torn down while we were resolving.
-                if (closed) return@launch
-                if (ssSession !== session || ssSessionToken != token) return@launch
-                session.addResponseHints(token, ips)
+                lwipExecutor.execute {
+                    if (closed) return@execute
+                    if (ssSession !== session || ssSessionToken != token) return@execute
+                    session.addResponseHints(token, ips)
+                }
             }
         }
     }

@@ -8,6 +8,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -47,19 +49,25 @@ class AnyTlsStream(
     /** Set by [cancel], i.e. by this side giving up. */
     private val cancelled = AtomicBoolean(false)
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
+    private val sendMutex = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1) + com.mythaia.vpn.tunnelCrashGuard)
 
     override val isConnected: Boolean
         get() = !cancelled.get() && !session.isClosed
 
     override suspend fun sendRaw(data: ByteArray) {
         if (cancelled.get()) return
-        session.sendStreamData(streamId, data)
+        sendMutex.withLock {
+            if (cancelled.get()) return
+            session.sendStreamData(streamId, data)
+        }
     }
 
     override fun sendRawAsync(data: ByteArray) {
         if (cancelled.get()) return
-        scope.launch { runCatching { session.sendStreamData(streamId, data) } }
+        scope.launch {
+            runCatching { sendRaw(data) }
+        }
     }
 
     /**

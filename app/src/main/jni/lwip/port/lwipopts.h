@@ -65,7 +65,7 @@
 
 /* --- TCP configuration --- */
 #define TCP_MSS                         1460
-#define TCP_WND                         (1024 * TCP_MSS)
+#define TCP_WND                         (256 * TCP_MSS)
 #define TCP_SND_BUF                     (1024 * TCP_MSS)
 #define TCP_SND_QUEUELEN                (4 * TCP_SND_BUF / TCP_MSS)
 #define TCP_SNDLOWAT                    ((2 * TCP_MSS) + 1)

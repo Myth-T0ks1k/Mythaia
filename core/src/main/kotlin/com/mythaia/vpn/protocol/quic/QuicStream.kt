@@ -8,8 +8,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -30,6 +30,9 @@ class QuicStream(
 ) : ProxyConnection() {
 
     private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
+
+    /** Signalled when the connection processes ACKs, window updates, or pacing timer expiries. */
+    private val writeReady = Channel<Unit>(Channel.CONFLATED)
 
     /** Set when no more data will arrive; what is queued is still readable. */
     private val ended = AtomicBoolean(false)
@@ -116,20 +119,22 @@ class QuicStream(
     }
 
     /**
-     * Offers the whole payload, the remainder again until it is taken.
+     * Offers the whole payload in-place by offset and length until it is taken.
      *
-     * ngtcp2 accepts as much as flow control and congestion allow and no more,
-     * so a partial accept is ordinary rather than an error; what is left waits
-     * for the peer to open the window. A result below [QuicConnection.WRITE_AGAIN]
-     * is terminal — the stream is gone — and surfaces as an exception on a data
-     * write, or is swallowed on a FIN, where there is nothing left to end.
+     * Passing `(data, offset, length)` directly to [QuicConnection.writeStream]
+     * avoids slicing a new tail `ByteArray` on every packet (which previously
+     * allocated ~1.8 MB of transient heap copies per 64 KB chunk). When ngtcp2
+     * returns [QuicConnection.WRITE_AGAIN], this waits on [writeReady] (woken
+     * immediately on incoming ACKs or timer expiry) instead of a blind 5-15 ms sleep.
      */
     private suspend fun writeOrdered(data: ByteArray, fin: Boolean) {
         var offset = 0
+        val total = data.size
         while (true) {
             if (cancelled.get() || broken.get()) return
-            val remaining = if (offset == 0) data else data.copyOfRange(offset, data.size)
-            val accepted = connection.writeStream(streamId, remaining, fin)
+            writeReady.tryReceive()
+            val remaining = total - offset
+            val accepted = connection.writeStream(streamId, data, offset, remaining, fin)
             when {
                 accepted < QuicConnection.WRITE_AGAIN -> {
                     // Terminal: the stream does not exist, is shut for writing,
@@ -138,17 +143,22 @@ class QuicStream(
                     throw ProxyError.ConnectionFailed("QUIC stream $streamId write failed (ngtcp2 $accepted)")
                 }
                 accepted == QuicConnection.WRITE_AGAIN -> {
-                    // Nothing fit this time — congestion, pacing, a full packet
-                    // or a blocked window. A FIN with no data lands here until
-                    // ngtcp2 has room for it, which is why finish() must loop.
-                    delay(WRITE_RETRY_MS)
+                    // Wait for an ACK / MAX_STREAM_DATA / pacing timer wakeup,
+                    // with a short fallback timeout.
+                    withTimeoutOrNull(WRITE_RETRY_MS) {
+                        writeReady.receive()
+                    }
                 }
                 else -> {
                     offset += accepted.toInt()
-                    if (offset >= data.size) return
+                    if (offset >= total) return
                 }
             }
         }
+    }
+
+    internal fun onWriteReady() {
+        writeReady.trySend(Unit)
     }
 
     /**
@@ -215,6 +225,7 @@ class QuicStream(
         returnOutstandingCredit(wake = false)
         incoming.close()
         outbound.close()
+        writeReady.close()
         connection.shutdownStream(streamId)
         scope.cancel()
     }
@@ -236,6 +247,7 @@ class QuicStream(
     internal fun onPeerClosed() {
         if (!ended.compareAndSet(false, true)) return
         incoming.close()
+        writeReady.close()
     }
 
     /**
@@ -246,6 +258,7 @@ class QuicStream(
         if (!ended.compareAndSet(false, true)) return
         returnOutstandingCredit(wake = false)
         incoming.close()
+        writeReady.close()
     }
 
     /**
@@ -260,6 +273,7 @@ class QuicStream(
         returnOutstandingCredit(wake = false)
         incoming.close(resetCause)
         outbound.close()
+        writeReady.close()
     }
 
     /**
@@ -296,6 +310,6 @@ class QuicStream(
     }
 
     private companion object {
-        const val WRITE_RETRY_MS = 5L
+        const val WRITE_RETRY_MS = 2L
     }
 }

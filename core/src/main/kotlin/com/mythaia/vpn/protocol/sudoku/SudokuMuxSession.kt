@@ -227,7 +227,7 @@ internal class SudokuMuxSession private constructor(
     companion object {
         const val MUX_CONTROL_PING: Byte = 0x05
         const val MUX_CONTROL_PONG: Byte = 0x06
-        const val MAX_DATA_WRITE_SIZE: Int = 128 * 1024
+        const val MAX_DATA_WRITE_SIZE: Int = 16 * 1024
 
         private val EMPTY_BYTES = ByteArray(0)
         private val CONTROL_PING_FRAME = byteArrayOf(MUX_CONTROL_PING, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -278,30 +278,34 @@ class SudokuMuxStreamConnection internal constructor(
     private var resetMessage: String? = null
 
     private val events = Channel<StreamEvent>(Channel.UNLIMITED)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard)
+    private val sendMutex = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1) + com.mythaia.vpn.tunnelCrashGuard)
 
     override val isConnected: Boolean
         get() = !closed.get() && !remoteClosed.get() && muxSession.isConnected
 
     override suspend fun sendRaw(data: ByteArray) {
         if (data.isEmpty() || closed.get()) return
-        resetMessage?.let { throw ProxyError.ProtocolError("Sudoku mux reset: $it") }
-        if (remoteClosed.get() || !muxSession.isConnected) {
-            throw ProxyError.ProtocolError("Sudoku mux stream is closed")
-        }
-        var offset = 0
-        while (offset < data.size) {
-            val count = minOf(SudokuMuxSession.MAX_DATA_WRITE_SIZE, data.size - offset)
-            val chunk = data.copyOfRange(offset, offset + count)
-            try {
-                muxSession.sendFrame(SudokuProtocol.MUX_DATA, streamId, chunk)
-            } catch (e: Exception) {
-                throw when (e) {
-                    is ProxyError -> e
-                    else -> ProxyError.ProtocolError(e.message ?: "Sudoku mux write failed")
-                }
+        sendMutex.withLock {
+            if (closed.get()) return
+            resetMessage?.let { throw ProxyError.ProtocolError("Sudoku mux reset: $it") }
+            if (remoteClosed.get() || !muxSession.isConnected) {
+                throw ProxyError.ProtocolError("Sudoku mux stream is closed")
             }
-            offset += count
+            var offset = 0
+            while (offset < data.size) {
+                val count = minOf(SudokuMuxSession.MAX_DATA_WRITE_SIZE, data.size - offset)
+                val chunk = data.copyOfRange(offset, offset + count)
+                try {
+                    muxSession.sendFrame(SudokuProtocol.MUX_DATA, streamId, chunk)
+                } catch (e: Exception) {
+                    throw when (e) {
+                        is ProxyError -> e
+                        else -> ProxyError.ProtocolError(e.message ?: "Sudoku mux write failed")
+                    }
+                }
+                offset += count
+            }
         }
     }
 

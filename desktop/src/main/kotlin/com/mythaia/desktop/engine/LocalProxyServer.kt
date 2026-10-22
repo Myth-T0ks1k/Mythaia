@@ -679,8 +679,9 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         try {
             coroutineScope {
                 val lastActivity = AtomicLong(System.nanoTime())
+                val uplinkFailed = AtomicBoolean(false)
                 val uplink = launch {
-                    val buffer = ByteArray(32 * 1024)
+                    val buffer = ByteArray(16 * 1024)
                     try {
                         while (true) {
                             val n = withContext(io) { input.read(buffer) }
@@ -688,7 +689,12 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                             if (n == 0) continue
                             lastActivity.set(System.nanoTime())
                             stats.up.addAndGet(n.toLong())
-                            upstream.send(buffer.copyOf(n))
+                            try {
+                                upstream.send(buffer.copyOf(n))
+                            } catch (e: Exception) {
+                                uplinkFailed.set(true)
+                                throw e
+                            }
                         }
                     } catch (_: Exception) {
                     }
@@ -728,7 +734,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
                         uplink.onJoin { true }
                         downlink.onJoin { false }
                     }
-                    if (uplinkFirst) {
+                    if (uplinkFirst && !uplinkFailed.get()) {
                         kotlinx.coroutines.withTimeoutOrNull(HALF_CLOSE_GRACE_MS) { downlink.join() }
                     }
                 } finally {
@@ -750,9 +756,11 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
     /**
      * The client's first bytes after the connection was confirmed, after
      * [already] when some came with the request: read until they are whole
-     * (`FirstData`: any non-TLS bytes, or a whole first TLS record), each read
-     * waiting at most `TunnelConstants.firstDataWaitMs`. Null when the client
-     * sent none in that time (a server-speaks-first protocol) or closed.
+     * (`FirstData`: any non-TLS bytes, or a whole first TLS record), bounded
+     * by a single `TunnelConstants.firstDataWaitMs` deadline and capped at
+     * [MAX_FIRST_DATA_BYTES] so a fast upload does not buffer indefinitely
+     * before dialling. Null when the client sent none in that time (a
+     * server-speaks-first protocol) or closed.
      */
     private suspend fun readFirstData(
         client: Socket,
@@ -760,10 +768,14 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         already: ByteArray = ByteArray(0)
     ): ByteArray? = withContext(io) {
         val first = ByteArrayOutputStream().apply { write(already) }
-        val chunk = ByteArray(32 * 1024)
+        val chunk = ByteArray(8 * 1024)
+        val deadlineMs = System.currentTimeMillis() + com.mythaia.vpn.TunnelConstants.firstDataWaitMs
         try {
-            while (!com.mythaia.vpn.FirstData.isComplete(first.toByteArray())) {
-                client.soTimeout = com.mythaia.vpn.TunnelConstants.firstDataWaitMs.toInt()
+            while (first.size() < MAX_FIRST_DATA_BYTES &&
+                !com.mythaia.vpn.FirstData.isComplete(first.toByteArray())) {
+                val remainingMs = (deadlineMs - System.currentTimeMillis()).toInt()
+                if (remainingMs <= 0) break
+                client.soTimeout = remainingMs
                 val n = try {
                     input.read(chunk)
                 } catch (_: java.net.SocketTimeoutException) {
@@ -813,6 +825,7 @@ class LocalProxyServer(private val dialer: Dialer, private val stats: TrafficSta
         private const val MAX_PER_CLIENT = 256
         private const val REFUSAL_LOG_INTERVAL_MS = 10_000L
         private const val MAX_HEAD = 64 * 1024
+        private const val MAX_FIRST_DATA_BYTES = 16 * 1024
         private const val CMD_CONNECT = 1
         private const val CMD_UDP_ASSOCIATE = 3
         private const val REP_SUCCESS = 0

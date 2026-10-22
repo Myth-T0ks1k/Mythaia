@@ -23,6 +23,9 @@ import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 
 private val logger = MythaiaLogger("XHTTP")
 
@@ -66,6 +69,11 @@ class XHttpConnection private constructor(
     private var downloadHeadersParsed = false
     private var _isConnected = true
     private val lock = ReentrantLock()
+    private val h2WriteMutex = Mutex()
+    private val h2ReadMutex = Mutex()
+    private val http11UploadReconnectMutex = Mutex()
+    private val pooledPacketUpSemaphore = Semaphore(8)
+    private val h2ResetPacketStreams = HashSet<UInt>()
 
     // Packet-up batching: each `send()` in packet-up mode appends to the queue and
     // suspends until the batched POST has been written; a single in-flight flush drains
@@ -327,6 +335,7 @@ class XHttpConnection private constructor(
                 val upload = pooledStream!!()
                 upload.openRequest(encodeH2UploadHeaders(seq = null))
                 pooledUpload = upload
+                startPooledUploadDrain(upload)
             }
         } else if (useHTTP2) {
             performH2Setup()
@@ -362,6 +371,16 @@ class XHttpConnection private constructor(
             val upload = openUp()
             upload.openRequest(encodeH2UploadHeaders(seq = null))
             pooledUpload = upload
+            startPooledUploadDrain(upload)
+        }
+    }
+
+    private fun startPooledUploadDrain(upload: com.mythaia.vpn.protocol.naive.http2.Http2Stream) {
+        packetUpScope.launch {
+            try {
+                while (upload.receiveData() != null) { /* drain 200 OK / padding */ }
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -503,34 +522,80 @@ class XHttpConnection private constructor(
             ?: throw XHttpError.SetupFailed("No upload connection factory")
 
         val closures = factory()
-        lock.withLock {
+        val oldCancel = lock.withLock {
+            if (!_isConnected) {
+                closures.cancel()
+                throw XHttpError.ConnectionClosed
+            }
+            val prevCancel = uploadCancel
             uploadSend = closures.send
             uploadSendAsync = closures.sendAsync
             uploadReceive = closures.receive
             uploadCancel = closures.cancel
+            prevCancel
         }
+        oldCancel?.let { runCatching { it() } }
 
         // Continuously drain upload-POST responses to prevent TCP receive buffer
         // saturation and the resulting backpressure on the upload stream.
-        startUploadResponseDrain()
+        startUploadResponseDrain(closures.receive, closures.send)
     }
 
-    private fun startUploadResponseDrain() {
+    private fun startUploadResponseDrain(
+        expectedReceive: (suspend () -> ByteArray?)? = null,
+        expectedSend: (suspend (ByteArray) -> Unit)? = null
+    ) {
+        uploadDrainJob?.cancel()
         uploadDrainJob = CoroutineScope(Dispatchers.IO + com.mythaia.vpn.tunnelCrashGuard).launch {
-            drainNextUploadResponse()
+            drainNextUploadResponse(expectedReceive, expectedSend)
         }
     }
 
-    private suspend fun drainNextUploadResponse() {
+    private suspend fun drainNextUploadResponse(
+        expectedReceive: (suspend () -> ByteArray?)? = null,
+        expectedSend: (suspend (ByteArray) -> Unit)? = null
+    ) {
         while (true) {
             val upReceive = lock.withLock {
                 if (!_isConnected) return
-                uploadReceive ?: return
+                val cur = uploadReceive ?: return
+                if (expectedReceive != null && cur !== expectedReceive) return
+                cur
             }
             try {
                 val data = upReceive()
-                if (data == null || data.isEmpty()) return
+                if (data == null || data.isEmpty()) {
+                    // Server closed the HTTP/1.1 keep-alive upload connection (e.g. after
+                    // keepalive_requests). Clear uploadSend so the next POST reconnects.
+                    if (mode == XHttpMode.PACKET_UP && expectedSend != null) {
+                        val staleCancel = lock.withLock {
+                            if (uploadSend === expectedSend) {
+                                val c = uploadCancel
+                                uploadSend = null
+                                uploadSendAsync = null
+                                uploadReceive = null
+                                uploadCancel = null
+                                c
+                            } else null
+                        }
+                        staleCancel?.let { runCatching { it() } }
+                    }
+                    return
+                }
             } catch (_: Exception) {
+                if (mode == XHttpMode.PACKET_UP && expectedSend != null) {
+                    val staleCancel = lock.withLock {
+                        if (uploadSend === expectedSend) {
+                            val c = uploadCancel
+                            uploadSend = null
+                            uploadSendAsync = null
+                            uploadReceive = null
+                            uploadCancel = null
+                            c
+                        } else null
+                    }
+                    staleCancel?.let { runCatching { it() } }
+                }
                 return
             }
         }
@@ -777,21 +842,66 @@ class XHttpConnection private constructor(
      * [XHttpConfiguration.uplinkDataPlacement].
      */
     private suspend fun sendPacketUpHTTP11(data: ByteArray, firstSeq: Long) {
-        val upSend: suspend (ByteArray) -> Unit = lock.withLock {
-            uploadSend ?: throw XHttpError.SetupFailed("Upload connection not established")
-        }
-
         val maxSize = maxOf(1, configuration.scMaxEachPostBytes)
+        if (data.isEmpty()) {
+            sendSinglePostWithRetry(data, firstSeq)
+            return
+        }
         var offset = 0
         var seq = firstSeq
         while (offset < data.size) {
             val end = minOf(offset + maxSize, data.size)
             val chunk = if (offset == 0 && end == data.size) data else data.copyOfRange(offset, end)
-            sendSinglePost(chunk, seq, upSend)
+            sendSinglePostWithRetry(chunk, seq)
             offset = end
             if (offset < data.size) {
                 seq = lock.withLock { val s = nextSeq; nextSeq++; s }
             }
+        }
+    }
+
+    /**
+     * Sends a single HTTP/1.1 packet-up POST, reconnecting the upload socket once via
+     * [uploadConnectionFactory] if the keep-alive socket was closed by the server/CDN
+     * (e.g. after `keepalive_requests`).
+     */
+    private suspend fun sendSinglePostWithRetry(data: ByteArray, seq: Long) {
+        var upSend = lock.withLock {
+            if (!_isConnected) throw XHttpError.ConnectionClosed
+            uploadSend
+        }
+        if (upSend == null) {
+            http11UploadReconnectMutex.withLock {
+                upSend = lock.withLock {
+                    if (!_isConnected) throw XHttpError.ConnectionClosed
+                    uploadSend
+                }
+                if (upSend == null) {
+                    setupHttp11UploadForPacketUp()
+                    upSend = lock.withLock { uploadSend }
+                        ?: throw XHttpError.SetupFailed("Upload connection not established")
+                }
+            }
+        }
+        try {
+            sendSinglePost(data, seq, upSend!!)
+        } catch (e: Throwable) {
+            val canReconnect = lock.withLock { _isConnected && uploadConnectionFactory != null }
+            if (!canReconnect) throw e
+            val freshSend = http11UploadReconnectMutex.withLock {
+                val cur = lock.withLock {
+                    if (!_isConnected) throw XHttpError.ConnectionClosed
+                    uploadSend
+                }
+                if (cur != null && cur !== upSend) {
+                    cur
+                } else {
+                    setupHttp11UploadForPacketUp()
+                    lock.withLock { uploadSend }
+                        ?: throw e
+                }
+            }
+            sendSinglePost(data, seq, freshSend)
         }
     }
 
@@ -934,6 +1044,7 @@ class XHttpConnection private constructor(
             pendingResumptions = h2FlowResumptions.toList()
             h2FlowResumptions.clear()
             h2PacketStreamWindows.clear()
+            h2ResetPacketStreams.clear()
         }
 
         for ((_, deferred) in pendingPackets) {
@@ -1510,9 +1621,15 @@ class XHttpConnection private constructor(
             initData += buildH2Frame(H2_FRAME_HEADERS, H2_FLAG_END_HEADERS, h2UploadStreamId, uploadHeaders)
         }
 
-        downloadSend(initData)
+        writeH2Frames(initData)
 
         readH2SetupFrames()
+    }
+
+    private suspend fun writeH2Frames(data: ByteArray) {
+        h2WriteMutex.withLock {
+            downloadSend(data)
+        }
     }
 
     /**
@@ -1533,7 +1650,7 @@ class XHttpConnection private constructor(
                     } else {
                         parseH2Settings(frame.payload)
                         val ack = buildH2Frame(H2_FRAME_SETTINGS, H2_FLAG_ACK, 0u, byteArrayOf())
-                        try { downloadSend(ack) } catch (_: Exception) {}
+                        try { writeH2Frames(ack) } catch (_: Exception) {}
                         if (resumeAfter) drainH2FlowResumptions()
                         return
                     }
@@ -1553,7 +1670,7 @@ class XHttpConnection private constructor(
                 }
                 H2_FRAME_PING -> {
                     val pong = buildH2Frame(H2_FRAME_PING, H2_FLAG_ACK, 0u, frame.payload)
-                    try { downloadSend(pong) } catch (_: Exception) {}
+                    try { writeH2Frames(pong) } catch (_: Exception) {}
                     continue
                 }
                 H2_FRAME_GOAWAY -> {
@@ -1603,6 +1720,7 @@ class XHttpConnection private constructor(
     private fun parseH2Settings(payload: ByteArray) {
         // Each setting is 6 bytes: 2-byte ID + 4-byte value
         var offset = 0
+        var shouldResume = false
         while (offset + 6 <= payload.size) {
             val id = ((payload[offset].toInt() and 0xFF) shl 8) or
                     (payload[offset + 1].toInt() and 0xFF)
@@ -1618,12 +1736,19 @@ class XHttpConnection private constructor(
                         val delta = value - h2PeerInitialWindowSize
                         h2PeerInitialWindowSize = value
                         h2PeerStreamSendWindow += delta
+                        for (entry in h2PacketStreamWindows.entries) {
+                            entry.setValue(entry.value + delta)
+                        }
+                        if (delta > 0) shouldResume = true
                     }
                 }
                 0x05 -> { // MAX_FRAME_SIZE
-                    lock.withLock { h2MaxFrameSize = value }
+                    lock.withLock { h2MaxFrameSize = value.coerceIn(16384, 16_777_215) }
                 }
             }
+        }
+        if (shouldResume) {
+            drainH2FlowResumptions()
         }
     }
 
@@ -1672,38 +1797,57 @@ class XHttpConnection private constructor(
         var offset = 0
         while (offset < data.size) {
             val (nextOffset, frames) = lock.withLock {
-                if (h2StreamClosed) throw XHttpError.ConnectionClosed
+                if (h2StreamClosed || !_isConnected) throw XHttpError.ConnectionClosed
                 val window = minOf(h2PeerConnectionWindow, h2PeerStreamSendWindow)
                 if (window <= 0) return@withLock Pair(offset, ByteArray(0))
 
-                val maxSize = h2MaxFrameSize
+                val maxSize = minOf(h2MaxFrameSize, 16384)
                 var currentOffset = offset
                 var windowRemaining = window
-                var framesBuf = ByteArray(0)
+                val framesBuf = java.io.ByteArrayOutputStream()
                 while (currentOffset < data.size) {
                     val remaining = data.size - currentOffset
                     val chunkSize = minOf(remaining, minOf(maxSize, windowRemaining))
                     if (chunkSize <= 0) break
                     val chunk = data.copyOfRange(currentOffset, currentOffset + chunkSize)
-                    framesBuf += buildH2Frame(H2_FRAME_DATA, 0, streamId, chunk)
+                    framesBuf.write(buildH2Frame(H2_FRAME_DATA, 0, streamId, chunk))
                     currentOffset += chunkSize
                     windowRemaining -= chunkSize
                 }
                 val totalSent = window - windowRemaining
                 h2PeerConnectionWindow -= totalSent
                 h2PeerStreamSendWindow -= totalSent
-                Pair(currentOffset, framesBuf)
+                Pair(currentOffset, framesBuf.toByteArray())
             }
 
             if (frames.isEmpty()) {
-                // Window is empty — wait for WINDOW_UPDATE
-                awaitH2FlowResumption()
+                // Window is empty — if no receive() coroutine is currently reading,
+                // pump one H2 frame so incoming WINDOW_UPDATEs are processed.
+                if (h2ReadMutex.tryLock()) {
+                    try {
+                        val needsPump = lock.withLock {
+                            if (h2StreamClosed || !_isConnected) throw XHttpError.ConnectionClosed
+                            minOf(h2PeerConnectionWindow, h2PeerStreamSendWindow) <= 0
+                        }
+                        if (needsPump) {
+                            val payload = processOneH2FrameLocked()
+                            if (payload != null && payload.isNotEmpty()) {
+                                lock.withLock { appendToH2DataBuffer(payload) }
+                            }
+                        }
+                    } finally {
+                        h2ReadMutex.unlock()
+                    }
+                } else {
+                    awaitH2FlowResumption()
+                }
                 continue
             }
             try {
-                downloadSend(frames)
+                writeH2Frames(frames)
             } catch (e: Throwable) {
                 lock.withLock { h2StreamClosed = true }
+                drainH2FlowResumptions()
                 throw e
             }
             offset = nextOffset
@@ -1711,20 +1855,45 @@ class XHttpConnection private constructor(
     }
 
     /**
-     * Sends data as a packet-up H2 upload: opens a new HTTP/2 stream with HEADERS + DATA + END_STREAM.
-     *
-     * Each packet-up upload uses a unique stream ID. Each new stream starts with the
-     * peer's INITIAL_WINDOW_SIZE for its own stream window; only the connection window
-     * is shared.
+     * Sends data as packet-up H2 upload(s): splits oversized data into chunks of at most
+     * [XHttpConfiguration.scMaxEachPostBytes] bytes (each with its own sequence number)
+     * and opens a new HTTP/2 stream with HEADERS + DATA + END_STREAM per chunk.
      */
-    private suspend fun sendH2PacketUp(data: ByteArray, seq: Long) {
+    private suspend fun sendH2PacketUp(data: ByteArray, firstSeq: Long) {
+        val maxPostSize = maxOf(1, configuration.scMaxEachPostBytes)
+        if (data.isEmpty()) {
+            sendSingleH2PacketUp(data, firstSeq)
+            return
+        }
+        var offset = 0
+        var seq = firstSeq
+        while (offset < data.size) {
+            val end = minOf(offset + maxPostSize, data.size)
+            val chunk = if (offset == 0 && end == data.size) data else data.copyOfRange(offset, end)
+            sendSingleH2PacketUp(chunk, seq)
+            offset = end
+            if (offset < data.size) {
+                seq = lock.withLock { val s = nextSeq; nextSeq++; s }
+            }
+        }
+    }
+
+    private suspend fun sendSingleH2PacketUp(data: ByteArray, seq: Long) {
         pooledStream?.let { open ->
-            // One POST, as a stream of the shared connection. Its reply (an
-            // empty 200) ends the stream by itself; nothing waits for it.
-            val post = open()
+            // Bound concurrent in-flight POST streams per connection so a fast upload
+            // never exhausts the 100-stream H2 session cap or triggers a dial storm.
+            pooledPacketUpSemaphore.acquire()
+            val post: com.mythaia.vpn.protocol.naive.http2.Http2Stream
+            try {
+                post = open()
+            } catch (e: Throwable) {
+                pooledPacketUpSemaphore.release()
+                throw e
+            }
             lock.withLock {
                 if (!_isConnected) {
                     post.close()
+                    pooledPacketUpSemaphore.release()
                     throw XHttpError.ConnectionClosed
                 }
                 pooledPosts.add(post)
@@ -1738,6 +1907,7 @@ class XHttpConnection private constructor(
                 // the session for good and the session was never reaped.
                 lock.withLock { pooledPosts.remove(post) }
                 post.close()
+                pooledPacketUpSemaphore.release()
                 throw e
             }
             // Reads the reply out until the server ends the stream: that
@@ -1751,65 +1921,76 @@ class XHttpConnection private constructor(
                 } finally {
                     lock.withLock { pooledPosts.remove(post) }
                     post.close()
+                    pooledPacketUpSemaphore.release()
                 }
             }
             return
         }
         val streamId: UInt
-        val initialFrames: ByteArray
-        var startOffset: Int
-        var perStreamRemaining: Int
+        val startOffset: Int
+        val perStreamRemaining: Int
 
-        lock.withLock {
-            if (h2StreamClosed) throw XHttpError.ConnectionClosed
-            streamId = h2NextPacketStreamId
-            h2NextPacketStreamId += 2u
-            val maxSize = h2MaxFrameSize
-            // Each new stream starts with h2PeerInitialWindowSize.
-            val streamWindow = h2PeerInitialWindowSize
+        // Allocate streamId and send HEADERS under h2WriteMutex so new stream IDs
+        // reach the wire in strictly monotonically increasing order (RFC 7540 §5.1.1).
+        val sentInitial = h2WriteMutex.withLock {
+            val initialFrames: ByteArray
+            val allocatedId: UInt
+            val initialOffset: Int
+            val remWindow: Int
+            lock.withLock {
+                if (h2StreamClosed || !_isConnected) throw XHttpError.ConnectionClosed
+                allocatedId = h2NextPacketStreamId
+                h2NextPacketStreamId += 2u
+                val maxSize = minOf(h2MaxFrameSize, 16384)
+                val streamWindow = h2PeerInitialWindowSize
 
-            val headerBlock = encodeH2UploadHeaders(seq, contentLength = data.size)
-            val headerFlags: Byte = if (data.isEmpty()) {
-                (H2_FLAG_END_HEADERS.toInt() or H2_FLAG_END_STREAM.toInt()).toByte()
-            } else {
-                H2_FLAG_END_HEADERS
-            }
-            var outbound = buildH2Frame(H2_FRAME_HEADERS, headerFlags, streamId, headerBlock)
-
-            if (data.isEmpty()) {
-                initialFrames = outbound
-                startOffset = 0
-                perStreamRemaining = streamWindow
-            } else {
-                // Batch DATA frames with HEADERS into a single write when window allows
-                val window = minOf(h2PeerConnectionWindow, streamWindow)
-                var currentOffset = 0
-                var windowRemaining = window
-                while (currentOffset < data.size) {
-                    val remaining = data.size - currentOffset
-                    val chunkSize = minOf(remaining, minOf(maxSize, windowRemaining))
-                    if (chunkSize <= 0) break
-                    val isLast = (currentOffset + chunkSize) >= data.size
-                    val flags: Byte = if (isLast) H2_FLAG_END_STREAM else 0
-                    val chunk = data.copyOfRange(currentOffset, currentOffset + chunkSize)
-                    outbound += buildH2Frame(H2_FRAME_DATA, flags, streamId, chunk)
-                    currentOffset += chunkSize
-                    windowRemaining -= chunkSize
+                val headerBlock = encodeH2UploadHeaders(seq, contentLength = data.size)
+                val headerFlags: Byte = if (data.isEmpty()) {
+                    (H2_FLAG_END_HEADERS.toInt() or H2_FLAG_END_STREAM.toInt()).toByte()
+                } else {
+                    H2_FLAG_END_HEADERS
                 }
-                val totalSent = window - windowRemaining
-                h2PeerConnectionWindow -= totalSent
-                perStreamRemaining = streamWindow - totalSent
-                startOffset = currentOffset
-                initialFrames = outbound
-            }
-        }
+                val outbound = java.io.ByteArrayOutputStream()
+                outbound.write(buildH2Frame(H2_FRAME_HEADERS, headerFlags, allocatedId, headerBlock))
 
-        try {
-            downloadSend(initialFrames)
-        } catch (e: Throwable) {
-            lock.withLock { h2StreamClosed = true }
-            throw e
+                if (data.isEmpty()) {
+                    initialFrames = outbound.toByteArray()
+                    initialOffset = 0
+                    remWindow = streamWindow
+                } else {
+                    val window = minOf(h2PeerConnectionWindow, streamWindow)
+                    var currentOffset = 0
+                    var windowRemaining = window
+                    while (currentOffset < data.size) {
+                        val remaining = data.size - currentOffset
+                        val chunkSize = minOf(remaining, minOf(maxSize, windowRemaining))
+                        if (chunkSize <= 0) break
+                        val isLast = (currentOffset + chunkSize) >= data.size
+                        val flags: Byte = if (isLast) H2_FLAG_END_STREAM else 0
+                        val chunk = data.copyOfRange(currentOffset, currentOffset + chunkSize)
+                        outbound.write(buildH2Frame(H2_FRAME_DATA, flags, allocatedId, chunk))
+                        currentOffset += chunkSize
+                        windowRemaining -= chunkSize
+                    }
+                    val totalSent = window - windowRemaining
+                    h2PeerConnectionWindow -= totalSent
+                    remWindow = streamWindow - totalSent
+                    initialOffset = currentOffset
+                    initialFrames = outbound.toByteArray()
+                }
+            }
+            try {
+                downloadSend(initialFrames)
+            } catch (e: Throwable) {
+                lock.withLock { h2StreamClosed = true }
+                drainH2FlowResumptions()
+                throw e
+            }
+            Triple(allocatedId, initialOffset, remWindow)
         }
+        streamId = sentInitial.first
+        startOffset = sentInitial.second
+        perStreamRemaining = sentInitial.third
 
         if (startOffset < data.size) {
             // Remaining data needs more window — continue via sendH2PacketUpData
@@ -1833,7 +2014,11 @@ class XHttpConnection private constructor(
 
         while (currentOffset < data.size) {
             val (nextOffset, frames, newStreamWindow) = lock.withLock {
-                if (h2StreamClosed) throw XHttpError.ConnectionClosed
+                if (h2StreamClosed || !_isConnected) throw XHttpError.ConnectionClosed
+                if (h2ResetPacketStreams.remove(streamId)) {
+                    h2PacketStreamWindows.remove(streamId)
+                    return
+                }
 
                 // Use window updated by WINDOW_UPDATE if this stream was previously blocked.
                 val effectiveStreamWindow = h2PacketStreamWindows.remove(streamId) ?: streamWindow
@@ -1844,10 +2029,10 @@ class XHttpConnection private constructor(
                     return@withLock Triple(currentOffset, ByteArray(0), effectiveStreamWindow)
                 }
 
-                val maxSize = h2MaxFrameSize
+                val maxSize = minOf(h2MaxFrameSize, 16384)
                 var off = currentOffset
                 var windowRemaining = window
-                var framesBuf = ByteArray(0)
+                val framesBuf = java.io.ByteArrayOutputStream()
                 while (off < data.size) {
                     val remaining = data.size - off
                     val chunkSize = minOf(remaining, minOf(maxSize, windowRemaining))
@@ -1855,24 +2040,47 @@ class XHttpConnection private constructor(
                     val isLast = (off + chunkSize) >= data.size
                     val flags: Byte = if (isLast) H2_FLAG_END_STREAM else 0
                     val chunk = data.copyOfRange(off, off + chunkSize)
-                    framesBuf += buildH2Frame(H2_FRAME_DATA, flags, streamId, chunk)
+                    framesBuf.write(buildH2Frame(H2_FRAME_DATA, flags, streamId, chunk))
                     off += chunkSize
                     windowRemaining -= chunkSize
                 }
                 val totalSent = window - windowRemaining
                 h2PeerConnectionWindow -= totalSent
-                Triple(off, framesBuf, effectiveStreamWindow - totalSent)
+                Triple(off, framesBuf.toByteArray(), effectiveStreamWindow - totalSent)
             }
 
             if (frames.isEmpty()) {
-                awaitH2FlowResumption()
+                if (h2ReadMutex.tryLock()) {
+                    try {
+                        val needsPump = lock.withLock {
+                            if (h2StreamClosed || !_isConnected) throw XHttpError.ConnectionClosed
+                            if (h2ResetPacketStreams.remove(streamId)) {
+                                h2PacketStreamWindows.remove(streamId)
+                                return
+                            }
+                            val sw = h2PacketStreamWindows[streamId] ?: streamWindow
+                            minOf(h2PeerConnectionWindow, sw) <= 0
+                        }
+                        if (needsPump) {
+                            val payload = processOneH2FrameLocked()
+                            if (payload != null && payload.isNotEmpty()) {
+                                lock.withLock { appendToH2DataBuffer(payload) }
+                            }
+                        }
+                    } finally {
+                        h2ReadMutex.unlock()
+                    }
+                } else {
+                    awaitH2FlowResumption()
+                }
                 continue
             }
 
             try {
-                downloadSend(frames)
+                writeH2Frames(frames)
             } catch (e: Throwable) {
                 lock.withLock { h2StreamClosed = true }
+                drainH2FlowResumptions()
                 throw e
             }
             currentOffset = nextOffset
@@ -1889,151 +2097,167 @@ class XHttpConnection private constructor(
      * sending WINDOW_UPDATE for a closed stream triggers RST_STREAM (STREAM_CLOSED)
      * from the server.
      */
-    private suspend fun receiveH2Data(): ByteArray? {
+    private suspend fun receiveH2Data(): ByteArray? = h2ReadMutex.withLock {
         lock.withLock {
             if (h2DataBufferLen > 0) {
                 val data = h2DataBuffer.copyOfRange(0, h2DataBufferLen)
                 h2DataBuffer = ByteArray(0)
                 h2DataBufferLen = 0
-                return data
+                return@withLock data
             }
             if (h2StreamClosed) {
-                return null
+                return@withLock null
             }
         }
 
         while (true) {
-            val frame: H2Frame
-            try {
-                frame = readH2Frame()
-            } catch (e: Exception) {
-                return null
+            val payload = processOneH2FrameLocked()
+            if (payload != null) {
+                return@withLock if (payload.isEmpty()) null else payload
             }
+            if (lock.withLock { h2StreamClosed }) {
+                return@withLock null
+            }
+        }
+        @Suppress("UNREACHABLE_CODE")
+        null
+    }
 
-            val isDownloadStream = frame.streamId == 0u || frame.streamId == 1u
+    /**
+     * Reads and processes one H2 frame while holding [h2ReadMutex].
+     * Returns a non-empty [ByteArray] when download DATA is ready, an empty [ByteArray]
+     * when the download stream ended/closed cleanly, or `null` when only control or
+     * upload-stream frames were processed.
+     */
+    private suspend fun processOneH2FrameLocked(): ByteArray? {
+        val frame: H2Frame = try {
+            readH2Frame()
+        } catch (e: Exception) {
+            lock.withLock { h2StreamClosed = true }
+            drainH2FlowResumptions()
+            return ByteArray(0)
+        }
 
-            when (frame.type) {
-                H2_FRAME_DATA -> {
-                    if (frame.payload.isNotEmpty()) {
-                        // Batch WINDOW_UPDATEs: accumulate consumed bytes and send when
-                        // >= 50% of window is consumed.
-                        val (connInc, streamInc) = lock.withLock {
-                            h2ConnectionReceiveConsumed += frame.payload.size
-                            if (isDownloadStream) {
-                                h2StreamReceiveConsumed += frame.payload.size
-                            }
-                            val threshold = h2LocalWindowSize / 2
-                            val ci = if (h2ConnectionReceiveConsumed >= threshold) {
-                                val v = h2ConnectionReceiveConsumed
-                                h2ConnectionReceiveConsumed = 0
-                                v
-                            } else 0
-                            val si = if (isDownloadStream && h2StreamReceiveConsumed >= threshold) {
-                                val v = h2StreamReceiveConsumed
-                                h2StreamReceiveConsumed = 0
-                                v
-                            } else 0
-                            Pair(ci, si)
+        val isDownloadStream = frame.streamId == 0u || frame.streamId == 1u
+
+        when (frame.type) {
+            H2_FRAME_DATA -> {
+                if (frame.payload.isNotEmpty()) {
+                    val (connInc, streamInc) = lock.withLock {
+                        h2ConnectionReceiveConsumed += frame.payload.size
+                        if (isDownloadStream) {
+                            h2StreamReceiveConsumed += frame.payload.size
                         }
-
-                        if (connInc > 0 || streamInc > 0) {
-                            var updates = ByteArray(0)
-                            if (connInc > 0) {
-                                val p = byteArrayOf(
-                                    ((connInc shr 24) and 0xFF).toByte(),
-                                    ((connInc shr 16) and 0xFF).toByte(),
-                                    ((connInc shr 8) and 0xFF).toByte(),
-                                    (connInc and 0xFF).toByte()
-                                )
-                                updates += buildH2Frame(H2_FRAME_WINDOW_UPDATE, 0, 0u, p)
-                            }
-                            if (streamInc > 0) {
-                                val p = byteArrayOf(
-                                    ((streamInc shr 24) and 0xFF).toByte(),
-                                    ((streamInc shr 16) and 0xFF).toByte(),
-                                    ((streamInc shr 8) and 0xFF).toByte(),
-                                    (streamInc and 0xFF).toByte()
-                                )
-                                updates += buildH2Frame(H2_FRAME_WINDOW_UPDATE, 0, frame.streamId, p)
-                            }
-                            try { downloadSend(updates) } catch (_: Exception) {}
-                        }
+                        val threshold = h2LocalWindowSize / 2
+                        val ci = if (h2ConnectionReceiveConsumed >= threshold) {
+                            val v = h2ConnectionReceiveConsumed
+                            h2ConnectionReceiveConsumed = 0
+                            v
+                        } else 0
+                        val si = if (isDownloadStream && h2StreamReceiveConsumed >= threshold) {
+                            val v = h2StreamReceiveConsumed
+                            h2StreamReceiveConsumed = 0
+                            v
+                        } else 0
+                        Pair(ci, si)
                     }
 
-                    if (isDownloadStream) {
+                    if (connInc > 0 || streamInc > 0) {
+                        val updates = java.io.ByteArrayOutputStream()
+                        if (connInc > 0) {
+                            val p = byteArrayOf(
+                                ((connInc shr 24) and 0xFF).toByte(),
+                                ((connInc shr 16) and 0xFF).toByte(),
+                                ((connInc shr 8) and 0xFF).toByte(),
+                                (connInc and 0xFF).toByte()
+                            )
+                            updates.write(buildH2Frame(H2_FRAME_WINDOW_UPDATE, 0, 0u, p))
+                        }
+                        if (streamInc > 0) {
+                            val p = byteArrayOf(
+                                ((streamInc shr 24) and 0xFF).toByte(),
+                                ((streamInc shr 16) and 0xFF).toByte(),
+                                ((streamInc shr 8) and 0xFF).toByte(),
+                                (streamInc and 0xFF).toByte()
+                            )
+                            updates.write(buildH2Frame(H2_FRAME_WINDOW_UPDATE, 0, frame.streamId, p))
+                        }
+                        try { writeH2Frames(updates.toByteArray()) } catch (_: Exception) {}
+                    }
+                }
+
+                if (isDownloadStream) {
+                    if ((frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0) {
+                        lock.withLock { h2StreamClosed = true }
+                        drainH2FlowResumptions()
+                    }
+
+                    if (frame.payload.isEmpty()) {
                         if ((frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0) {
-                            lock.withLock { h2StreamClosed = true }
+                            return ByteArray(0)
                         }
-
-                        if (frame.payload.isEmpty()) {
-                            if ((frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0) {
-                                return null
-                            }
-                            continue
-                        } else {
-                            return frame.payload
-                        }
+                        return null
                     } else {
-                        // Upload stream response data — ignore
-                        continue
+                        return frame.payload
                     }
-                }
-                H2_FRAME_HEADERS -> {
-                    if (isDownloadStream) {
-                        if ((frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0) {
-                            lock.withLock { h2StreamClosed = true }
-                            return null
-                        } else if (!h2ResponseReceived) {
-                            if (checkH2ResponseStatus(frame.payload)) {
-                                lock.withLock { h2ResponseReceived = true }
-                            }
-                            continue
-                        } else {
-                            continue
-                        }
-                    } else {
-                        // Upload stream response — ignore regardless of status. The POST
-                        // data was already delivered; a non-200 reply (e.g. 500 from CDN)
-                        // should not tear down the download.
-                        continue
-                    }
-                }
-                H2_FRAME_SETTINGS -> {
-                    if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
-                        parseH2Settings(frame.payload)
-                        val ack = buildH2Frame(H2_FRAME_SETTINGS, H2_FLAG_ACK, 0u, byteArrayOf())
-                        try { downloadSend(ack) } catch (_: Exception) {}
-                    }
-                    continue
-                }
-                H2_FRAME_WINDOW_UPDATE -> {
-                    applyH2WindowUpdate(frame)
-                    drainH2FlowResumptions()
-                    continue
-                }
-                H2_FRAME_PING -> {
-                    val pong = buildH2Frame(H2_FRAME_PING, H2_FLAG_ACK, 0u, frame.payload)
-                    try { downloadSend(pong) } catch (_: Exception) {}
-                    continue
-                }
-                H2_FRAME_GOAWAY -> {
-                    lock.withLock { h2StreamClosed = true }
+                } else {
                     return null
                 }
-                H2_FRAME_RST_STREAM -> {
-                    // Only close on download stream RST_STREAM (stream 1).
-                    // Upload stream RST_STREAMs can be ignored.
-                    if (isDownloadStream) {
+            }
+            H2_FRAME_HEADERS -> {
+                if (isDownloadStream) {
+                    if ((frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0) {
                         lock.withLock { h2StreamClosed = true }
-                        return null
+                        drainH2FlowResumptions()
+                        return ByteArray(0)
+                    } else if (!h2ResponseReceived) {
+                        if (checkH2ResponseStatus(frame.payload)) {
+                            lock.withLock { h2ResponseReceived = true }
+                        }
                     }
-                    // Drop any tracked window for this stream — it can't accept more data.
-                    lock.withLock { h2PacketStreamWindows.remove(frame.streamId) }
-                    continue
                 }
-                else -> {
-                    continue
+                return null
+            }
+            H2_FRAME_SETTINGS -> {
+                if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
+                    parseH2Settings(frame.payload)
+                    val ack = buildH2Frame(H2_FRAME_SETTINGS, H2_FLAG_ACK, 0u, byteArrayOf())
+                    try { writeH2Frames(ack) } catch (_: Exception) {}
                 }
+                return null
+            }
+            H2_FRAME_WINDOW_UPDATE -> {
+                applyH2WindowUpdate(frame)
+                drainH2FlowResumptions()
+                return null
+            }
+            H2_FRAME_PING -> {
+                if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
+                    val pong = buildH2Frame(H2_FRAME_PING, H2_FLAG_ACK, 0u, frame.payload)
+                    try { writeH2Frames(pong) } catch (_: Exception) {}
+                }
+                return null
+            }
+            H2_FRAME_GOAWAY -> {
+                lock.withLock { h2StreamClosed = true }
+                drainH2FlowResumptions()
+                return ByteArray(0)
+            }
+            H2_FRAME_RST_STREAM -> {
+                if (isDownloadStream) {
+                    lock.withLock { h2StreamClosed = true }
+                    drainH2FlowResumptions()
+                    return ByteArray(0)
+                }
+                lock.withLock {
+                    h2PacketStreamWindows.remove(frame.streamId)
+                    h2ResetPacketStreams.add(frame.streamId)
+                }
+                drainH2FlowResumptions()
+                return null
+            }
+            else -> {
+                return null
             }
         }
     }

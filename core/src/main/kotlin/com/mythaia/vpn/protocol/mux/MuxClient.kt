@@ -6,6 +6,7 @@ import com.mythaia.data.model.ProxyError
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.vless.VlessClient
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -209,10 +210,10 @@ class MuxClient(
         }
     }
 
-    /** Fire-and-forget write, used for End frames. */
+    /** Fire-and-forget write, preserving FIFO frame order via [writeMutex]. */
     fun writeFrameAsync(data: ByteArray) {
         if (closed) return
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 writeFrame(data)
             } catch (e: Exception) {

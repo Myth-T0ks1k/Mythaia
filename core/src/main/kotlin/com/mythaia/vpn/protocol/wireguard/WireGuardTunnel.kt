@@ -184,6 +184,7 @@ class WireGuardTunnel(
             device = null
             throw e
         }
+        configureSocketBuffers(bound)
         bound.soTimeout = SOCKET_POLL_MS
         socket = bound
 
@@ -287,7 +288,10 @@ class WireGuardTunnel(
         failureReported = false
 
         val replacement = try {
-            openSocket().also { it.soTimeout = SOCKET_POLL_MS }
+            openSocket().also {
+                configureSocketBuffers(it)
+                it.soTimeout = SOCKET_POLL_MS
+            }
         } catch (e: Exception) {
             logger.warning("[WG] Could not replace the socket: " + (e.message ?: e))
             return
@@ -433,6 +437,7 @@ class WireGuardTunnel(
     private fun runUplink() {
         val buffer = ByteArray(config.mtu + HEADROOM)
         val input = device ?: return
+        val effectiveMtu = minOf(config.mtu, WireGuardConfig.DEFAULT_MTU)
 
         while (running) {
             val length = try {
@@ -454,6 +459,7 @@ class WireGuardTunnel(
             }
 
             val packet = buffer.copyOf(length)
+            clampTcpMss(packet, length, effectiveMtu)
             val wrapped = try {
                 active.encapsulate(packet)
             } catch (e: Exception) {
@@ -522,6 +528,8 @@ class WireGuardTunnel(
         // length field is what says where the packet actually ends.
         val length = ipPacketLength(packet) ?: return
         if (length > packet.size) return
+
+        clampTcpMss(packet, length, minOf(config.mtu, WireGuardConfig.DEFAULT_MTU))
 
         val out = device ?: return
         try {
@@ -666,8 +674,111 @@ class WireGuardTunnel(
                 bound.close()
                 throw WireGuardError("could not protect the WireGuard socket from the tunnel")
             }
+            configureSocketBuffers(bound)
             return bound
         }
+
+        private fun configureSocketBuffers(socket: DatagramSocket) {
+            runCatching { socket.sendBufferSize = SEND_BUFFER_BYTES }
+            runCatching { socket.receiveBufferSize = RECEIVE_BUFFER_BYTES }
+        }
+
+        /**
+         * Clamps the TCP Maximum Segment Size (MSS) option on IPv4 (`mtu - 40`)
+         * and IPv6 (`mtu - 60`) SYN / SYN-ACK packets in place, updating the TCP
+         * checksum incrementally (RFC 1624).
+         *
+         * WireGuard pads inner packets to a 16-byte multiple and adds 32 bytes
+         * of transport framing, while `DatagramSocket` does not relay outer ICMP
+         * Fragmentation Needed / Packet Too Big messages back into the TUN.
+         * Without MSS clamping, full-sized upload segments blackhole on PPPoE,
+         * IPv6, or mobile CLAT paths while small packets (pings, GETs) pass.
+         */
+        internal fun clampTcpMss(packet: ByteArray, length: Int, mtu: Int) {
+            if (length < 40 || packet.size < length) return
+            val version = (packet[0].toInt() ushr 4) and 0x0F
+            val tcpOffset: Int
+            val maxMss: Int
+            when (version) {
+                4 -> {
+                    val ihl = (packet[0].toInt() and 0x0F) * 4
+                    if (ihl < 20 || length < ihl + 20) return
+                    if ((packet[9].toInt() and 0xFF) != 6) return
+                    val frag = ((packet[6].toInt() and 0xFF) shl 8) or (packet[7].toInt() and 0xFF)
+                    if ((frag and 0x1FFF) != 0) return
+                    tcpOffset = ihl
+                    maxMss = mtu - 40
+                }
+                6 -> {
+                    if (length < 60) return
+                    if ((packet[6].toInt() and 0xFF) != 6) return
+                    tcpOffset = 40
+                    maxMss = mtu - 60
+                }
+                else -> return
+            }
+            if (maxMss < 536) return
+
+            val flags = packet[tcpOffset + 13].toInt() and 0xFF
+            // Only SYN segments carry the MSS option (SYN set, RST clear).
+            if ((flags and 0x02) == 0 || (flags and 0x04) != 0) return
+
+            val dataOffset = ((packet[tcpOffset + 12].toInt() ushr 4) and 0x0F) * 4
+            val tcpHeaderEnd = tcpOffset + dataOffset
+            if (dataOffset <= 20 || tcpHeaderEnd > length) return
+
+            fun wordAt(idx: Int): Int {
+                val hi = packet[idx].toInt() and 0xFF
+                val lo = if (idx + 1 < length) packet[idx + 1].toInt() and 0xFF else 0
+                return (hi shl 8) or lo
+            }
+
+            var opt = tcpOffset + 20
+            while (opt < tcpHeaderEnd) {
+                val kind = packet[opt].toInt() and 0xFF
+                if (kind == 0) return
+                if (kind == 1) {
+                    opt++
+                    continue
+                }
+                if (opt + 1 >= tcpHeaderEnd) return
+                val optLen = packet[opt + 1].toInt() and 0xFF
+                if (optLen < 2 || opt + optLen > tcpHeaderEnd) return
+                if (kind == 2 && optLen == 4) {
+                    val currentMss = ((packet[opt + 2].toInt() and 0xFF) shl 8) or (packet[opt + 3].toInt() and 0xFF)
+                    if (currentMss > maxMss) {
+                        val base1 = (opt + 2) and 1.inv()
+                        val base2 = (opt + 3) and 1.inv()
+                        val oldW1 = wordAt(base1)
+                        val oldW2 = if (base2 != base1) wordAt(base2) else 0
+
+                        packet[opt + 2] = (maxMss ushr 8).toByte()
+                        packet[opt + 3] = (maxMss and 0xFF).toByte()
+
+                        val newW1 = wordAt(base1)
+                        val newW2 = if (base2 != base1) wordAt(base2) else 0
+
+                        val oldCheck = ((packet[tcpOffset + 16].toInt() and 0xFF) shl 8) or
+                            (packet[tcpOffset + 17].toInt() and 0xFF)
+                        var sum = (oldCheck.inv() and 0xFFFF) + (oldW1.inv() and 0xFFFF) + newW1
+                        if (base2 != base1) {
+                            sum += (oldW2.inv() and 0xFFFF) + newW2
+                        }
+                        while ((sum ushr 16) != 0) {
+                            sum = (sum and 0xFFFF) + (sum ushr 16)
+                        }
+                        val newCheck = sum.inv() and 0xFFFF
+                        packet[tcpOffset + 16] = (newCheck ushr 8).toByte()
+                        packet[tcpOffset + 17] = (newCheck and 0xFF).toByte()
+                    }
+                    return
+                }
+                opt += optLen
+            }
+        }
+
+        private const val SEND_BUFFER_BYTES = 1024 * 1024
+        private const val RECEIVE_BUFFER_BYTES = 2 * 1024 * 1024
 
         /** Room for the transport header and AEAD tag on top of the MTU. */
         private const val HEADROOM = 128

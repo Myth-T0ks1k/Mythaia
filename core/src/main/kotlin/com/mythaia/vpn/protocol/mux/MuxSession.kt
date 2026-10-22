@@ -29,19 +29,48 @@ class MuxSession(
     // and GlobalID — defer the New frame until first data arrives.
     private var firstFrameSent: Boolean = (globalID == null)
 
+    companion object {
+        /**
+         * Maximum payload size per Mux frame. MuxFrame uses an unsigned 16-bit
+         * length field (max 65,535 bytes); capping each frame at 32 KB prevents
+         * uint16 length overflow and keeps shared mux connection latency low.
+         */
+        private const val MAX_FRAME_PAYLOAD_SIZE = 32_768
+    }
+
     /**
-     * Sends data through the mux connection as a Keep frame with payload.
+     * Sends data through the mux connection as Keep frame(s) with payload.
      * For XUDP, the first call sends a New frame with the data and GlobalID.
      */
     suspend fun send(data: ByteArray) {
         if (closed) throw ProxyError.ConnectionFailed("Mux session closed")
 
+        if (data.isEmpty()) {
+            sendSingleChunk(data)
+            return
+        }
+
+        var offset = 0
+        while (offset < data.size) {
+            if (closed) throw ProxyError.ConnectionFailed("Mux session closed")
+            val chunkSize = minOf(MAX_FRAME_PAYLOAD_SIZE, data.size - offset)
+            val chunk = if (offset == 0 && chunkSize == data.size) {
+                data
+            } else {
+                data.copyOfRange(offset, offset + chunkSize)
+            }
+            sendSingleChunk(chunk)
+            offset += chunkSize
+        }
+    }
+
+    private suspend fun sendSingleChunk(chunk: ByteArray) {
         val isFirst = !firstFrameSent
         val frame = if (isFirst) {
             firstFrameSent = true
-            encodeNewFrameWithData(data)
+            encodeNewFrameWithData(chunk)
         } else {
-            encodeKeepFrame(data)
+            encodeKeepFrame(chunk)
         }
         try {
             client.writeFrame(frame)
@@ -60,11 +89,31 @@ class MuxSession(
     fun sendAsync(data: ByteArray) {
         if (closed) return
 
+        if (data.isEmpty()) {
+            sendSingleChunkAsync(data)
+            return
+        }
+
+        var offset = 0
+        while (offset < data.size) {
+            if (closed) return
+            val chunkSize = minOf(MAX_FRAME_PAYLOAD_SIZE, data.size - offset)
+            val chunk = if (offset == 0 && chunkSize == data.size) {
+                data
+            } else {
+                data.copyOfRange(offset, offset + chunkSize)
+            }
+            sendSingleChunkAsync(chunk)
+            offset += chunkSize
+        }
+    }
+
+    private fun sendSingleChunkAsync(chunk: ByteArray) {
         val frame = if (!firstFrameSent) {
             firstFrameSent = true
-            encodeNewFrameWithData(data)
+            encodeNewFrameWithData(chunk)
         } else {
-            encodeKeepFrame(data)
+            encodeKeepFrame(chunk)
         }
         client.writeFrameAsync(frame)
     }

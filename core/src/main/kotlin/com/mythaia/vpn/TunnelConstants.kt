@@ -12,10 +12,10 @@ object TunnelConstants {
     const val connectionIdleTimeoutMs: Long = 300_000L
 
     /** Timeout after uplink (local → remote) finishes (default 1s). */
-    const val downlinkOnlyTimeoutMs: Long = 1_000L
+    const val downlinkOnlyTimeoutMs: Long = 30_000L
 
     /** Timeout after downlink (remote → local) finishes (default 1s). */
-    const val uplinkOnlyTimeoutMs: Long = 1_000L
+    const val uplinkOnlyTimeoutMs: Long = 30_000L
 
     /**
      * Handshake timeout (60 seconds). Bounds the entire connection setup phase
@@ -54,7 +54,7 @@ object TunnelConstants {
      * Maximum upload coalesce buffer size, capped at UInt16.max because downstream
      * protocols (Vision padding) use 2-byte content length fields.
      */
-    const val tcpMaxCoalesceSize: Int = 65535
+    const val tcpMaxCoalesceSize: Int = 32768
 
     /**
      * Safety cap on per-connection `pendingData` (bytes accumulated while the

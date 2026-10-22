@@ -4,6 +4,8 @@ import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.util.MythaiaLogger
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val logger = MythaiaLogger("Trojan")
 
@@ -32,28 +34,64 @@ class TrojanConnection(
         port = destinationPort
     )
     private val headerLock = Any()
+    private val sendMutex = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
 
     override val isConnected: Boolean get() = true
     override val outerTlsVersion: TlsVersion?
         get() = tlsVersion
 
     override suspend fun sendRaw(data: ByteArray) {
-        val payload = consumeHeader()?.let { it + data } ?: data
-        tlsConnection.send(payload)
+        sendMutex.withLock {
+            drainAsyncQueueLocked()
+            val payload = consumeHeader()?.let { it + data } ?: data
+            try {
+                tlsConnection.send(payload)
+            } finally {
+                drainAsyncQueueLocked()
+            }
+        }
+        flushAsyncIfUnlocked()
     }
 
     override fun sendRawAsync(data: ByteArray) {
-        val payload = consumeHeader()?.let { it + data } ?: data
-        try {
-            tlsConnection.sendAsync(payload)
-        } catch (e: Exception) {
-            logger.error("[Trojan] Send error: ${e.message}")
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    private fun drainAsyncQueueLocked() {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            val payload = consumeHeader()?.let { it + next } ?: next
+            try {
+                tlsConnection.sendAsync(payload)
+            } catch (e: Exception) {
+                logger.error("[Trojan] Send error: ${e.message}")
+            }
+        }
+    }
+
+    private fun flushAsyncIfUnlocked() {
+        while (synchronized(asyncQueue) { asyncQueue.isNotEmpty() }) {
+            if (!sendMutex.tryLock()) return
+            try {
+                drainAsyncQueueLocked()
+            } finally {
+                sendMutex.unlock()
+            }
         }
     }
 
     override suspend fun receiveRaw(): ByteArray? = tlsConnection.receive()
 
-    override fun cancel() = tlsConnection.forceCancel()
+    override fun cancel() {
+        synchronized(asyncQueue) { asyncQueue.clear() }
+        tlsConnection.forceCancel()
+    }
 
     /** Returns the request header on the first call and `null` thereafter. */
     private fun consumeHeader(): ByteArray? = synchronized(headerLock) {

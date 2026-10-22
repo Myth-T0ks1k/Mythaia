@@ -564,7 +564,7 @@ class NowhereSession(val configuration: NowhereConfiguration) {
             if (System.nanoTime() >= deadline) {
                 throw NowhereError.ProtocolViolation("Nowhere: portal granted no stream credit")
             }
-            delay(STREAM_CREDIT_POLL_MS)
+            connection.awaitCreditReady(STREAM_CREDIT_POLL_MS)
         }
     }
 

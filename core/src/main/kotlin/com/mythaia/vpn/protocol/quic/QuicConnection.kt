@@ -5,6 +5,7 @@ import com.mythaia.vpn.NativeBridge
 import com.mythaia.vpn.util.DnsCache
 import com.mythaia.vpn.util.MythaiaLogger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
@@ -33,7 +34,7 @@ class QuicConnection(
     private val serverName: String,
     private val serverPort: Int,
     private val alpn: List<String>,
-    private val tuning: QuicTuning = QuicTuning.NAIVE,
+    private val tuning: QuicTuning = QuicTuning.hysteria(),
     fingerprint: TlsFingerprint = TlsFingerprint.CHROME_133,
     /** The name in the TLS handshake and on the certificate; the link's `sni`, else [serverName]. */
     tlsServerName: String = serverName,
@@ -92,6 +93,20 @@ class QuicConnection(
 
     /** Streams by ngtcp2 stream id. */
     private val streams = ConcurrentHashMap<Long, QuicStream>()
+
+    /** Signalled when incoming packets (ACK / MAX_STREAMS / MAX_DATA) or pacing timers advance. */
+    private val creditReady = Channel<Unit>(Channel.CONFLATED)
+
+    internal suspend fun awaitCreditReady(timeoutMs: Long) {
+        withTimeoutOrNull(timeoutMs) {
+            creditReady.receive()
+        }
+    }
+
+    private fun notifyWriteReady() {
+        creditReady.trySend(Unit)
+        streams.values.forEach { it.onWriteReady() }
+    }
 
     val isConnected: Boolean get() = handle != 0L && tls.phase == QuicTlsHandler.Phase.ESTABLISHED
 
@@ -180,6 +195,7 @@ class QuicConnection(
     fun close() {
         if (!running.getAndSet(false)) return
 
+        creditReady.close()
         streams.values.forEach { it.onPeerClosed() }
         streams.clear()
 
@@ -270,25 +286,75 @@ class QuicConnection(
     }
 
     /**
-     * Offers stream data to ngtcp2 and puts the packet it built on the wire.
+     * Offers stream data to ngtcp2 in a burst and puts the packets it built on
+     * the wire before updating ngtcp2's packet transmission timestamp.
      *
-     * The packet and the accepted byte count are different numbers, and both
-     * come back: sending only the count would leave ngtcp2 waiting to have a
-     * packet acknowledged that never left.
+     * Calling `nativeQuicConnFlushDone` (`ngtcp2_conn_update_pkt_tx_time`) after
+     * every single packet prematurely ended ngtcp2's send quantum after 1 packet
+     * and set `next_tx_time` into the future, causing the very next packet of a
+     * multi-packet write to return [WRITE_AGAIN]. Packing a burst of up to
+     * [MAX_STREAM_BURST_PACKETS] packets and updating the pacer timestamp only
+     * once at the end of the burst matches ngtcp2's send-quantum contract.
      *
      * Returns how many bytes went out (0 with [fin] means the FIN did),
      * [WRITE_AGAIN] when nothing fit this time, or a value below it when the
      * stream or the connection is finished and offering again is pointless.
      */
-    internal fun writeStream(streamId: Long, data: ByteArray, fin: Boolean): Long {
-        val accepted = LongArray(1)
-        val datagram = synchronized(engineLock) {
-            if (handle == 0L) return WRITE_CLOSED
-            NativeBridge.nativeQuicConnWriteStream(handle, streamId, data, fin, accepted)
+    internal fun writeStream(
+        streamId: Long,
+        data: ByteArray,
+        offset: Int = 0,
+        length: Int = data.size - offset,
+        fin: Boolean
+    ): Long {
+        val sentCount = IntArray(1)
+        // Drain queued datagrams first so bulk TCP uploads never starve UDP
+        // datagrams (DNS, pings, Hysteria/TUIC/Nowhere UDP flows).
+        if (!drainDatagrams(sentCount)) return WRITE_CLOSED
+
+        val io = LongArray(3)
+        var totalAccepted = 0L
+        var anyAccepted = false
+        var curOffset = offset
+        var remaining = length
+        var packetsInBurst = 0
+        var lastResult = WRITE_AGAIN
+
+        while (packetsInBurst < MAX_STREAM_BURST_PACKETS) {
+            io[0] = 0L
+            io[1] = curOffset.toLong()
+            io[2] = remaining.toLong()
+            val datagram = synchronized(engineLock) {
+                if (handle == 0L) return if (anyAccepted) totalAccepted else WRITE_CLOSED
+                NativeBridge.nativeQuicConnWriteStream(handle, streamId, data, fin, io)
+            }
+            val accepted = io[0]
+            if (datagram != null) {
+                if (!send(datagram)) {
+                    return if (anyAccepted) totalAccepted else WRITE_CLOSED
+                }
+                sentCount[0]++
+                packetsInBurst++
+            }
+            if (accepted < WRITE_AGAIN) {
+                lastResult = accepted
+                break
+            }
+            if (accepted == WRITE_AGAIN) {
+                lastResult = WRITE_AGAIN
+                break
+            }
+            anyAccepted = true
+            totalAccepted += accepted
+            curOffset += accepted.toInt()
+            remaining -= accepted.toInt()
+            if (remaining <= 0) {
+                break
+            }
         }
-        datagram?.let { send(it) }
-        flush()
-        return accepted[0]
+
+        flush(alreadySent = sentCount[0] > 0)
+        return if (anyAccepted) totalAccepted else lastResult
     }
 
     /**
@@ -348,7 +414,7 @@ class QuicConnection(
      * it builds, including ones that came back without the datagram in them.
      * False when the socket has gone.
      */
-    private fun drainDatagrams(): Boolean {
+    private fun drainDatagrams(sentCount: IntArray? = null): Boolean {
         val status = IntArray(1)
         while (true) {
             val packet = synchronized(engineLock) {
@@ -369,6 +435,7 @@ class QuicConnection(
             if (status[0] < 0) logger.debug("[QUIC] Datagram refused (ngtcp2 ${status[0]})")
             if (packet != null) {
                 if (!send(packet)) return false
+                if (sentCount != null) sentCount[0]++
             } else if (status[0] == 0) {
                 // No room yet: the next ACK read or pacing deadline flushes again.
                 return true
@@ -424,19 +491,24 @@ class QuicConnection(
     // MARK: - Event loop
 
     /** Drains everything ngtcp2 wants to send and puts it on the wire. */
-    private fun flush() {
-        if (!drainDatagrams()) return
+    private fun flush(alreadySent: Boolean = false) {
+        val sentCount = IntArray(1)
+        if (alreadySent) sentCount[0] = 1
+        if (!drainDatagrams(sentCount)) return
         while (true) {
             val datagram = synchronized(engineLock) {
                 if (handle == 0L) null else NativeBridge.nativeQuicConnWrite(handle)
             } ?: break
             if (!send(datagram)) return
+            sentCount[0]++
         }
-        // The burst is over, so ngtcp2 can pace the next one. Without this the
-        // pacing interval is never consulted and a window leaves as fast as the
-        // socket takes it.
-        synchronized(engineLock) {
-            if (handle != 0L) NativeBridge.nativeQuicConnFlushDone(handle)
+        // Only update ngtcp2's packet tx timestamp when at least one packet was
+        // actually transmitted in this burst; calling it on an empty flush
+        // pushes next_tx_time forward without sending anything.
+        if (sentCount[0] > 0) {
+            synchronized(engineLock) {
+                if (handle != 0L) NativeBridge.nativeQuicConnFlushDone(handle)
+            }
         }
     }
 
@@ -474,6 +546,7 @@ class QuicConnection(
             return false
         }
         flush()
+        notifyWriteReady()
         return true
     }
 
@@ -485,9 +558,7 @@ class QuicConnection(
      */
     private fun runTimer() {
         while (running.get()) {
-            // Sleep until ngtcp2's deadline, at most a tick. A fixed 10 ms tick
-            // held every paced packet for up to 10 ms: the second half of a
-            // fragmented call packet arrived that much after the first.
+            // Sleep until ngtcp2's deadline, at most a tick.
             val deadline = synchronized(engineLock) {
                 if (handle == 0L) -1L else NativeBridge.nativeQuicConnExpiry(handle)
             }
@@ -515,6 +586,7 @@ class QuicConnection(
                 return
             }
             flush()
+            notifyWriteReady()
         }
     }
 
@@ -587,6 +659,9 @@ class QuicConnection(
          */
         internal const val WRITE_CLOSED = -2L
 
+        /** Maximum QUIC packets packed in a single [writeStream] burst before updating pacer tx time. */
+        private const val MAX_STREAM_BURST_PACKETS = 32
+
         /** quic-go queues 32; fragments of a large payload count one each. */
         private const val MAX_PENDING_DATAGRAMS = 64
 
@@ -594,7 +669,7 @@ class QuicConnection(
         private const val MAX_DATAGRAM_AGE_NS = 500_000_000L
 
         /** The longest the timer sleeps; it wakes sooner when ngtcp2's deadline is nearer. */
-        private const val TIMER_TICK_NANOS = 10_000_000L
+        private const val TIMER_TICK_NANOS = 2_000_000L
 
         /** The shortest, so a deadline already past cannot spin the thread. */
         private const val MIN_TIMER_WAIT_NANOS = 200_000L

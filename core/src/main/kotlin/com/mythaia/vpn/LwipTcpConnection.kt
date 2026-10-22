@@ -66,9 +66,13 @@ class LwipTcpConnection(
     var configuration: ProxyConfiguration = configuration
         private set
 
-    // Coroutine scope for protocol operations, dispatched on the lwIP executor
+    // Coroutine scope for protocol connect/send/receive operations.
+    // Dispatched on Dispatchers.IO so TLS handshakes, AEAD encryption/decryption,
+    // Vision padding, and synchronous NioSocket writes do not block the
+    // single-threaded lwIP executor; all lwIP PCB calls and connection state
+    // transitions are marshalled back onto lwipExecutor.
     private val scopeJob = SupervisorJob()
-    private val scope = CoroutineScope(lwipExecutor.asCoroutineDispatcher() + scopeJob + com.mythaia.vpn.tunnelCrashGuard)
+    private val scope = CoroutineScope(Dispatchers.IO + scopeJob + com.mythaia.vpn.tunnelCrashGuard)
 
     // Connection paths (mutually exclusive)
     private var vlessConnection: ProxyConnection? = null
@@ -100,6 +104,7 @@ class LwipTcpConnection(
     private var bypass: Boolean = forceBypass || host.shouldBypass(dstHost)
 
     private var pendingData = ByteArrayOutputStream()
+    @Volatile
     var closed = false
         private set
 
@@ -643,6 +648,25 @@ class LwipTcpConnection(
         mitmInner?.feedEof()
 
         uplinkDone = true
+        if (!hasPendingUplink) {
+            onUplinkFullyDrained()
+        }
+    }
+
+    /** True while any uplink bytes are still waiting to be dialed or flushed upstream. Must be read on lwipExecutor. */
+    private val hasPendingUplink: Boolean
+        get() = coalesceFlushInFlight ||
+            coalesceScheduled ||
+            (coalesceBuffer != null && coalesceBuffer!!.size() > 0) ||
+            pendingData.size() > 0 ||
+            isEstablishing
+
+    /**
+     * Applies the half-closed uplink state once all buffered client bytes have
+     * actually left [flushCoalesceBuffer]. Must be called on [lwipExecutor].
+     */
+    private fun onUplinkFullyDrained() {
+        if (closed || !uplinkDone || hasPendingUplink) return
         if (downlinkDone) {
             // Both directions are done, but if downlink bytes are still queued
             // for a slow client, draining them first avoids truncating a
@@ -650,6 +674,24 @@ class LwipTcpConnection(
             if (pendingWrite.size() == 0) close() else drainPendingWrite()
         } else {
             activityTimer?.setTimeout(TunnelConstants.downlinkOnlyTimeoutMs)
+        }
+    }
+
+    /**
+     * Prepends [prefix] ahead of any bytes currently in [coalesceBuffer] on [lwipExecutor]
+     * so bytes accumulated in [pendingData] during dial are sent before later segments.
+     */
+    private fun prependToCoalesceBuffer(prefix: ByteArray) {
+        if (prefix.isEmpty()) return
+        val existing = coalesceBuffer
+        if (existing == null || existing.size() == 0) {
+            if (existing == null) coalesceBuffer = ByteArrayOutputStream()
+            coalesceBuffer!!.write(prefix)
+        } else {
+            val tail = existing.toByteArray()
+            existing.reset()
+            existing.write(prefix)
+            existing.write(tail)
         }
     }
 
@@ -703,15 +745,14 @@ class LwipTcpConnection(
         if (directConnecting || directRelay != null || closed) return
         directConnecting = true
 
-        val initialData = if (pendingData.size() > 0) pendingData.toByteArray() else null
-        if (initialData != null) pendingData.reset()
-
         val relay = DirectTcpRelay()
         directRelay = relay
+        val targetHost = dstHost
+        val targetPort = dstPort
 
         scope.launch {
             try {
-                relay.connect(dstHost, dstPort)
+                relay.connect(targetHost, targetPort)
             } catch (_: CancellationException) {
                 return@launch
             } catch (e: Exception) {
@@ -727,7 +768,10 @@ class LwipTcpConnection(
 
             lwipExecutor.execute {
                 directConnecting = false
-                if (closed) return@execute
+                if (closed) {
+                    relay.cancel()
+                    return@execute
+                }
 
                 handshakeTimer?.cancel(false)
                 handshakeTimer = null
@@ -735,31 +779,19 @@ class LwipTcpConnection(
                     if (!closed) close()
                 }
 
-                // Drain initialData + any pendingData that arrived during connect.
-                // Send sequentially in one coroutine so byte order is preserved
-                // (mirrors iOS UploadPipeline's strict single-flight semantics).
-                val followup = if (pendingData.size() > 0) {
-                    val data = pendingData.toByteArray()
+                // Route all pendingData through the single-flight coalesceBuffer
+                // pipeline so it is chunked to tcpMaxCoalesceSize, acknowledged per
+                // chunk via ackBytesToLwip, and cannot race with handleReceivedData().
+                if (pendingData.size() > 0) {
+                    val followup = pendingData.toByteArray()
                     pendingData.reset()
-                    data
-                } else null
+                    prependToCoalesceBuffer(followup)
+                }
 
-                if (initialData != null || followup != null) {
-                    scope.launch {
-                        try {
-                            if (initialData != null) relay.send(initialData)
-                            if (followup != null) relay.send(followup)
-                            val totalAck = (initialData?.size ?: 0) + (followup?.size ?: 0)
-                            lwipExecutor.execute {
-                                if (closed) return@execute
-                                ackBytesToLwip(totalAck)
-                            }
-                        } catch (_: CancellationException) {
-                        } catch (e: Exception) {
-                            if (!closed) logTransportFailure("Send", e, TransportLogLevel.WARNING)
-                            lwipExecutor.execute { abort() }
-                        }
-                    }
+                if (coalesceBuffer != null && coalesceBuffer!!.size() > 0 && !coalesceFlushInFlight && !coalesceScheduled) {
+                    flushCoalesceBuffer()
+                } else if (uplinkDone) {
+                    onUplinkFullyDrained()
                 }
 
                 tryArmReceive()
@@ -811,10 +843,14 @@ class LwipTcpConnection(
             return
         }
 
+        val targetConfig = configuration
+        val targetHost = dstHost
+        val targetPort = dstPort
+
         scope.launch {
             try {
                 val connection = ProxyClientFactory.connect(
-                    configuration, dstHost, dstPort, initialData
+                    targetConfig, targetHost, targetPort, initialData
                 )
                 onProxyConnected(connection, handshakeAckBytes = initialData?.size ?: 0)
             } catch (_: CancellationException) {
@@ -856,30 +892,23 @@ class LwipTcpConnection(
                 if (!closed) close()
             }
 
-            // Drain any pendingData arrived during connect, then ack the
-            // combined byte count (handshake-carried + pendingData) in one shot.
-            val followup = if (pendingData.size() > 0) {
-                val data = pendingData.toByteArray()
-                pendingData.reset()
-                data
-            } else null
-
-            if (followup != null) {
-                scope.launch {
-                    try {
-                        connection.send(followup)
-                        lwipExecutor.execute {
-                            if (closed) return@execute
-                            ackBytesToLwip(handshakeAckBytes + followup.size)
-                        }
-                    } catch (_: CancellationException) {
-                    } catch (e: Exception) {
-                        if (!closed) logTransportFailure("Send", e, TransportLogLevel.WARNING)
-                        lwipExecutor.execute { abort() }
-                    }
-                }
-            } else if (handshakeAckBytes > 0) {
+            if (handshakeAckBytes > 0) {
                 ackBytesToLwip(handshakeAckBytes)
+            }
+
+            // Route any pendingData arrived during connect through the single-flight
+            // coalesceBuffer pipeline so it is chunked to tcpMaxCoalesceSize, acked
+            // per chunk, and never races concurrently with handleReceivedData().
+            if (pendingData.size() > 0) {
+                val followup = pendingData.toByteArray()
+                pendingData.reset()
+                prependToCoalesceBuffer(followup)
+            }
+
+            if (coalesceBuffer != null && coalesceBuffer!!.size() > 0 && !coalesceFlushInFlight && !coalesceScheduled) {
+                flushCoalesceBuffer()
+            } else if (uplinkDone) {
+                onUplinkFullyDrained()
             }
 
             tryArmReceive()
@@ -897,13 +926,17 @@ class LwipTcpConnection(
         chain: List<ProxyConfiguration>,
         initialData: ByteArray?
     ) {
+        val targetConfig = configuration
+        val targetHost = dstHost
+        val targetPort = dstPort
+
         scope.launch {
             try {
                 var previousConnection: ProxyConnection? = null
 
                 for (i in chain.indices) {
                     val hopConfig = chain[i]
-                    val nextConfig = if (i + 1 < chain.size) chain[i + 1] else configuration
+                    val nextConfig = if (i + 1 < chain.size) chain[i + 1] else targetConfig
                     val conn = ProxyClientFactory.connect(
                         hopConfig,
                         nextConfig.serverAddress,
@@ -915,7 +948,7 @@ class LwipTcpConnection(
 
                 // Final hop: use factory for protocol selection, tunneled through the chain
                 val connection = ProxyClientFactory.connect(
-                    configuration, dstHost, dstPort, initialData, tunnel = previousConnection
+                    targetConfig, targetHost, targetPort, initialData, tunnel = previousConnection
                 )
                 onProxyConnected(connection, handshakeAckBytes = initialData?.size ?: 0)
             } catch (_: CancellationException) {
@@ -959,7 +992,7 @@ class LwipTcpConnection(
         scope.launch {
             try {
                 var sent = 0
-                while (sent < dataToSend.size) {
+                while (sent < dataToSend.size && !closed) {
                     val chunkSize = minOf(
                         dataToSend.size - sent,
                         TunnelConstants.tcpMaxCoalesceSize
@@ -978,7 +1011,10 @@ class LwipTcpConnection(
                     // opening in step with upstream throughput rather than
                     // batching the whole buffer's worth of credit at once.
                     lwipExecutor.execute {
-                        if (!closed) ackBytesToLwip(chunkSize)
+                        if (!closed) {
+                            activityTimer?.update()
+                            ackBytesToLwip(chunkSize)
+                        }
                     }
                     sent += chunkSize
                 }
@@ -990,16 +1026,20 @@ class LwipTcpConnection(
                         // as one large POST instead of many small per-segment POSTs.
                         if (coalesceBuffer != null && coalesceBuffer!!.size() > 0) {
                             flushCoalesceBuffer()
+                        } else if (uplinkDone) {
+                            onUplinkFullyDrained()
                         }
                     }
                 }
             } catch (_: CancellationException) {
                 lwipExecutor.execute { coalesceFlushInFlight = false }
             } catch (e: Exception) {
-                if (!closed) logTransportFailure("Send", e, TransportLogLevel.WARNING)
                 lwipExecutor.execute {
                     coalesceFlushInFlight = false
-                    abort()
+                    if (!closed) {
+                        logTransportFailure("Send", e, TransportLogLevel.WARNING)
+                        abort()
+                    }
                 }
             }
         }
@@ -1123,9 +1163,9 @@ class LwipTcpConnection(
     private fun finishDownlinkIfDrained() {
         if (closed || !downlinkDone) return
         if (pendingWrite.size() > 0) return
-        if (uplinkDone) {
+        if (uplinkDone && !hasPendingUplink) {
             close()
-        } else {
+        } else if (!uplinkDone) {
             activityTimer?.setTimeout(TunnelConstants.uplinkOnlyTimeoutMs)
         }
     }

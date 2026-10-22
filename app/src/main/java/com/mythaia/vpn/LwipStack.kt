@@ -59,6 +59,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
     /** Pool of reusable MTU-sized byte arrays to avoid per-packet allocation in the TUN reader. */
     private val packetPool = ConcurrentLinkedQueue<ByteArray>()
+    private val packetPoolSize = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private class InboundPacket(val buffer: ByteArray, val length: Int)
+    private val inboundPackets = ConcurrentLinkedQueue<InboundPacket>()
+    private val inboundDrainScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private var tunFd: ParcelFileDescriptor? = null
     private var tunInput: FileInputStream? = null
@@ -749,9 +754,11 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         deferredRestart?.cancel(false)
         deferredRestart = null
 
-        // Clear stale output before shutdown.
+        // Clear stale output and queued input packets before shutdown.
         outputPackets.clear()
         outputFlushScheduled = false
+        inboundPackets.clear()
+        inboundDrainScheduled.set(false)
 
         muxManager?.closeAll()
         muxManager = null
@@ -1575,23 +1582,10 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
 
                     totalBytesOut.addAndGet(length.toLong())
 
-                    val packet = packetPool.poll() ?: ByteArray(1500)
+                    val packet = packetPool.poll()?.also { packetPoolSize.decrementAndGet() } ?: ByteArray(1500)
                     System.arraycopy(buffer, 0, packet, 0, length)
-
-                    lwipExecutor.execute {
-                        if (running) {
-                            NativeBridge.nativeInput(packet, length)
-                        }
-                        if (packetPool.size < MAX_PACKET_POOL_SIZE) {
-                            packetPool.offer(packet)
-                        }
-                        // Inline flush: drain output packets accumulated during nativeInput
-                        // processing without waiting for a separate executor task,
-                        // reducing round-trip latency.
-                        if (outputPackets.isNotEmpty()) {
-                            flushOutputPackets()
-                        }
-                    }
+                    inboundPackets.offer(InboundPacket(packet, length))
+                    scheduleInboundDrain()
                 } catch (e: Exception) {
                     if (running) {
                         logger.debug("[LWIPStack] TUN read error: $e")
@@ -1602,6 +1596,37 @@ class LwipStack(private val context: Context) : NativeBridge.LwipCallback, LwipH
         }, "tun-reader").apply { isDaemon = true }
         tunReaderThread = thread
         thread.start()
+    }
+
+    private fun scheduleInboundDrain() {
+        if (inboundDrainScheduled.compareAndSet(false, true)) {
+            lwipExecutor.execute { drainInboundPackets() }
+        }
+    }
+
+    private fun drainInboundPackets() {
+        inboundDrainScheduled.set(false)
+        val cap = TunnelConstants.tunnelMaxPacketsPerWrite
+        var processed = 0
+        while (processed < cap) {
+            val item = inboundPackets.poll() ?: break
+            if (running) {
+                NativeBridge.nativeInput(item.buffer, item.length)
+            }
+            if (packetPoolSize.get() < MAX_PACKET_POOL_SIZE) {
+                packetPoolSize.incrementAndGet()
+                packetPool.offer(item.buffer)
+            }
+            processed++
+        }
+        // Inline flush once per batch: drain output packets (including coalesced
+        // TCP ACKs) accumulated across the batch without per-packet syscalls.
+        if (running && outputPackets.isNotEmpty()) {
+            flushOutputPackets()
+        }
+        if (running && inboundPackets.isNotEmpty()) {
+            scheduleInboundDrain()
+        }
     }
 
     /** Starts the lwIP periodic timeout timer (100ms interval). */

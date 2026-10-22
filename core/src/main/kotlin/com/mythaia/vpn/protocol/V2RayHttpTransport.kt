@@ -19,7 +19,8 @@ import com.mythaia.vpn.util.NioSocket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayOutputStream
@@ -224,15 +225,20 @@ internal class Http2StreamTransport(
     private val stream: Http2Stream,
     private val ownedSession: Http2Session? = null
 ) : Transport {
+    private val asyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1) + com.mythaia.vpn.tunnelCrashGuard)
+
     override suspend fun send(data: ByteArray) = stream.sendData(data)
 
     override fun sendAsync(data: ByteArray) {
-        runBlocking { stream.sendData(data) }
+        asyncScope.launch {
+            runCatching { stream.sendData(data) }
+        }
     }
 
     override suspend fun receive(): ByteArray? = stream.receiveData()
 
     override fun forceCancel() {
+        asyncScope.cancel()
         stream.close()
         ownedSession?.close()
     }
@@ -251,6 +257,7 @@ internal class Http1ConnTransport(
 
     private val writeMutex = Mutex()
     private val readMutex = Mutex()
+    private val asyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1) + com.mythaia.vpn.tunnelCrashGuard)
 
     @Volatile
     private var requestWritten = false
@@ -273,7 +280,9 @@ internal class Http1ConnTransport(
     }
 
     override fun sendAsync(data: ByteArray) {
-        runBlocking { send(data) }
+        asyncScope.launch {
+            runCatching { send(data) }
+        }
     }
 
     override suspend fun receive(): ByteArray? {
@@ -329,6 +338,7 @@ internal class Http1ConnTransport(
     }
 
     override fun forceCancel() {
+        asyncScope.cancel()
         inner.forceCancel()
     }
 

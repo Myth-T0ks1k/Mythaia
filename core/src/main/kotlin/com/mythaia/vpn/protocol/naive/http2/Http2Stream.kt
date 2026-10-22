@@ -38,6 +38,14 @@ class Http2Stream(
     @Volatile
     private var state = State.IDLE
 
+    @Volatile
+    var sendClosed = false
+        private set
+
+    @Volatile
+    var receiveClosed = false
+        private set
+
     val flowControl = Http2StreamFlowControl(session.serverInitialWindowSize)
 
     private val dataChannel = Channel<ByteArray>(Channel.UNLIMITED)
@@ -80,6 +88,7 @@ class Http2Stream(
     suspend fun openRequest(headerBlock: ByteArray, endStream: Boolean = false, awaitResponse: Boolean = false) {
         if (state != State.IDLE) throw Http2Error.ProtocolError("Stream $streamID: invalid state for openRequest")
         state = if (awaitResponse) State.TUNNEL_PENDING else State.TUNNEL_OPEN
+        if (endStream) sendClosed = true
         try {
             session.sendRequestHeaders(this, headerBlock, endStream)
             if (awaitResponse) tunnelReady.await()
@@ -142,8 +151,10 @@ class Http2Stream(
         flowControl.cancelAwaiters(Http2Error.ConnectionFailed("Stream closed"))
         // Send RST_STREAM(CANCEL) so the server reclaims the slot when we
         // close while the stream is still open. Mirrors iOS HTTP2Stream.close
-        // (HTTP2Stream.swift:160-184).
-        if ((priorState == State.TUNNEL_PENDING || priorState == State.TUNNEL_OPEN) && streamID != 0) {
+        // (HTTP2Stream.swift:160-184). Skip when both sides already exchanged END_STREAM.
+        if ((priorState == State.TUNNEL_PENDING || priorState == State.TUNNEL_OPEN) &&
+            streamID != 0 && !(sendClosed && receiveClosed)
+        ) {
             session.sendReset(streamID, Http2Framer.ErrorCode.CANCEL)
         }
         release()
@@ -235,12 +246,36 @@ class Http2Stream(
         }
     }
 
-    /** Server END_STREAM = clean half-close. Closes data channel without throwing. */
-    fun deliverEndStream() {
-        if (state == State.CLOSED) return
-        state = State.CLOSED
+    /**
+     * Marks that the client has sent END_STREAM on this stream. If the server
+     * already sent END_STREAM ([receiveClosed]), both directions are complete
+     * and the stream transitions to [State.CLOSED] and releases its session slot.
+     */
+    internal fun markSendEndStream() {
+        sendClosed = true
+        if (receiveClosed && state != State.CLOSED) {
+            state = State.CLOSED
+            flowControl.cancelAwaiters(Http2Error.ConnectionFailed("Stream END_STREAM"))
+            release()
+        }
+    }
+
+    /**
+     * Server END_STREAM = clean half-close (remote). Closes the receive data
+     * channel without throwing; only transitions to [State.CLOSED] and cancels
+     * send-window awaiters when the client side has also ended ([sendClosed]).
+     * Returns true if the stream is now fully closed on both sides.
+     */
+    fun deliverEndStream(): Boolean {
+        if (state == State.CLOSED) return true
+        receiveClosed = true
         dataChannel.close()
-        flowControl.cancelAwaiters(Http2Error.ConnectionFailed("Stream END_STREAM"))
+        if (sendClosed) {
+            state = State.CLOSED
+            flowControl.cancelAwaiters(Http2Error.ConnectionFailed("Stream END_STREAM"))
+            return true
+        }
+        return false
     }
 
     /**

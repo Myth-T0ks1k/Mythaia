@@ -6,6 +6,7 @@ package com.mythaia.vpn.protocol.naive.http2
 class Http2StreamFlowControl(initialSendWindow: Int = Http2FlowControl.DEFAULT_INITIAL_WINDOW_SIZE) {
 
     var sendWindow: Int = initialSendWindow
+        get() = synchronized(windowLock) { field }
         private set
 
     private var recvConsumed: Int = 0
@@ -24,6 +25,19 @@ class Http2StreamFlowControl(initialSendWindow: Int = Http2FlowControl.DEFAULT_I
             if (sendWindow < bytes) return false
             sendWindow -= bytes
             return true
+        }
+    }
+
+    /**
+     * Atomically reserves up to [maxBytes] from this stream's send window.
+     * Returns the number of bytes actually reserved (0 if window is non-positive).
+     */
+    fun reserveSend(maxBytes: Int): Int {
+        synchronized(windowLock) {
+            if (maxBytes <= 0 || sendWindow <= 0) return 0
+            val allowed = minOf(maxBytes, sendWindow)
+            sendWindow -= allowed
+            return allowed
         }
     }
 
@@ -99,9 +113,11 @@ class Http2FlowControl {
     }
 
     var connectionSendWindow: Int = DEFAULT_INITIAL_WINDOW_SIZE
+        get() = synchronized(windowLock) { field }
         private set
 
     var streamSendWindow: Int = DEFAULT_INITIAL_WINDOW_SIZE
+        get() = synchronized(windowLock) { field }
         private set
 
     private var connectionRecvConsumed: Int = 0
@@ -110,32 +126,37 @@ class Http2FlowControl {
     private var connectionRecvWindowSize: Int = NAIVE_SESSION_MAX_RECV_WINDOW
 
     fun consumeSendWindow(bytes: Int): Boolean {
-        if (connectionSendWindow < bytes || streamSendWindow < bytes) return false
-        connectionSendWindow -= bytes
-        streamSendWindow -= bytes
-        return true
+        synchronized(windowLock) {
+            if (connectionSendWindow < bytes || streamSendWindow < bytes) return false
+            connectionSendWindow -= bytes
+            streamSendWindow -= bytes
+            return true
+        }
     }
 
-    val maxSendBytes: Int get() = minOf(connectionSendWindow, streamSendWindow)
+    val maxSendBytes: Int
+        get() = synchronized(windowLock) { minOf(connectionSendWindow, streamSendWindow) }
 
     /** Returns WINDOW_UPDATE increments (connection, stream); either may be null if not yet due. */
     fun consumeRecvWindow(bytes: Int): RecvWindowResult {
-        connectionRecvConsumed += bytes
-        streamRecvConsumed += bytes
+        synchronized(windowLock) {
+            connectionRecvConsumed += bytes
+            streamRecvConsumed += bytes
 
-        var connInc: Int? = null
-        var streamInc: Int? = null
+            var connInc: Int? = null
+            var streamInc: Int? = null
 
-        if (connectionRecvConsumed >= connectionRecvWindowSize / 2) {
-            connInc = connectionRecvConsumed
-            connectionRecvConsumed = 0
+            if (connectionRecvConsumed >= connectionRecvWindowSize / 2) {
+                connInc = connectionRecvConsumed
+                connectionRecvConsumed = 0
+            }
+            if (streamRecvConsumed >= streamRecvWindowSize / 2) {
+                streamInc = streamRecvConsumed
+                streamRecvConsumed = 0
+            }
+
+            return RecvWindowResult(connInc, streamInc)
         }
-        if (streamRecvConsumed >= streamRecvWindowSize / 2) {
-            streamInc = streamRecvConsumed
-            streamRecvConsumed = 0
-        }
-
-        return RecvWindowResult(connInc, streamInc)
     }
 
     data class RecvWindowResult(

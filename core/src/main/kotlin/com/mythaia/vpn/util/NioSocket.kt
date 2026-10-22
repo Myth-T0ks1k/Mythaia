@@ -78,16 +78,27 @@ class NioSocket : Transport {
     private var fastPathBuffer: ByteBuffer? = null
 
     private val pendingReceive = AtomicReference<Continuation<ByteArray?>?>(null)
-    private val pendingSends = ConcurrentLinkedQueue<PendingSend>()
+    private val sendLock = Any()
+    private val pendingSends = java.util.ArrayDeque<PendingSend>()
+    private var queuedSendBytes: Long = 0L
 
     private class PendingSend(
         val data: ByteArray,
         var offset: Int = 0,
-        val continuation: Continuation<Unit>?
+        var continuation: Continuation<Unit>? = null,
+        var completed: Boolean = false,
+        var error: Throwable? = null
     )
 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 16_000L
+
+        /**
+         * Cap kernel TCP send buffer at 64 KB so bulk uploads apply TCP
+         * backpressure to the caller coroutine quickly instead of buffering
+         * 256 KB–4 MB per socket in the kernel (bufferbloat on shared H2/mux sockets).
+         */
+        private const val SO_SNDBUF_BYTES = 65_536
 
         private val sharedSelector: Selector = Selector.open()
         private val pendingOps = ConcurrentLinkedQueue<() -> Unit>()
@@ -113,7 +124,8 @@ class NioSocket : Transport {
         /** Only accessed from selectorThread. */
         private val selectorReadBuffer = ByteBuffer.allocate(131072)
 
-        private const val MAX_PENDING_SEND_BYTES = 4_194_304
+        private const val MAX_PENDING_SEND_BYTES = 4_194_304L
+        private const val MAX_ASYNC_SEND_BYTES = 16_777_216L
 
         /**
          * Consecutive selects that returned with nothing selected and no queued op.
@@ -250,6 +262,8 @@ class NioSocket : Transport {
         ch.configureBlocking(false)
         ch.setOption(StandardSocketOptions.TCP_NODELAY, true)
         ch.setOption(StandardSocketOptions.SO_KEEPALIVE, true)
+        runCatching { ch.setOption(StandardSocketOptions.SO_SNDBUF, SO_SNDBUF_BYTES) }
+        runCatching { ch.socket().sendBufferSize = SO_SNDBUF_BYTES }
         // Tighten kernel keep-alive defaults so a half-open peer (Wi-Fi drop,
         // NAT rebind, server crash) is detected within ~60 s instead of the
         // kernel default of ~2 h.
@@ -340,14 +354,20 @@ class NioSocket : Transport {
                 var needWriteInterest = false
                 if (initial != null) {
                     try {
-                        val buffer = ByteBuffer.wrap(initial)
-                        ch.write(buffer)
-                        if (buffer.hasRemaining()) {
-                            // Partial write: enqueue remainder for OP_WRITE.
-                            // Fire-and-forget — no continuation.
-                            val offset = buffer.position()
-                            pendingSends.add(PendingSend(initial, offset, null))
-                            needWriteInterest = true
+                        synchronized(sendLock) {
+                            val buffer = ByteBuffer.wrap(initial)
+                            ch.write(buffer)
+                            if (buffer.hasRemaining()) {
+                                // Partial write: enqueue remainder for OP_WRITE.
+                                // Fire-and-forget — no continuation.
+                                val offset = buffer.position()
+                                val rem = initial.size - offset
+                                pendingSends.addLast(PendingSend(initial, offset, null))
+                                queuedSendBytes += rem
+                                needWriteInterest = true
+                            } else if (pendingSends.isNotEmpty()) {
+                                needWriteInterest = true
+                            }
                         }
                     } catch (e: IOException) {
                         // First write after a successful TCP handshake failed.
@@ -365,6 +385,12 @@ class NioSocket : Transport {
                             )
                         ) }
                         return
+                    }
+                } else {
+                    synchronized(sendLock) {
+                        if (pendingSends.isNotEmpty()) {
+                            needWriteInterest = true
+                        }
                     }
                 }
 
@@ -492,67 +518,106 @@ class NioSocket : Transport {
     }
 
     override suspend fun send(data: ByteArray) {
+        if (data.isEmpty()) return
         val ch = channel ?: throw NioSocketError.NotConnected()
         if (!ch.isOpen) throw NioSocketError.NotConnected()
-        if (queuedSendBytes() + data.size > MAX_PENDING_SEND_BYTES) {
-            throw NioSocketError.SendFailed("Send queue full")
+
+        // Fast-path write and queue insertion are serialized under sendLock so a
+        // partial write's remainder is always enqueued before any other caller or
+        // selector drain can touch the socket or pendingSends. When the queue is
+        // above MAX_PENDING_SEND_BYTES, we still enqueue and suspend rather than
+        // throwing SendFailed, applying natural TCP backpressure to the caller.
+        val pending: PendingSend
+        synchronized(sendLock) {
+            if (!running || !ch.isOpen) throw NioSocketError.NotConnected()
+            if (pendingSends.isEmpty() && queuedSendBytes < MAX_PENDING_SEND_BYTES) {
+                val buffer = ByteBuffer.wrap(data)
+                try {
+                    val written = ch.write(buffer)
+                    if (written >= data.size) return
+                } catch (e: IOException) {
+                    throw NioSocketError.SendFailed(e.message ?: "Write failed")
+                }
+                val offset = buffer.position()
+                val rem = data.size - offset
+                pending = PendingSend(data, offset)
+                pendingSends.addLast(pending)
+                queuedSendBytes += rem
+            } else {
+                pending = PendingSend(data, 0)
+                pendingSends.addLast(pending)
+                queuedSendBytes += data.size
+            }
         }
 
-        // Only attempt immediate write if no pending sends are queued. A
-        // previous partial write leaves its remainder in pendingSends;
-        // writing directly here would interleave data on the wire and
-        // corrupt the stream.
-        if (pendingSends.isEmpty()) {
-            val buffer = ByteBuffer.wrap(data)
-            try {
-                val written = ch.write(buffer)
-                if (written >= data.size) return
-            } catch (e: IOException) {
-                throw NioSocketError.SendFailed(e.message ?: "Write failed")
-            }
-
-            val offset = buffer.position()
-            suspendCoroutine { cont: Continuation<Unit> ->
-                pendingSends.add(PendingSend(data, offset, cont))
-                runOnSelector {
-                    val key = selectionKey
-                    if (key != null && key.isValid) {
-                        try {
-                            key.interestOps(key.interestOps() or SelectionKey.OP_WRITE)
-                        } catch (_: CancelledKeyException) {}
-                    }
+        suspendCoroutine<Unit> { cont ->
+            var alreadyDone = false
+            var doneError: Throwable? = null
+            synchronized(sendLock) {
+                if (pending.completed) {
+                    alreadyDone = true
+                    doneError = pending.error
+                } else {
+                    pending.continuation = cont
                 }
             }
-        } else {
-            suspendCoroutine { cont: Continuation<Unit> ->
-                pendingSends.add(PendingSend(data, 0, cont))
-                runOnSelector {
-                    val key = selectionKey
-                    if (key != null && key.isValid) {
-                        try {
-                            key.interestOps(key.interestOps() or SelectionKey.OP_WRITE)
-                        } catch (_: CancelledKeyException) {}
-                    }
+            if (alreadyDone) {
+                if (doneError != null) cont.resumeWithException(doneError!!)
+                else cont.resume(Unit)
+                return@suspendCoroutine
+            }
+            runOnSelector {
+                val key = selectionKey
+                if (key != null && key.isValid) {
+                    try {
+                        key.interestOps(key.interestOps() or SelectionKey.OP_WRITE)
+                    } catch (_: CancelledKeyException) {}
                 }
             }
         }
     }
 
     override fun sendAsync(data: ByteArray) {
+        if (data.isEmpty()) return
         val ch = channel ?: return
         if (!ch.isOpen) return
-        if (queuedSendBytes() + data.size > MAX_PENDING_SEND_BYTES) {
-            logger.debug("Send queue full, dropping ${data.size} bytes")
-            return
+
+        var needWriteInterest = false
+        synchronized(sendLock) {
+            if (!running || !ch.isOpen) return
+            if (queuedSendBytes + data.size > MAX_ASYNC_SEND_BYTES) {
+                logger.debug("Send queue full, dropping ${data.size} bytes")
+                return
+            }
+
+            if (pendingSends.isEmpty()) {
+                val buffer = ByteBuffer.wrap(data)
+                try {
+                    val written = ch.write(buffer)
+                    if (written >= data.size) return
+                } catch (_: IOException) {
+                    return
+                }
+                val offset = buffer.position()
+                val rem = data.size - offset
+                pendingSends.addLast(PendingSend(data, offset, null))
+                queuedSendBytes += rem
+                needWriteInterest = true
+            } else {
+                pendingSends.addLast(PendingSend(data, 0, null))
+                queuedSendBytes += data.size
+                needWriteInterest = true
+            }
         }
 
-        pendingSends.add(PendingSend(data, 0, null))
-        runOnSelector {
-            val key = selectionKey
-            if (key != null && key.isValid) {
-                try {
-                    key.interestOps(key.interestOps() or SelectionKey.OP_WRITE)
-                } catch (_: CancelledKeyException) {}
+        if (needWriteInterest) {
+            runOnSelector {
+                val key = selectionKey
+                if (key != null && key.isValid) {
+                    try {
+                        key.interestOps(key.interestOps() or SelectionKey.OP_WRITE)
+                    } catch (_: CancelledKeyException) {}
+                }
             }
         }
     }
@@ -560,46 +625,65 @@ class NioSocket : Transport {
     /** Selector thread. */
     private fun onWritable(key: SelectionKey) {
         val ch = key.channel() as SocketChannel
+        val completed = mutableListOf<Continuation<Unit>>()
+        var failedError: NioSocketError.SendFailed? = null
+        val failedConts = mutableListOf<Continuation<Unit>>()
 
-        while (true) {
-            val send = pendingSends.peek() ?: break
+        synchronized(sendLock) {
+            while (true) {
+                val send = pendingSends.peekFirst() ?: break
 
-            val remaining = send.data.size - send.offset
-            val buffer = ByteBuffer.wrap(send.data, send.offset, remaining)
+                val remaining = send.data.size - send.offset
+                val buffer = ByteBuffer.wrap(send.data, send.offset, remaining)
 
-            try {
-                val written = ch.write(buffer)
-                if (written > 0) {
-                    send.offset += written
-                    if (send.offset >= send.data.size) {
-                        pendingSends.poll()
-                        send.continuation?.let { cont ->
-                            resumeSafe(cont) { it.resume(Unit) }
+                try {
+                    val written = ch.write(buffer)
+                    if (written > 0) {
+                        send.offset += written
+                        queuedSendBytes = (queuedSendBytes - written).coerceAtLeast(0L)
+                        if (send.offset >= send.data.size) {
+                            pendingSends.pollFirst()
+                            send.completed = true
+                            send.continuation?.let { cont ->
+                                send.continuation = null
+                                completed.add(cont)
+                            }
+                        }
+                    } else {
+                        break
+                    }
+                } catch (e: IOException) {
+                    val err = NioSocketError.SendFailed(e.message ?: "Write failed")
+                    failedError = err
+                    while (true) {
+                        val s = pendingSends.pollFirst() ?: break
+                        s.completed = true
+                        s.error = err
+                        s.continuation?.let { cont ->
+                            s.continuation = null
+                            failedConts.add(cont)
                         }
                     }
-                } else {
+                    queuedSendBytes = 0L
                     break
                 }
-            } catch (e: IOException) {
-                val err = NioSocketError.SendFailed(e.message ?: "Write failed")
-                pendingSends.poll()
-                send.continuation?.let { cont ->
-                    resumeSafe(cont) { it.resumeWithException(err) }
-                }
-                while (true) {
-                    val s = pendingSends.poll() ?: break
-                    s.continuation?.let { cont ->
-                        resumeSafe(cont) { it.resumeWithException(err) }
-                    }
-                }
-                break
+            }
+
+            if (pendingSends.isEmpty() && key.isValid) {
+                try {
+                    key.interestOps(key.interestOps() and SelectionKey.OP_WRITE.inv())
+                } catch (_: CancelledKeyException) {}
             }
         }
 
-        if (pendingSends.isEmpty() && key.isValid) {
-            try {
-                key.interestOps(key.interestOps() and SelectionKey.OP_WRITE.inv())
-            } catch (_: CancelledKeyException) {}
+        for (cont in completed) {
+            resumeSafe(cont) { it.resume(Unit) }
+        }
+        val err = failedError
+        if (err != null) {
+            for (cont in failedConts) {
+                resumeSafe(cont) { it.resumeWithException(err) }
+            }
         }
     }
 
@@ -617,11 +701,22 @@ class NioSocket : Transport {
             resumeSafe(cont) { it.resume(null) }
         }
 
-        while (true) {
-            val send = pendingSends.poll() ?: break
-            send.continuation?.let { cont ->
-                resumeSafe(cont) { it.resumeWithException(NioSocketError.NotConnected()) }
+        val cancelledSends = mutableListOf<Continuation<Unit>>()
+        val notConnected = NioSocketError.NotConnected()
+        synchronized(sendLock) {
+            while (true) {
+                val send = pendingSends.pollFirst() ?: break
+                send.completed = true
+                send.error = notConnected
+                send.continuation?.let { cont ->
+                    send.continuation = null
+                    cancelledSends.add(cont)
+                }
             }
+            queuedSendBytes = 0L
+        }
+        for (cont in cancelledSends) {
+            resumeSafe(cont) { it.resumeWithException(notConnected) }
         }
 
         try { channel?.close() } catch (_: Exception) {}
@@ -630,12 +725,8 @@ class NioSocket : Transport {
         fastPathBuffer = null
     }
 
-    private fun queuedSendBytes(): Int {
-        var total = 0
-        for (send in pendingSends) {
-            total += send.data.size - send.offset
-        }
-        return total
+    private fun queuedSendBytes(): Int = synchronized(sendLock) {
+        queuedSendBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     /**

@@ -295,7 +295,10 @@ data class QuicTuning(
          * server's `Hysteria-CC-RX` response replaces it once authentication
          * has completed.
          */
-        fun hysteria(congestionControl: HysteriaCongestionControl, uploadMbps: Int): QuicTuning =
+        fun hysteria(
+            congestionControl: HysteriaCongestionControl = HysteriaCongestionControl.BBR,
+            uploadMbps: Int = 0
+        ): QuicTuning =
             when (congestionControl) {
                 HysteriaCongestionControl.BRUTAL -> QuicTuning(
                     congestionControl = QuicCongestionControl.Brutal(

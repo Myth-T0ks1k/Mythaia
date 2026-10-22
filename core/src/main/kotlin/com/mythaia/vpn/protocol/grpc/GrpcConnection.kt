@@ -14,6 +14,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.coroutines.resume
@@ -35,6 +37,8 @@ class GrpcConnection private constructor(
     private val transportCancel: () -> Unit
 ) : GrpcTunnel {
     private val lock = ReentrantLock()
+    private val h2WriteMutex = Mutex()
+    private val h2ReadMutex = Mutex()
     private var _isConnected: Boolean = true
 
     /** Raw HTTP/2 byte buffer (accumulates transport reads until a full frame is parseable). */
@@ -168,12 +172,41 @@ class GrpcConnection private constructor(
         initData += buildH2Frame(H2_FRAME_HEADERS, H2_FLAG_END_HEADERS, STREAM_ID, headerBlock)
 
         try {
-            transportSend(initData)
+            writeH2Frames(initData)
         } catch (e: Exception) {
             throw GrpcError.SetupFailed("H2 preface/HEADERS write failed: ${e.message}")
         }
 
         processInitialServerFrames()
+    }
+
+    private suspend fun writeH2Frames(data: ByteArray) {
+        h2WriteMutex.withLock {
+            transportSend(data)
+        }
+    }
+
+    private fun wakeAllFlowWaitersLocked(): List<CancellableContinuation<Unit>> {
+        val waiters = h2FlowResumptions.toList()
+        h2FlowResumptions.clear()
+        return waiters
+    }
+
+    private fun resumeFlowWaiters(waiters: List<CancellableContinuation<Unit>>) {
+        for (c in waiters) {
+            if (c.isActive) c.resume(Unit)
+        }
+    }
+
+    private fun appendToDecodedBufferLocked(data: ByteArray) {
+        if (data.isEmpty()) return
+        val needed = decodedBufferLen + data.size
+        if (needed > decodedBuffer.size) {
+            val newCap = maxOf(needed, decodedBuffer.size * 2, 4096)
+            decodedBuffer = decodedBuffer.copyOf(newCap)
+        }
+        System.arraycopy(data, 0, decodedBuffer, decodedBufferLen, data.size)
+        decodedBufferLen += data.size
     }
 
     /**
@@ -196,7 +229,7 @@ class GrpcConnection private constructor(
                     if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
                         parseH2Settings(frame.payload)
                         val ack = buildH2Frame(H2_FRAME_SETTINGS, H2_FLAG_ACK, 0u, ByteArray(0))
-                        runCatching { transportSend(ack) }
+                        runCatching { writeH2Frames(ack) }
                         startKeepaliveIfNeeded()
                         return
                     }
@@ -213,7 +246,11 @@ class GrpcConnection private constructor(
                         // the gRPC call itself failed
                         if ((frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0) {
                             val grpcError = parseGrpcTrailer(frame.payload)
-                            lock.withLock { h2StreamClosed = true }
+                            val waiters = lock.withLock {
+                                h2StreamClosed = true
+                                wakeAllFlowWaitersLocked()
+                            }
+                            resumeFlowWaiters(waiters)
                             if (grpcError != null) {
                                 throw GrpcError.SetupFailed(grpcError.message ?: "gRPC trailer error")
                             }
@@ -231,7 +268,7 @@ class GrpcConnection private constructor(
                 H2_FRAME_PING -> {
                     if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
                         val pong = buildH2Frame(H2_FRAME_PING, H2_FLAG_ACK, 0u, frame.payload)
-                        runCatching { transportSend(pong) }
+                        runCatching { writeH2Frames(pong) }
                     }
                 }
 
@@ -377,6 +414,7 @@ class GrpcConnection private constructor(
     /** Parses a server SETTINGS payload and applies INITIAL_WINDOW_SIZE / MAX_FRAME_SIZE. */
     private fun parseH2Settings(payload: ByteArray) {
         var offset = 0
+        var toResume: List<CancellableContinuation<Unit>> = emptyList()
         while (offset + 6 <= payload.size) {
             val id = ((payload[offset].toInt() and 0xFF) shl 8) or
                     (payload[offset + 1].toInt() and 0xFF)
@@ -390,10 +428,14 @@ class GrpcConnection private constructor(
                     val delta = value - h2PeerInitialWindowSize
                     h2PeerInitialWindowSize = value
                     h2PeerStreamSendWindow += delta
+                    if (minOf(h2PeerConnectionWindow, h2PeerStreamSendWindow) > 0) {
+                        toResume = wakeAllFlowWaitersLocked()
+                    }
                 }
-                0x05 -> lock.withLock { h2MaxFrameSize = value }
+                0x05 -> lock.withLock { h2MaxFrameSize = value.coerceIn(16384, 16_777_215) }
             }
         }
+        resumeFlowWaiters(toResume)
     }
 
     /** Updates our send-side view of the peer's flow-control windows. */
@@ -684,37 +726,61 @@ class GrpcConnection private constructor(
         var offset = 0
         while (offset < data.size) {
             val (nextOffset, frames) = lock.withLock {
-                if (h2StreamClosed) throw GrpcError.ConnectionClosed()
+                if (h2StreamClosed || !_isConnected) throw GrpcError.ConnectionClosed()
                 val window = minOf(h2PeerConnectionWindow, h2PeerStreamSendWindow)
                 if (window <= 0) return@withLock Pair(offset, ByteArray(0))
 
-                val maxSize = h2MaxFrameSize
+                val maxSize = minOf(h2MaxFrameSize, 16384)
                 var cur = offset
                 var windowRemaining = window
-                var framesBuf = ByteArray(0)
+                val framesBuf = java.io.ByteArrayOutputStream()
                 while (cur < data.size) {
                     val remaining = data.size - cur
                     val chunkSize = minOf(remaining, minOf(maxSize, windowRemaining))
                     if (chunkSize <= 0) break
                     val chunk = data.copyOfRange(cur, cur + chunkSize)
-                    framesBuf += buildH2Frame(H2_FRAME_DATA, 0, STREAM_ID, chunk)
+                    framesBuf.write(buildH2Frame(H2_FRAME_DATA, 0, STREAM_ID, chunk))
                     cur += chunkSize
                     windowRemaining -= chunkSize
                 }
                 val totalSent = window - windowRemaining
                 h2PeerConnectionWindow -= totalSent
                 h2PeerStreamSendWindow -= totalSent
-                Pair(cur, framesBuf)
+                Pair(cur, framesBuf.toByteArray())
             }
 
             if (frames.isEmpty()) {
-                awaitFlowResumption()
+                // If no receive() coroutine is currently reading from the transport,
+                // pump one inbound H2 frame so WINDOW_UPDATE / SETTINGS / PING frames
+                // are processed even when downlink reads are not active.
+                if (h2ReadMutex.tryLock()) {
+                    try {
+                        val needsPump = lock.withLock {
+                            if (h2StreamClosed || !_isConnected) throw GrpcError.ConnectionClosed()
+                            minOf(h2PeerConnectionWindow, h2PeerStreamSendWindow) <= 0
+                        }
+                        if (needsPump) {
+                            val payload = processOneH2FrameLocked()
+                            if (payload != null && payload.isNotEmpty()) {
+                                lock.withLock { appendToDecodedBufferLocked(payload) }
+                            }
+                        }
+                    } finally {
+                        h2ReadMutex.unlock()
+                    }
+                } else {
+                    awaitFlowResumption()
+                }
                 continue
             }
             try {
-                transportSend(frames)
+                writeH2Frames(frames)
             } catch (e: Throwable) {
-                lock.withLock { h2StreamClosed = true }
+                val waiters = lock.withLock {
+                    h2StreamClosed = true
+                    wakeAllFlowWaitersLocked()
+                }
+                resumeFlowWaiters(waiters)
                 throw e
             }
             offset = nextOffset
@@ -723,14 +789,21 @@ class GrpcConnection private constructor(
 
     private suspend fun awaitFlowResumption() {
         suspendCancellableCoroutine<Unit> { cont ->
-            val added = lock.withLock {
-                if (h2StreamClosed || !_isConnected) false
-                else {
-                    h2FlowResumptions.add(cont)
-                    true
+            val shouldResumeImmediately = lock.withLock {
+                when {
+                    h2StreamClosed || !_isConnected -> false
+                    minOf(h2PeerConnectionWindow, h2PeerStreamSendWindow) > 0 -> true
+                    else -> {
+                        h2FlowResumptions.add(cont)
+                        null
+                    }
                 }
             }
-            if (!added) {
+            if (shouldResumeImmediately == true) {
+                if (cont.isActive) cont.resume(Unit)
+                return@suspendCancellableCoroutine
+            }
+            if (shouldResumeImmediately == false) {
                 if (cont.isActive) cont.resumeWithException(GrpcError.ConnectionClosed())
                 return@suspendCancellableCoroutine
             }
@@ -744,90 +817,130 @@ class GrpcConnection private constructor(
      * Pulls H2 frames until at least one application payload is ready, handling
      * SETTINGS, WINDOW_UPDATE, PING, GOAWAY, RST_STREAM, and trailer HEADERS inline.
      */
-    private suspend fun readAndDecode(): ByteArray? {
+    private suspend fun readAndDecode(): ByteArray? = h2ReadMutex.withLock {
+        lock.withLock {
+            if (decodedBufferLen > 0) {
+                val out = decodedBuffer.copyOfRange(0, decodedBufferLen)
+                decodedBufferLen = 0
+                decodedBuffer = ByteArray(0)
+                return@withLock out
+            }
+            if (h2StreamClosed) return@withLock null
+        }
         while (true) {
-            val frame = readH2Frame()
-            val isOurStream = frame.streamId == STREAM_ID
-
-            when (frame.type) {
-                H2_FRAME_DATA -> {
-                    val payload = handleDataFrame(frame, isOurStream)
-                    if (payload != null) return payload
-                    if (lock.withLock { h2StreamClosed }) return null
-                }
-
-                H2_FRAME_HEADERS -> {
-                    if (isOurStream) {
-                        val endOfStream = (frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0
-                        val needsValidate = lock.withLock { !h2ResponseReceived }
-                        if (needsValidate) {
-                            val rejection = checkH2ResponseStatus(frame.payload)
-                            if (rejection != null) {
-                                lock.withLock { h2StreamClosed = true }
-                                throw GrpcError.InvalidResponse("gRPC response rejected: $rejection")
-                            }
-                            lock.withLock { h2ResponseReceived = true }
-                        }
-                        if (endOfStream) {
-                            val grpcError = parseGrpcTrailer(frame.payload)
-                            val leftover: ByteArray
-                            lock.withLock {
-                                h2StreamClosed = true
-                                leftover = if (decodedBufferLen > 0)
-                                    decodedBuffer.copyOfRange(0, decodedBufferLen)
-                                else ByteArray(0)
-                                decodedBuffer = ByteArray(0); decodedBufferLen = 0
-                            }
-                            if (grpcError != null) throw grpcError
-                            return if (leftover.isEmpty()) null else leftover
-                        }
-                    }
-                }
-
-                H2_FRAME_SETTINGS -> {
-                    if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
-                        parseH2Settings(frame.payload)
-                        val ack = buildH2Frame(H2_FRAME_SETTINGS, H2_FLAG_ACK, 0u, ByteArray(0))
-                        runCatching { transportSend(ack) }
-                    }
-                }
-
-                H2_FRAME_WINDOW_UPDATE -> handleWindowUpdate(frame)
-
-                H2_FRAME_PING -> {
-                    if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
-                        val pong = buildH2Frame(H2_FRAME_PING, H2_FLAG_ACK, 0u, frame.payload)
-                        runCatching { transportSend(pong) }
-                    }
-                }
-
-                H2_FRAME_GOAWAY -> {
-                    val leftover: ByteArray
-                    lock.withLock {
-                        h2StreamClosed = true
-                        leftover = if (decodedBufferLen > 0)
-                            decodedBuffer.copyOfRange(0, decodedBufferLen)
-                        else ByteArray(0)
+            val payload = processOneH2FrameLocked()
+            if (payload != null) return@withLock if (payload.isEmpty()) null else payload
+            if (lock.withLock { h2StreamClosed }) {
+                val leftover = lock.withLock {
+                    if (decodedBufferLen > 0) {
+                        val out = decodedBuffer.copyOfRange(0, decodedBufferLen)
                         decodedBuffer = ByteArray(0); decodedBufferLen = 0
-                    }
-                    return if (leftover.isEmpty()) null else leftover
+                        out
+                    } else ByteArray(0)
                 }
+                return@withLock if (leftover.isEmpty()) null else leftover
+            }
+        }
+        @Suppress("UNREACHABLE_CODE")
+        null
+    }
 
-                H2_FRAME_RST_STREAM -> {
-                    if (isOurStream) {
-                        val leftover: ByteArray
-                        lock.withLock {
+    /**
+     * Reads and processes a single H2 frame while holding [h2ReadMutex].
+     * Returns a non-empty [ByteArray] when decoded application bytes are ready,
+     * an empty [ByteArray] when the stream ended cleanly with no remaining bytes,
+     * or `null` when only control frames were processed.
+     */
+    private suspend fun processOneH2FrameLocked(): ByteArray? {
+        val frame = readH2Frame()
+        val isOurStream = frame.streamId == STREAM_ID
+
+        when (frame.type) {
+            H2_FRAME_DATA -> {
+                val payload = handleDataFrame(frame, isOurStream)
+                if (payload != null) return payload
+                if (lock.withLock { h2StreamClosed }) return ByteArray(0)
+            }
+
+            H2_FRAME_HEADERS -> {
+                if (isOurStream) {
+                    val endOfStream = (frame.flags.toInt() and H2_FLAG_END_STREAM.toInt()) != 0
+                    val needsValidate = lock.withLock { !h2ResponseReceived }
+                    if (needsValidate) {
+                        val rejection = checkH2ResponseStatus(frame.payload)
+                        if (rejection != null) {
+                            val waiters = lock.withLock {
+                                h2StreamClosed = true
+                                wakeAllFlowWaitersLocked()
+                            }
+                            resumeFlowWaiters(waiters)
+                            throw GrpcError.InvalidResponse("gRPC response rejected: $rejection")
+                        }
+                        lock.withLock { h2ResponseReceived = true }
+                    }
+                    if (endOfStream) {
+                        val grpcError = parseGrpcTrailer(frame.payload)
+                        val (leftover, waiters) = lock.withLock {
                             h2StreamClosed = true
-                            leftover = if (decodedBufferLen > 0)
+                            val rem = if (decodedBufferLen > 0)
                                 decodedBuffer.copyOfRange(0, decodedBufferLen)
                             else ByteArray(0)
                             decodedBuffer = ByteArray(0); decodedBufferLen = 0
+                            Pair(rem, wakeAllFlowWaitersLocked())
                         }
-                        return if (leftover.isEmpty()) null else leftover
+                        resumeFlowWaiters(waiters)
+                        if (grpcError != null) throw grpcError
+                        return leftover
                     }
                 }
             }
+
+            H2_FRAME_SETTINGS -> {
+                if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
+                    parseH2Settings(frame.payload)
+                    val ack = buildH2Frame(H2_FRAME_SETTINGS, H2_FLAG_ACK, 0u, ByteArray(0))
+                    runCatching { writeH2Frames(ack) }
+                }
+            }
+
+            H2_FRAME_WINDOW_UPDATE -> handleWindowUpdate(frame)
+
+            H2_FRAME_PING -> {
+                if ((frame.flags.toInt() and H2_FLAG_ACK.toInt()) == 0) {
+                    val pong = buildH2Frame(H2_FRAME_PING, H2_FLAG_ACK, 0u, frame.payload)
+                    runCatching { writeH2Frames(pong) }
+                }
+            }
+
+            H2_FRAME_GOAWAY -> {
+                val (leftover, waiters) = lock.withLock {
+                    h2StreamClosed = true
+                    val rem = if (decodedBufferLen > 0)
+                        decodedBuffer.copyOfRange(0, decodedBufferLen)
+                    else ByteArray(0)
+                    decodedBuffer = ByteArray(0); decodedBufferLen = 0
+                    Pair(rem, wakeAllFlowWaitersLocked())
+                }
+                resumeFlowWaiters(waiters)
+                return leftover
+            }
+
+            H2_FRAME_RST_STREAM -> {
+                if (isOurStream) {
+                    val (leftover, waiters) = lock.withLock {
+                        h2StreamClosed = true
+                        val rem = if (decodedBufferLen > 0)
+                            decodedBuffer.copyOfRange(0, decodedBufferLen)
+                        else ByteArray(0)
+                        decodedBuffer = ByteArray(0); decodedBufferLen = 0
+                        Pair(rem, wakeAllFlowWaitersLocked())
+                    }
+                    resumeFlowWaiters(waiters)
+                    return leftover
+                }
+            }
         }
+        return null
     }
 
     /**
@@ -889,6 +1002,7 @@ class GrpcConnection private constructor(
             if (endOfStream) {
                 h2StreamClosed = true
                 streamClosed = true
+                resumeFlowWaiters(wakeAllFlowWaitersLocked())
             }
         }
 
@@ -953,7 +1067,7 @@ class GrpcConnection private constructor(
             updates += buildH2Frame(H2_FRAME_WINDOW_UPDATE, 0, STREAM_ID, p)
         }
         if (updates.isNotEmpty()) {
-            runCatching { transportSend(updates) }
+            runCatching { writeH2Frames(updates) }
         }
     }
 
@@ -971,7 +1085,7 @@ class GrpcConnection private constructor(
                         H2_FRAME_PING, 0, 0u,
                         byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
                     )
-                    runCatching { transportSend(ping) }
+                    runCatching { writeH2Frames(ping) }
                 }
             }
         }

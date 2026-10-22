@@ -355,6 +355,9 @@ class Http2Session(
             }
             val before = lastFrameNanos
             sendFrameRaw(Http2Framer.pingFrame())
+            // If a frame arrived while sendFrameRaw was waiting on writeMutex,
+            // the peer is already proven alive for this cycle.
+            if (lastFrameNanos != before) continue
             delay(keepaliveTimeoutMs)
             if (lastFrameNanos == before && state != State.CLOSED) {
                 closeWithError(Http2Error.ConnectionFailed("no reply to keepalive PING within $keepaliveTimeoutMs ms"))
@@ -485,8 +488,10 @@ class Http2Session(
 
                 if (frame.hasFlag(Http2FrameFlags.END_STREAM)) {
                     // END_STREAM is a clean half-close from the server, not a reset.
-                    stream.deliverEndStream()
-                    synchronized(streamsLock) { streams.remove(frame.streamID) }
+                    // Only remove the stream once both directions have ended.
+                    if (stream.deliverEndStream()) {
+                        synchronized(streamsLock) { streams.remove(frame.streamID) }
+                    }
                 }
             }
 
@@ -593,8 +598,9 @@ class Http2Session(
         stream.deliverHeaders(headers)
         // Trailers (gRPC's grpc-status) end the stream on a HEADERS frame.
         if (flags and Http2FrameFlags.END_STREAM != 0) {
-            stream.deliverEndStream()
-            synchronized(streamsLock) { streams.remove(streamID) }
+            if (stream.deliverEndStream()) {
+                synchronized(streamsLock) { streams.remove(streamID) }
+            }
         }
     }
 
@@ -635,21 +641,37 @@ class Http2Session(
                     transport?.send(Http2Framer.serialize(Http2Framer.dataFrame(streamID, ByteArray(0), endStream = true)))
                         ?: throw Http2Error.ConnectionFailed("Transport closed")
                 }
+                stream.markSendEndStream()
             }
             return
         }
+
+        val isBulkWrite = data.size > 4096
 
         while (currentOffset < data.size) {
             // Checked per chunk: a stream reset or closed in the middle of a
             // long write used to keep sending DATA on it to the end.
             if (!stream.isConnected) throw Http2Error.StreamReset(streamID)
             val remaining = data.size - currentOffset
-            // Taken under the lock: with many streams sending at once, an
-            // unlocked read-then-subtract let two of them spend the same window.
+            val multiStream = synchronized(streamsLock) { streams.size + reserved > 1 }
+            val frameCap = if (isBulkWrite && multiStream) minOf(maxPayload, 8192) else maxPayload
+            // Atomically reserve from both connection and stream windows under flowLock
+            // so concurrent streams and SETTINGS_INITIAL_WINDOW_SIZE updates never race.
+            // Bulk writes leave a 4 KB connection-window reserve when other streams are
+            // active so interactive headers/pings (VLESS/VMess/Trojan prefaces) never starve.
             val chunkSize = synchronized(flowLock) {
-                val allowed = minOf(remaining, maxPayload, connectionSendWindow, streamFlowControl.sendWindow)
-                if (allowed > 0) connectionSendWindow -= allowed
-                allowed
+                val availConnWindow = if (isBulkWrite && multiStream && serverInitialWindowSize >= 65_535) {
+                    (connectionSendWindow - 4096).coerceAtLeast(0)
+                } else {
+                    connectionSendWindow
+                }
+                val connCap = minOf(remaining, frameCap, availConnWindow)
+                if (connCap <= 0) 0
+                else {
+                    val taken = streamFlowControl.reserveSend(connCap)
+                    if (taken > 0) connectionSendWindow -= taken
+                    taken
+                }
             }
             if (chunkSize <= 0) {
                 // Flow-control blocked. Suspend until a WINDOW_UPDATE arrives
@@ -657,21 +679,24 @@ class Http2Session(
                 // HTTP2Session.swift:451-455 / HTTP2Connection.swift:427-433
                 // — iOS schedules a 50ms retry; we use awaiters for precision.
                 if (state == State.CLOSED) throw Http2Error.ConnectionFailed("Session closed")
-                if (connectionSendWindow <= 0) {
-                    val awaiter = synchronized(flowLock) {
-                        if (connectionSendWindow > 0) null
-                        else (connectionWindowAwaiter ?: CompletableDeferred<Unit>().also {
-                            connectionWindowAwaiter = it
-                        })
+                val connAwaiter = synchronized(flowLock) {
+                    val availConnWindow = if (isBulkWrite && multiStream && serverInitialWindowSize >= 65_535) {
+                        (connectionSendWindow - 4096).coerceAtLeast(0)
+                    } else {
+                        connectionSendWindow
                     }
-                    awaiter?.await()
+                    if (availConnWindow > 0) null
+                    else (connectionWindowAwaiter ?: CompletableDeferred<Unit>().also {
+                        connectionWindowAwaiter = it
+                    })
+                }
+                if (connAwaiter != null) {
+                    connAwaiter.await()
                 } else {
                     streamFlowControl.awaitWindow()
                 }
                 continue
             }
-
-            streamFlowControl.consumeSend(chunkSize)
 
             val chunk = data.copyOfRange(currentOffset, currentOffset + chunkSize)
             val last = currentOffset + chunkSize >= data.size
@@ -682,7 +707,14 @@ class Http2Session(
                     ?: throw Http2Error.ConnectionFailed("Transport closed")
             }
 
+            if (endStream && last) {
+                stream.markSendEndStream()
+            }
+
             currentOffset += chunkSize
+            if (currentOffset < data.size) {
+                kotlinx.coroutines.yield()
+            }
         }
     }
 

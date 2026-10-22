@@ -57,6 +57,7 @@ class VmessConnection(
     private val pendingHeader = java.util.concurrent.atomic.AtomicReference(requestHeader)
 
     private val sendLock = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
 
     private var buffer = ByteArray(0)
     private var responseHeaderRead = false
@@ -72,16 +73,47 @@ class VmessConnection(
         // The chunk writer advances a counter and a mask stream per chunk, so
         // only one writer may be inside encode at a time.
         sendLock.withLock {
+            drainAsyncQueueLocked()
             val header = pendingHeader.getAndSet(null)
             val body = if (chunkStream) writer.encode(data) else data
-            transport.send(if (header != null) header + body else body)
+            try {
+                transport.send(if (header != null) header + body else body)
+            } finally {
+                drainAsyncQueueLocked()
+            }
         }
+        flushAsyncIfUnlocked()
     }
 
     override fun sendRawAsync(data: ByteArray) {
-        val header = pendingHeader.getAndSet(null)
-        val body = if (chunkStream) synchronized(writer) { writer.encode(data) } else data
-        transport.sendAsync(if (header != null) header + body else body)
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    private fun drainAsyncQueueLocked() {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            runCatching {
+                val header = pendingHeader.getAndSet(null)
+                val body = if (chunkStream) writer.encode(next) else next
+                transport.sendAsync(if (header != null) header + body else body)
+            }
+        }
+    }
+
+    private fun flushAsyncIfUnlocked() {
+        while (synchronized(asyncQueue) { asyncQueue.isNotEmpty() }) {
+            if (!sendLock.tryLock()) return
+            try {
+                drainAsyncQueueLocked()
+            } finally {
+                sendLock.unlock()
+            }
+        }
     }
 
     override suspend fun receiveRaw(): ByteArray? {
@@ -140,6 +172,7 @@ class VmessConnection(
     override fun cancel() {
         if (cancelled) return
         cancelled = true
+        synchronized(asyncQueue) { asyncQueue.clear() }
         try {
             transport.forceCancel()
         } catch (e: Exception) {

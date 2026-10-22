@@ -4,6 +4,8 @@ import com.mythaia.vpn.util.MythaiaLogger
 import com.mythaia.vpn.protocol.naive.NaiveConfiguration
 import com.mythaia.vpn.protocol.naive.NaivePaddingNegotiator
 import com.mythaia.vpn.protocol.naive.NaiveTlsTransport
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 
 private val logger = MythaiaLogger("HTTP2")
@@ -52,9 +54,16 @@ class Http2Connection(
         CLOSED
     }
 
+    @Volatile
     private var state = State.IDLE
     private var flowControl = Http2FlowControl()
     private var receiveBuffer = Http2Buffer()
+    private val writeMutex = Mutex()
+    private val readMutex = Mutex()
+    private val bufferedDataLock = Any()
+    private val bufferedDataFrames = ArrayDeque<ByteArray>()
+    @Volatile
+    private var remoteEndStream = false
 
     var negotiatedPaddingType = NaivePaddingNegotiator.PaddingType.NONE
         private set
@@ -268,92 +277,168 @@ class Http2Connection(
         }
 
         if (framesBuf.size() == 0) {
-            // Flow control blocked. Suspend until WINDOW_UPDATE arrives instead
-            // of throwing — mirrors iOS HTTP2Connection.swift:427-433.
+            // Flow control blocked. If no receiveData() coroutine is currently reading
+            // from the transport, pump one frame here so incoming WINDOW_UPDATE / SETTINGS
+            // frames are processed even before receiveData() is active or while downlink
+            // backpressure pauses reads.
             if (state == State.CLOSED) throw Http2Error.ConnectionFailed("Connection closed")
-            flowControl.awaitWindow()
+            if (readMutex.tryLock()) {
+                try {
+                    if (flowControl.maxSendBytes <= 0 && state == State.TUNNEL_OPEN) {
+                        pumpOneInboundFrameLocked()
+                    }
+                } finally {
+                    readMutex.unlock()
+                }
+            } else {
+                flowControl.awaitWindow()
+            }
             sendDataFrames(data, currentOffset)
             return
         }
 
-        transport.send(framesBuf.toByteArray())
+        writeMutex.withLock {
+            transport.send(framesBuf.toByteArray())
+        }
 
         if (currentOffset < data.size) {
             sendDataFrames(data, currentOffset)
         }
     }
 
-    /** Reads frames until a DATA frame for stream 1 arrives, handling control frames inline. */
-    private suspend fun readNextDataFrame(): ByteArray? {
+    /**
+     * Reads and routes one inbound frame while holding [readMutex]. Any DATA
+     * payload for stream 1 is queued into [bufferedDataFrames] so [readNextDataFrame]
+     * delivers it in order without loss.
+     */
+    private suspend fun pumpOneInboundFrameLocked() {
         while (true) {
             val frame = Http2Framer.deserialize(receiveBuffer)
-            if (frame == null) {
-                readFromTransport()
-                continue
+            if (frame != null) {
+                val dataPayload = handleInboundFrame(frame)
+                if (dataPayload != null && dataPayload.isNotEmpty()) {
+                    synchronized(bufferedDataLock) {
+                        bufferedDataFrames.addLast(dataPayload)
+                    }
+                }
+                return
             }
+            readFromTransport()
+        }
+    }
 
-            when (frame.type) {
-                Http2FrameType.DATA -> {
-                    if (frame.streamID != 1) continue
-
-                    if (frame.payload.isNotEmpty()) {
-                        val increments = flowControl.consumeRecvWindow(frame.payload.size)
-                        increments.connectionIncrement?.let { connInc ->
-                            sendFrame(Http2Framer.windowUpdateFrame(streamID = 0, increment = connInc))
-                        }
-                        increments.streamIncrement?.let { streamInc ->
-                            sendFrame(Http2Framer.windowUpdateFrame(streamID = 1, increment = streamInc))
-                        }
-                    }
-
-                    if (frame.hasFlag(Http2FrameFlags.END_STREAM)) {
-                        state = State.CLOSED
-                        return if (frame.payload.isNotEmpty()) frame.payload else null
-                    }
-
-                    if (frame.payload.isNotEmpty()) {
-                        return frame.payload
-                    }
-                }
-
-                Http2FrameType.PING -> {
-                    if (!frame.hasFlag(Http2FrameFlags.ACK)) {
-                        sendFrame(Http2Framer.pingAckFrame(frame.payload))
-                    }
-                }
-
-                Http2FrameType.WINDOW_UPDATE -> {
-                    Http2Framer.parseWindowUpdate(frame.payload)?.let { inc ->
-                        flowControl.applyWindowUpdate(frame.streamID, inc)
-                    }
-                }
-
-                Http2FrameType.SETTINGS -> {
-                    if (!frame.hasFlag(Http2FrameFlags.ACK)) {
-                        handleServerSettings(frame)
-                        sendFrame(Http2Framer.settingsAckFrame())
-                    }
-                }
-
-                Http2FrameType.GOAWAY -> {
-                    state = State.CLOSED
-                    val parsed = Http2Framer.parseGoaway(frame.payload)
-                    if (parsed != null) {
-                        logger.warning("GOAWAY: lastStreamID=${parsed.lastStreamID}, errorCode=${parsed.errorCode}")
-                    }
-                    throw Http2Error.Goaway()
-                }
-
-                Http2FrameType.RST_STREAM -> {
-                    if (frame.streamID == 1) {
-                        state = State.CLOSED
-                        throw Http2Error.StreamReset(frame.streamID)
-                    }
-                }
-
-                else -> {} // Unknown frame types skipped per RFC 7540 §4.1
+    /** Reads frames until a DATA frame for stream 1 arrives, handling control frames inline. */
+    private suspend fun readNextDataFrame(): ByteArray? {
+        synchronized(bufferedDataLock) {
+            if (bufferedDataFrames.isNotEmpty()) {
+                return bufferedDataFrames.removeFirst()
+            }
+            if (remoteEndStream) {
+                state = State.CLOSED
+                return null
             }
         }
+        return readMutex.withLock {
+            synchronized(bufferedDataLock) {
+                if (bufferedDataFrames.isNotEmpty()) {
+                    return@withLock bufferedDataFrames.removeFirst()
+                }
+                if (remoteEndStream) {
+                    state = State.CLOSED
+                    return@withLock null
+                }
+            }
+            while (true) {
+                val frame = Http2Framer.deserialize(receiveBuffer)
+                if (frame == null) {
+                    readFromTransport()
+                    continue
+                }
+                val payload = handleInboundFrame(frame)
+                if (payload != null) {
+                    return@withLock if (payload.isNotEmpty()) payload else null
+                }
+                if (remoteEndStream) {
+                    state = State.CLOSED
+                    return@withLock null
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            null
+        }
+    }
+
+    /**
+     * Routes one frame on an established connection. Returns a non-null [ByteArray]
+     * when a stream-1 DATA payload (or empty ByteArray on END_STREAM) is ready.
+     */
+    private suspend fun handleInboundFrame(frame: Http2Frame): ByteArray? {
+        when (frame.type) {
+            Http2FrameType.DATA -> {
+                if (frame.streamID != 1) return null
+
+                if (frame.payload.isNotEmpty()) {
+                    val increments = flowControl.consumeRecvWindow(frame.payload.size)
+                    increments.connectionIncrement?.let { connInc ->
+                        sendFrame(Http2Framer.windowUpdateFrame(streamID = 0, increment = connInc))
+                    }
+                    increments.streamIncrement?.let { streamInc ->
+                        sendFrame(Http2Framer.windowUpdateFrame(streamID = 1, increment = streamInc))
+                    }
+                }
+
+                if (frame.hasFlag(Http2FrameFlags.END_STREAM)) {
+                    remoteEndStream = true
+                    return frame.payload
+                }
+
+                if (frame.payload.isNotEmpty()) {
+                    return frame.payload
+                }
+            }
+
+            Http2FrameType.PING -> {
+                if (!frame.hasFlag(Http2FrameFlags.ACK)) {
+                    sendFrame(Http2Framer.pingAckFrame(frame.payload))
+                }
+            }
+
+            Http2FrameType.WINDOW_UPDATE -> {
+                Http2Framer.parseWindowUpdate(frame.payload)?.let { inc ->
+                    flowControl.applyWindowUpdate(frame.streamID, inc)
+                }
+            }
+
+            Http2FrameType.SETTINGS -> {
+                if (!frame.hasFlag(Http2FrameFlags.ACK)) {
+                    handleServerSettings(frame)
+                    sendFrame(Http2Framer.settingsAckFrame())
+                }
+            }
+
+            Http2FrameType.GOAWAY -> {
+                state = State.CLOSED
+                val parsed = Http2Framer.parseGoaway(frame.payload)
+                if (parsed != null) {
+                    logger.warning("GOAWAY: lastStreamID=${parsed.lastStreamID}, errorCode=${parsed.errorCode}")
+                }
+                val err = Http2Error.Goaway()
+                flowControl.cancelAwaiters(err)
+                throw err
+            }
+
+            Http2FrameType.RST_STREAM -> {
+                if (frame.streamID == 1) {
+                    state = State.CLOSED
+                    val err = Http2Error.StreamReset(frame.streamID)
+                    flowControl.cancelAwaiters(err)
+                    throw err
+                }
+            }
+
+            else -> {} // Unknown frame types skipped per RFC 7540 §4.1
+        }
+        return null
     }
 
     private suspend fun readFromTransport() {
@@ -372,7 +457,9 @@ class Http2Connection(
 
     private suspend fun sendFrame(frame: Http2Frame) {
         try {
-            transport.send(Http2Framer.serialize(frame))
+            writeMutex.withLock {
+                transport.send(Http2Framer.serialize(frame))
+            }
         } catch (e: Exception) {
             logger.warning("Failed to send frame: ${e.message}")
         }

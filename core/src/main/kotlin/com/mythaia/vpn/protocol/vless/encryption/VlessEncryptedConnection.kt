@@ -2,7 +2,7 @@ package com.mythaia.vpn.protocol.vless.encryption
 
 import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
-import kotlinx.coroutines.runBlocking
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -57,6 +57,7 @@ internal class VlessEncryptedConnection(
     private var writeAead: VlessRecordAead = writeAead
     private var preludeBytes: ByteArray? = preludeBytes
     private val sendMutex = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
 
     // Receive state, guarded by [recvMutex]. Receive is single-consumer, so the
     // whole read runs under the lock rather than in short critical sections.
@@ -74,23 +75,58 @@ internal class VlessEncryptedConnection(
     override suspend fun sendRaw(data: ByteArray) {
         if (data.isEmpty()) return
         sendMutex.withLock {
+            drainAsyncQueueLocked()
             val frames = buildOutboundFrames(data)
-            inner.sendRaw(frames)
+            try {
+                inner.sendRaw(frames)
+            } finally {
+                drainAsyncQueueLocked()
+            }
         }
+        flushAsyncIfUnlocked()
     }
 
     override fun sendRawAsync(data: ByteArray) {
-        // Mirror VlessGrpcConnection: no non-blocking framed send exists, so run
-        // the suspending path and drop errors the fire-and-forget caller cannot see.
-        runBlocking { runCatching { sendRaw(data) } }
+        if (data.isEmpty()) return
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    private fun drainAsyncQueueLocked() {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            runCatching {
+                val frames = buildOutboundFrames(next)
+                inner.sendRawAsync(frames)
+            }
+        }
+    }
+
+    private fun flushAsyncIfUnlocked() {
+        while (synchronized(asyncQueue) { asyncQueue.isNotEmpty() }) {
+            if (!sendMutex.tryLock()) return
+            try {
+                drainAsyncQueueLocked()
+            } finally {
+                sendMutex.unlock()
+            }
+        }
     }
 
     /** Assumes [sendMutex] held. */
     private fun buildOutboundFrames(plaintext: ByteArray): ByteArray {
-        var output = ByteArray(0)
-        preludeBytes?.let {
-            output += it
-            preludeBytes = null
+        val prelude = preludeBytes
+        preludeBytes = null
+        val chunks = (plaintext.size + VlessWire.MAX_CHUNK_PLAINTEXT - 1) / VlessWire.MAX_CHUNK_PLAINTEXT
+        val out = ByteArrayOutputStream(
+            (prelude?.size ?: 0) + plaintext.size + chunks * (VlessWire.HEADER_LENGTH + VlessWire.AEAD_TAG_LENGTH)
+        )
+        if (prelude != null) {
+            out.write(prelude)
         }
         var offset = 0
         while (offset < plaintext.size) {
@@ -100,13 +136,14 @@ internal class VlessEncryptedConnection(
             val header = VlessRecordHeader.encode(chunkSize + VlessWire.AEAD_TAG_LENGTH)
             val willRekey = writeAead.nonceIsAtMax
             val sealed = writeAead.seal(chunk, header)
-            output += header + sealed
+            out.write(header)
+            out.write(sealed)
             if (willRekey) {
                 writeAead = VlessRecordAead(header + sealed, unitedKey)
             }
             offset += chunkSize
         }
-        return output
+        return out.toByteArray()
     }
 
     // MARK: - Receive
@@ -209,5 +246,8 @@ internal class VlessEncryptedConnection(
         return leftover ?: inner.receiveRaw()
     }
 
-    override fun cancel() = inner.cancel()
+    override fun cancel() {
+        synchronized(asyncQueue) { asyncQueue.clear() }
+        inner.cancel()
+    }
 }

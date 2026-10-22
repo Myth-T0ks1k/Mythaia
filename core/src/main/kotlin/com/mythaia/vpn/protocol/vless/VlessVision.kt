@@ -1,6 +1,7 @@
 package com.mythaia.vpn.protocol.vless
 
 import com.mythaia.data.model.ProxyError
+import java.io.ByteArrayOutputStream
 import java.security.SecureRandom
 import kotlin.math.max
 import kotlin.math.min
@@ -152,7 +153,7 @@ fun visionUnpadding(data: DataCursor, state: VisionTrafficState): ByteArray {
         }
     }
 
-    val result = mutableListOf<Byte>()
+    val result = ByteArrayOutputStream(max(data.remaining, 64))
 
     while (data.remaining > 0) {
         if (state.remainingCommand > 0) {
@@ -167,7 +168,8 @@ fun visionUnpadding(data: DataCursor, state: VisionTrafficState): ByteArray {
             state.remainingCommand--
         } else if (state.remainingContent > 0) {
             val toRead = min(state.remainingContent, data.remaining)
-            result.addAll(data.readBytes(toRead).toList())
+            val chunk = data.readBytes(toRead)
+            result.write(chunk, 0, chunk.size)
             state.remainingContent -= toRead
         } else if (state.remainingPadding > 0) {
             val toSkip = min(state.remainingPadding, data.remaining)
@@ -183,7 +185,8 @@ fun visionUnpadding(data: DataCursor, state: VisionTrafficState): ByteArray {
                 state.remainingContent = -1
                 state.remainingPadding = -1
                 if (data.remaining > 0) {
-                    result.addAll(data.readAll().toList())
+                    val rest = data.readAll()
+                    result.write(rest, 0, rest.size)
                 }
                 break
             }
@@ -273,23 +276,54 @@ fun visionFilterTLS(data: ByteArray, state: VisionTrafficState) {
     }
 }
 
-fun isCompleteTlsRecord(data: ByteArray): Boolean {
-    if (data.size < 5) return false
-    if (data[0] != 0x17.toByte() || data[1] != 0x03.toByte() || data[2] != 0x03.toByte()) return false
-
+/**
+ * Returns the end offset of the last complete TLS Application Data (`0x17 0x03 0x03`)
+ * record in [data], allowing leading `ChangeCipherSpec` (`0x14`) or `Handshake` (`0x16`)
+ * records (e.g. TLS 1.3 Flight 3 `CCS + Finished`). If [data] has trailing bytes after
+ * the last complete `0x17` record, those trailing bytes must begin with a valid `0x17 0x03 0x03`
+ * header so that splitting at the returned offset leaves the remainder record-aligned.
+ * Returns -1 if no complete `0x17` record is found.
+ */
+internal fun findLastCompleteTlsAppDataEnd(data: ByteArray): Int {
+    if (data.size < 6) return -1
     var offset = 0
+    var lastAppDataEnd = -1
+
     while (offset < data.size) {
-        if (offset + 5 > data.size) return false
-        if (data[offset] != 0x17.toByte() || data[offset + 1] != 0x03.toByte() || data[offset + 2] != 0x03.toByte()) {
-            return false
+        if (offset + 5 > data.size) {
+            if (lastAppDataEnd > 0) {
+                val rem = data.size - offset
+                if (rem >= 1 && data[offset] != 0x17.toByte()) return -1
+                if (rem >= 2 && data[offset + 1] != 0x03.toByte()) return -1
+                if (rem >= 3 && data[offset + 2] != 0x03.toByte()) return -1
+            }
+            break
         }
-        val recordLen = (data[offset + 3].toInt() and 0xFF shl 8) or (data[offset + 4].toInt() and 0xFF)
-        offset += 5
-        if (offset + recordLen > data.size) return false
-        offset += recordLen
+        val type = data[offset].toInt() and 0xFF
+        val major = data[offset + 1].toInt() and 0xFF
+        val minor = data[offset + 2].toInt() and 0xFF
+        if (major != 0x03 || minor !in 0x01..0x03) return -1
+        if (type != 0x17 && type != 0x14 && type != 0x16) return -1
+        if (type == 0x17 && minor != 0x03) return -1
+
+        val recordLen = ((data[offset + 3].toInt() and 0xFF) shl 8) or (data[offset + 4].toInt() and 0xFF)
+        if (recordLen <= 0 || recordLen > 18432) return -1
+
+        if (offset + 5 + recordLen > data.size) {
+            if (type != 0x17) return -1
+            break
+        }
+        offset += 5 + recordLen
+        if (type == 0x17) {
+            lastAppDataEnd = offset
+        }
     }
 
-    return offset == data.size
+    return lastAppDataEnd
+}
+
+fun isCompleteTlsRecord(data: ByteArray): Boolean {
+    return findLastCompleteTlsAppDataEnd(data) == data.size
 }
 
 private fun containsSubarray(data: ByteArray, fromIndex: Int, toIndex: Int, sub: ByteArray): Boolean {
@@ -329,14 +363,36 @@ class VlessVisionConnection(
      */
     suspend fun sendRequest(header: ByteArray, initialData: ByteArray?) {
         val frame: ByteArray
+        val remainder: ByteArray?
+        val remainderDirect: Boolean
         synchronized(lock) {
-            frame = if (initialData == null || initialData.isEmpty()) {
-                visionPadding(null, VisionCommand.PADDING_CONTINUE, trafficState, true)
+            if (initialData == null || initialData.isEmpty()) {
+                frame = visionPadding(null, VisionCommand.PADDING_CONTINUE, trafficState, true)
+                remainder = null
+                remainderDirect = false
             } else {
-                processSendData(initialData)
+                val splitEnd = if (trafficState.writerIsPadding && trafficState.isTLS) {
+                    findLastCompleteTlsAppDataEnd(initialData)
+                } else -1
+                if (splitEnd in 1 until initialData.size) {
+                    frame = processSendData(initialData.copyOfRange(0, splitEnd))
+                    remainder = initialData.copyOfRange(splitEnd, initialData.size)
+                    remainderDirect = trafficState.writerDirectCopy
+                } else {
+                    frame = processSendData(initialData)
+                    remainder = null
+                    remainderDirect = false
+                }
             }
         }
         innerConnection.send(header + frame)
+        if (remainder != null) {
+            if (remainderDirect) {
+                innerConnection.sendDirectRaw(remainder)
+            } else {
+                innerConnection.send(remainder)
+            }
+        }
     }
 
     override val isConnected: Boolean get() = innerConnection.isConnected
@@ -344,30 +400,84 @@ class VlessVisionConnection(
     override suspend fun sendRaw(data: ByteArray) {
         val isDirectCopy: Boolean
         val paddedData: ByteArray
+        val remainder: ByteArray?
+        val remainderDirect: Boolean
         synchronized(lock) {
             isDirectCopy = trafficState.writerDirectCopy
-            paddedData = processSendData(data)
+            if (!isDirectCopy && trafficState.writerIsPadding) {
+                if (trafficState.numberOfPacketsToFilter > 0) {
+                    visionFilterTLS(data, trafficState)
+                }
+                val splitEnd = if (trafficState.isTLS) findLastCompleteTlsAppDataEnd(data) else -1
+                if (splitEnd in 1 until data.size) {
+                    paddedData = processSendDataFiltered(data.copyOfRange(0, splitEnd))
+                    remainder = data.copyOfRange(splitEnd, data.size)
+                    remainderDirect = trafficState.writerDirectCopy
+                } else {
+                    paddedData = processSendDataFiltered(data)
+                    remainder = null
+                    remainderDirect = false
+                }
+            } else {
+                paddedData = processSendData(data)
+                remainder = null
+                remainderDirect = false
+            }
         }
 
         if (isDirectCopy) {
             innerConnection.sendDirectRaw(paddedData)
         } else {
             innerConnection.send(paddedData)
+            if (remainder != null) {
+                if (remainderDirect) {
+                    innerConnection.sendDirectRaw(remainder)
+                } else {
+                    innerConnection.send(remainder)
+                }
+            }
         }
     }
 
     override fun sendRawAsync(data: ByteArray) {
         val isDirectCopy: Boolean
         val paddedData: ByteArray
+        val remainder: ByteArray?
+        val remainderDirect: Boolean
         synchronized(lock) {
             isDirectCopy = trafficState.writerDirectCopy
-            paddedData = processSendData(data)
+            if (!isDirectCopy && trafficState.writerIsPadding) {
+                if (trafficState.numberOfPacketsToFilter > 0) {
+                    visionFilterTLS(data, trafficState)
+                }
+                val splitEnd = if (trafficState.isTLS) findLastCompleteTlsAppDataEnd(data) else -1
+                if (splitEnd in 1 until data.size) {
+                    paddedData = processSendDataFiltered(data.copyOfRange(0, splitEnd))
+                    remainder = data.copyOfRange(splitEnd, data.size)
+                    remainderDirect = trafficState.writerDirectCopy
+                } else {
+                    paddedData = processSendDataFiltered(data)
+                    remainder = null
+                    remainderDirect = false
+                }
+            } else {
+                paddedData = processSendData(data)
+                remainder = null
+                remainderDirect = false
+            }
         }
 
         if (isDirectCopy) {
             innerConnection.sendDirectRawAsync(paddedData)
         } else {
             innerConnection.sendAsync(paddedData)
+            if (remainder != null) {
+                if (remainderDirect) {
+                    innerConnection.sendDirectRawAsync(remainder)
+                } else {
+                    innerConnection.sendAsync(remainder)
+                }
+            }
         }
     }
 
@@ -379,7 +489,10 @@ class VlessVisionConnection(
         if (trafficState.numberOfPacketsToFilter > 0) {
             visionFilterTLS(data, trafficState)
         }
+        return processSendDataFiltered(data)
+    }
 
+    private fun processSendDataFiltered(data: ByteArray): ByteArray {
         if (trafficState.writerDirectCopy) return data
         if (!trafficState.writerIsPadding) return data
 
@@ -387,14 +500,11 @@ class VlessVisionConnection(
         val isComplete = isCompleteTlsRecord(data)
 
         val chunks = reshapeData(data)
+        val out = ByteArrayOutputStream(data.size + chunks.size * 64)
 
-        if (trafficState.isTLS && data.size >= 6 &&
-            data[0] == 0x17.toByte() && data[1] == 0x03.toByte() && data[2] == 0x03.toByte() &&
-            isComplete) {
-
-            var result = byteArrayOf()
+        if (trafficState.isTLS && data.size >= 6 && isComplete) {
             for ((i, chunk) in chunks.withIndex()) {
-                if (i == chunks.size - 1) {
+                val frame = if (i == chunks.size - 1) {
                     val command: VisionCommand
                     if (trafficState.enableXtls) {
                         command = VisionCommand.PADDING_DIRECT
@@ -403,30 +513,34 @@ class VlessVisionConnection(
                         command = VisionCommand.PADDING_END
                     }
                     trafficState.writerIsPadding = false
-                    result += visionPadding(chunk, command, trafficState, false)
+                    visionPadding(chunk, command, trafficState, false)
                 } else {
-                    result += visionPadding(chunk, VisionCommand.PADDING_CONTINUE, trafficState, true)
+                    visionPadding(chunk, VisionCommand.PADDING_CONTINUE, trafficState, true)
                 }
+                out.write(frame)
             }
-            return result
+            return out.toByteArray()
         }
 
-        // Compatibility: end padding one packet early for pre-TLS1.2 receivers.
-        if (!trafficState.isTLS12orAbove && trafficState.numberOfPacketsToFilter <= 1) {
+        // End padding once the filter budget expires (or one packet early for
+        // pre-TLS1.2 receivers) so segmented uploads never stay trapped in
+        // PADDING_CONTINUE for the life of the connection.
+        if ((!trafficState.isTLS12orAbove && trafficState.numberOfPacketsToFilter <= 1) ||
+            trafficState.numberOfPacketsToFilter <= 0) {
             trafficState.writerIsPadding = false
-            var result = byteArrayOf()
             for ((i, chunk) in chunks.withIndex()) {
                 val cmd = if (i == chunks.size - 1) VisionCommand.PADDING_END else VisionCommand.PADDING_CONTINUE
-                result += visionPadding(chunk, cmd, trafficState, longPadding)
+                val frame = visionPadding(chunk, cmd, trafficState, longPadding)
+                out.write(frame)
             }
-            return result
+            return out.toByteArray()
         }
 
-        var result = byteArrayOf()
         for (chunk in chunks) {
-            result += visionPadding(chunk, VisionCommand.PADDING_CONTINUE, trafficState, longPadding)
+            val frame = visionPadding(chunk, VisionCommand.PADDING_CONTINUE, trafficState, longPadding)
+            out.write(frame)
         }
-        return result
+        return out.toByteArray()
     }
 
     override suspend fun receiveRaw(): ByteArray? {

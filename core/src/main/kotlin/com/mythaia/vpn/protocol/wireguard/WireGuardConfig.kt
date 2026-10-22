@@ -158,7 +158,7 @@ data class WireGuardConfig(
 
     companion object {
         /** What wg-quick uses when the config does not say. */
-        const val DEFAULT_MTU = 1420
+        const val DEFAULT_MTU = 1380
 
         /**
          * Parses a `wg-quick` INI.

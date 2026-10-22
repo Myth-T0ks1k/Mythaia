@@ -5,7 +5,6 @@ import com.mythaia.vpn.NativeBridge
 import com.mythaia.vpn.Tls13Crypto
 import com.mythaia.vpn.protocol.Transport
 import com.mythaia.vpn.protocol.vless.RealityError
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock as withMutexLock
 import java.security.MessageDigest
@@ -146,6 +145,7 @@ class TlsRecordConnection private constructor(
      *  records in reverse order, causing TLS decryption failures on the server
      *  and a "Broken pipe" on the next write. */
     private val sendLock = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
 
     /** TLS 1.3 maximum plaintext per record (RFC 8446 S5.1). */
     companion object {
@@ -159,21 +159,50 @@ class TlsRecordConnection private constructor(
     suspend fun send(data: ByteArray) {
         sendLock.withMutexLock {
             val conn = connection ?: throw RealityError.HandshakeFailed("Connection cancelled")
+            drainAsyncQueueLocked(conn)
             val record = buildTLSRecords(data)
-            conn.send(record)
+            try {
+                conn.send(record)
+            } finally {
+                connection?.let { drainAsyncQueueLocked(it) }
+            }
         }
+        flushAsyncIfUnlocked()
     }
 
     fun sendAsync(data: ByteArray) {
-        runBlocking {
-            sendLock.withMutexLock {
-                val conn = connection ?: return@withMutexLock
-                try {
-                    val record = buildTLSRecords(data)
-                    conn.sendAsync(record)
-                } catch (e: Exception) {
-                    logger.error("Encryption error: ${e.message}")
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    private fun drainAsyncQueueLocked(conn: Transport) {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            try {
+                val record = buildTLSRecords(next)
+                conn.sendAsync(record)
+            } catch (e: Exception) {
+                logger.error("Encryption error: ${e.message}")
+            }
+        }
+    }
+
+    private fun flushAsyncIfUnlocked() {
+        while (synchronized(asyncQueue) { asyncQueue.isNotEmpty() }) {
+            if (!sendLock.tryLock()) return
+            try {
+                val conn = connection
+                if (conn == null) {
+                    synchronized(asyncQueue) { asyncQueue.clear() }
+                    return
                 }
+                drainAsyncQueueLocked(conn)
+            } finally {
+                sendLock.unlock()
             }
         }
     }
@@ -227,6 +256,7 @@ class TlsRecordConnection private constructor(
 
     /** Closes the connection. Sends a best-effort TLS close_notify alert before closing. */
     fun cancel() {
+        synchronized(asyncQueue) { asyncQueue.clear() }
         sendCloseNotify()
 
         receiveLock.withLock {

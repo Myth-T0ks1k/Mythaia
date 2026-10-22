@@ -190,6 +190,8 @@ internal class QuicUdpPath(
 
         /** How long a read waits before it looks at whether the path was closed. */
         const val SOCKET_POLL_MS = 1000
+        private const val SEND_BUFFER_BYTES = 1024 * 1024
+        private const val RECEIVE_BUFFER_BYTES = 2 * 1024 * 1024
 
         /** A UDP socket kept out of the tunnel, or null. */
         fun openProtectedSocket(): DatagramSocket? {
@@ -205,6 +207,8 @@ internal class QuicUdpPath(
                 return null
             }
             socket.soTimeout = SOCKET_POLL_MS
+            runCatching { socket.sendBufferSize = SEND_BUFFER_BYTES }
+            runCatching { socket.receiveBufferSize = RECEIVE_BUFFER_BYTES }
             return socket
         }
     }

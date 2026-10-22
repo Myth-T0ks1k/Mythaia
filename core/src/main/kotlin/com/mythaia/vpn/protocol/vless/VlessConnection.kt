@@ -9,6 +9,13 @@ import com.mythaia.vpn.protocol.tls.TlsRecordConnection
 import com.mythaia.vpn.protocol.websocket.WebSocketConnection
 import com.mythaia.vpn.protocol.xhttp.XHttpConnection
 import com.mythaia.vpn.util.NioSocket
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Base for VLESS connections; strips the 2-byte response header
@@ -265,15 +272,42 @@ open class VlessGrpcConnection(
     private val grpcConnection: com.mythaia.vpn.protocol.grpc.GrpcTunnel
 ) : VlessConnection() {
 
+    private val sendMutex = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
+    private val asyncScope by lazy {
+        CoroutineScope(Dispatchers.IO + SupervisorJob() + com.mythaia.vpn.tunnelCrashGuard)
+    }
+
     override val isConnected: Boolean get() = grpcConnection.isConnected
 
-    override suspend fun sendRaw(data: ByteArray) = grpcConnection.send(data)
+    override suspend fun sendRaw(data: ByteArray) {
+        sendMutex.withLock {
+            drainAsyncQueueLocked()
+            try {
+                grpcConnection.send(data)
+            } finally {
+                drainAsyncQueueLocked()
+            }
+        }
+    }
+
     override fun sendRawAsync(data: ByteArray) {
-        // gRPC's HTTP/2 send is suspending (flow-control); no non-blocking equivalent
-        // exists. Route through the regular path on runBlocking and drop any error —
-        // callers handle exceptions on the suspending paths.
-        kotlinx.coroutines.runBlocking {
-            runCatching { grpcConnection.send(data) }
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        asyncScope.launch {
+            sendMutex.withLock {
+                drainAsyncQueueLocked()
+            }
+        }
+    }
+
+    private suspend fun drainAsyncQueueLocked() {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            runCatching { grpcConnection.send(next) }
         }
     }
 
@@ -283,7 +317,11 @@ open class VlessGrpcConnection(
         return processResponseHeader(data)
     }
 
-    override fun cancel() = grpcConnection.cancel()
+    override fun cancel() {
+        synchronized(asyncQueue) { asyncQueue.clear() }
+        runCatching { asyncScope.cancel() }
+        grpcConnection.cancel()
+    }
 }
 
 /**

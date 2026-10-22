@@ -44,7 +44,7 @@
 
 /* One datagram. Anything larger than this cannot leave the interface intact,
    and ngtcp2 is told the same number so it never builds one that would. */
-#define MAX_DATAGRAM 1452
+#define MAX_DATAGRAM 1350
 
 /* The length of QuicTuning.toNativeArray: seven transport limits followed by
    five local engine settings (cc algorithm, the two auto-tuning ceilings, and
@@ -938,7 +938,22 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
     return NULL;
   }
 
-  jsize total = data == NULL ? 0 : (*env)->GetArrayLength(env, data);
+  jsize array_len = data == NULL ? 0 : (*env)->GetArrayLength(env, data);
+  jsize offset = 0;
+  jsize total = array_len;
+  if (accepted_out != NULL && data != NULL &&
+      (*env)->GetArrayLength(env, accepted_out) >= 3) {
+    jlong range[3];
+    (*env)->GetLongArrayRegion(env, accepted_out, 0, 3, range);
+    if (range[1] >= 0 && range[1] <= array_len) {
+      offset = (jsize)range[1];
+    }
+    if (range[2] >= 0 && offset + range[2] <= array_len) {
+      total = (jsize)range[2];
+    } else {
+      total = array_len - offset;
+    }
+  }
   /* One packet never carries more than this, so offering more only copied
      bytes that went back unread; the caller offers the rest again. The FIN
      belongs after the last byte, so it waits for the call that offers it. */
@@ -964,7 +979,7 @@ Java_com_mythaia_vpn_NativeBridge_nativeQuicConnWriteStream(
       return NULL;
     }
     chunk->next = NULL;
-    (*env)->GetByteArrayRegion(env, data, 0, len, (jbyte *)chunk->data);
+    (*env)->GetByteArrayRegion(env, data, offset, len, (jbyte *)chunk->data);
   }
 
   ngtcp2_vec vec;

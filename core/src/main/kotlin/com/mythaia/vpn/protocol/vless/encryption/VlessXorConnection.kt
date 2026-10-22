@@ -2,7 +2,6 @@ package com.mythaia.vpn.protocol.vless.encryption
 
 import com.mythaia.data.model.TlsVersion
 import com.mythaia.vpn.protocol.ProxyConnection
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -34,7 +33,7 @@ internal class VlessXorConnection(
     inSkip: Int
 ) : ProxyConnection() {
 
-    // Outbound masking state, mutated only inside [sendRaw] under [sendMutex].
+    // Outbound masking state, mutated only inside [sendRaw] / [sendRawAsync] under [sendMutex].
     private var outCtr: VlessEncryptionCtr = outCtr
     private var outSkip: Int = outSkip
     private var outHeader = ByteArray(0)
@@ -52,6 +51,7 @@ internal class VlessXorConnection(
      * before an earlier one and desynchronise the server's unmask.
      */
     private val sendMutex = Mutex()
+    private val asyncQueue = java.util.ArrayDeque<ByteArray>()
 
     override val isConnected: Boolean get() = inner.isConnected
     override val outerTlsVersion: TlsVersion? get() = inner.outerTlsVersion
@@ -66,17 +66,48 @@ internal class VlessXorConnection(
     override suspend fun sendRaw(data: ByteArray) {
         if (data.isEmpty()) return
         sendMutex.withLock {
+            drainAsyncQueueLocked()
             val bytes = data.copyOf()
             applyOutboundMask(bytes)
-            inner.sendRaw(bytes)
+            try {
+                inner.sendRaw(bytes)
+            } finally {
+                drainAsyncQueueLocked()
+            }
         }
+        flushAsyncIfUnlocked()
     }
 
     override fun sendRawAsync(data: ByteArray) {
-        // No non-blocking masked send exists; mirror VlessGrpcConnection and run
-        // the suspending path to completion, dropping errors the caller cannot
-        // observe on a fire-and-forget send.
-        runBlocking { runCatching { sendRaw(data) } }
+        if (data.isEmpty()) return
+        synchronized(asyncQueue) {
+            asyncQueue.addLast(data)
+        }
+        flushAsyncIfUnlocked()
+    }
+
+    private fun drainAsyncQueueLocked() {
+        while (true) {
+            val next = synchronized(asyncQueue) {
+                if (asyncQueue.isEmpty()) null else asyncQueue.removeFirst()
+            } ?: break
+            runCatching {
+                val bytes = next.copyOf()
+                applyOutboundMask(bytes)
+                inner.sendRawAsync(bytes)
+            }
+        }
+    }
+
+    private fun flushAsyncIfUnlocked() {
+        while (synchronized(asyncQueue) { asyncQueue.isNotEmpty() }) {
+            if (!sendMutex.tryLock()) return
+            try {
+                drainAsyncQueueLocked()
+            } finally {
+                sendMutex.unlock()
+            }
+        }
     }
 
     private fun applyOutboundMask(bytes: ByteArray) {
@@ -158,7 +189,10 @@ internal class VlessXorConnection(
         return bytes
     }
 
-    override fun cancel() = inner.cancel()
+    override fun cancel() {
+        synchronized(asyncQueue) { asyncQueue.clear() }
+        inner.cancel()
+    }
 
     /**
      * The payload length carried in bytes 3-4 of a TLS `application_data`

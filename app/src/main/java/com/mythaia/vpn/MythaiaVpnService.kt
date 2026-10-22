@@ -1233,7 +1233,14 @@ class MythaiaVpnService : VpnService() {
                 .notify(NOTIFICATION_ID, buildNotification(activeServerName, true, speed, totals))
         }
 
-        if (stallDetector.sample(now, down, up)) onSuspectedStall()
+        // Sustained upload (> tcpMaxCoalesceSize per 2s tick) can only proceed while
+        // outbound sockets drain and reopen lwIP's receive window, so do not treat
+        // a saturated unidirectional upload as a dead tunnel.
+        if (previous != null && (up - previous[2]) >= TunnelConstants.tcpMaxCoalesceSize) {
+            stallDetector.reset()
+        } else if (stallDetector.sample(now, down, up)) {
+            onSuspectedStall()
+        }
     }
 
     /**
@@ -1247,6 +1254,7 @@ class MythaiaVpnService : VpnService() {
         val config = currentConfig ?: return
         if (stallCheckRunning || config.outboundProtocol.isLayer3) return
         stallCheckRunning = true
+        val (baselineDown, baselineUp) = getStats()
         Thread({
             try {
                 val dead = (1..2).all {
@@ -1255,9 +1263,15 @@ class MythaiaVpnService : VpnService() {
                     } !is com.mythaia.data.network.LatencyResult.Success
                 }
                 if (!dead) return@Thread
+                val (afterDown, afterUp) = getStats()
+                if (afterDown > baselineDown || (afterUp - baselineUp) >= TunnelConstants.tcpMaxCoalesceSize) {
+                    return@Thread
+                }
                 logger.warning("[VPN] ${config.name} stopped answering; recovering")
                 android.os.Handler(mainLooper).post {
                     if (currentConfig?.id != config.id) return@post
+                    val (nowDown, nowUp) = getStats()
+                    if (nowDown > baselineDown || (nowUp - baselineUp) >= TunnelConstants.tcpMaxCoalesceSize) return@post
                     lwipStack?.handleWake()
                     AutoSelectEngine.onTunnelFailed(this, config.id)
                 }

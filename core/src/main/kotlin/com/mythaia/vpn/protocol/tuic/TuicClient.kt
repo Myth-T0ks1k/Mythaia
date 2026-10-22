@@ -249,7 +249,7 @@ class TuicClient(private val configuration: ProxyConfiguration) {
             serverName = configuration.serverAddress,
             serverPort = configuration.serverPort.toInt(),
             alpn = listOf(ALPN),
-            tuning = QuicTuning.NAIVE,
+            tuning = QuicTuning.hysteria().copy(initialMaxStreamsUni = 100),
             fingerprint = tls?.fingerprint ?: com.mythaia.data.model.TlsFingerprint.CHROME_133,
             tlsServerName = tls?.serverName?.takeIf { it.isNotBlank() } ?: configuration.serverAddress,
             allowInsecure = tls?.allowInsecure == true,
