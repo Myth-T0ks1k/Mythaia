@@ -1,0 +1,4 @@
+• Обновление в приложении, группировка по странам и экран для Android TV.
+• Профили маршрутизации Happ, настройки из подписки и уведомления.
+• Смена портов Hysteria2, VMess (XHTTP/REALITY), HTTP/QUIC, Sudoku и Nowhere.
+• Windows: WireGuard и AmneziaWG в TUN и возврат прокси после сбоя.

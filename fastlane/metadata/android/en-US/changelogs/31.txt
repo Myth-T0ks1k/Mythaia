@@ -1,0 +1,4 @@
+• In-app updates, servers grouped by country, and an Android TV home screen for D-pad remotes.
+• Happ routing profiles, subscription-managed settings, and provider notifications.
+• Hysteria2 port hopping, VMess over XHTTP & REALITY, sing-box HTTP/QUIC, Sudoku & Nowhere carriers.
+• Windows: WireGuard & AmneziaWG in TUN mode, and proxy guard on crash.

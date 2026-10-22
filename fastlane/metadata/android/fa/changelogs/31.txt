@@ -1,0 +1,4 @@
+• به‌روزرسانی درون‌برنامه‌ای، گروه‌بندی سرورها بر اساس کشور و صفحهٔ Android TV.
+• پروفایل‌های مسیریابی Happ، تنظیمات اشتراک و اعلان‌های ارائه‌دهنده.
+• جهش پورت Hysteria2،‏ VMess روی XHTTP/REALITY،‏ HTTP/QUIC،‏ Sudoku و Nowhere.
+• ویندوز: WireGuard و AmneziaWG در حالت TUN.

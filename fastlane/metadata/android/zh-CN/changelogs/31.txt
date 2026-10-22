@@ -1,0 +1,4 @@
+• 应用内更新、按国家分组服务器以及适用于遥控器的 Android TV 主屏幕。
+• Happ 路由配置、订阅管理设置与提供商通知。
+• Hysteria2 端口跳跃、VMess XHTTP 与 REALITY、HTTP/QUIC、Sudoku 与 Nowhere 传输。
+• Windows：TUN 模式下的 WireGuard 与 AmneziaWG，以及崩溃后自动恢复系统代理。

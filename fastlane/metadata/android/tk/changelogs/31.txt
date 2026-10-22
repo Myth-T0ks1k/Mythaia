@@ -1,0 +1,4 @@
+• Programmanyň içinden täzelemek, serwerleri ýurt boýunça toparlamak we Android TV ekrany.
+• Happ ugur profilleri, abunadan dolandyrylýan sazlamalar we üpjünçiniň bildirişleri.
+• Hysteria2 port çalyşmasy, XHTTP we REALITY arkaly VMess, HTTP/QUIC, Sudoku we Nowhere.
+• Windows: TUN tertibinde WireGuard we AmneziaWG.
