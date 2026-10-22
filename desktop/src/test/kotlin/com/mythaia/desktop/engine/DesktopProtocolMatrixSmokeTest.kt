@@ -65,6 +65,8 @@ import kotlin.concurrent.thread
 class DesktopProtocolMatrixSmokeTest {
 
     companion object {
+        val nativeLoaded: Boolean
+
         init {
             val candidates = listOfNotNull(
                 System.getProperty("mythaia.native.library")?.takeIf { it.isNotBlank() }?.let(::File),
@@ -72,11 +74,14 @@ class DesktopProtocolMatrixSmokeTest {
                 File("native/out/mythaia_native.dll"),
                 File("../desktop/native/out/mythaia_native.dll")
             )
-            candidates.firstOrNull { it.isFile }?.let { dll ->
+            val dll = candidates.firstOrNull { it.isFile }
+            if (dll != null) {
                 if (System.getProperty("mythaia.native.library").isNullOrBlank()) {
                     System.setProperty("mythaia.native.library", dll.absolutePath)
                 }
-                runCatching { System.load(dll.absolutePath) }
+                nativeLoaded = runCatching { System.load(dll.absolutePath); true }.getOrDefault(false)
+            } else {
+                nativeLoaded = false
             }
         }
     }
@@ -801,6 +806,7 @@ class DesktopProtocolMatrixSmokeTest {
 
     @Test
     fun `Desktop ProxyEngine smoke test for Sudoku and Nowhere over local loopback`() {
+        assumeTrue("mythaia_native.dll not built", nativeLoaded)
         val sudokuPsk = "desktop-smoke-sudoku-key"
         val sudokuServer = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
         val sudokuPort = sudokuServer.localPort
