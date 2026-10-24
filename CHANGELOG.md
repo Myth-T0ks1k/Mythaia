@@ -4,6 +4,16 @@ All notable changes to Mythaia are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-10-24
+
+### Fixed
+
+- **File uploads could stall, spike latency or drop the tunnel.**
+  - **QUIC (`Hysteria2`, `TUIC`, `VLESS`/`VMess`/`Trojan` over QUIC, `Nowhere`):** `writeStream` called `ngtcp2_conn_update_pkt_tx_time` after each single packet, resetting the pacer burst quantum and sleeping 5–15 ms per packet (~0.75 Mbps ceiling), and copied the remaining tail of the send buffer on every packet. `writeStream` now packs up to 32 packets per burst in place, wakes immediately on incoming `ACK` / `MAX_STREAM_DATA`, drains pending UDP datagrams before bulk stream writes, switches `Hysteria2` and `TUIC` to `BBR`, and lowers the QUIC datagram ceiling to 1350 bytes so Salamander obfuscation never exceeds Path MTU.
+  - **TUN + lwIP half-close reset:** when an app finished writing an upload and sent `FIN`, `handleRemoteClose` lowered the inactivity timer to 1 second while up to 1.5 MB of upload data was still draining from `coalesceBuffer`, aborting the connection with `RST` mid-upload. The half-close timeout now waits until all buffered uplink bytes have been sent and gives the server 30 seconds to answer; initial handshake bytes are acknowledged to `tcp_recved`, `followup` data goes through the single-flight coalesce loop, encryption and socket writes run off the single lwIP thread, and `StallDetector` no longer resets the tunnel during sustained unidirectional uploads.
+  - **Socket & multiplexed stream bufferbloat:** `NioSocket` now serializes partial writes with `pendingSends` under one lock, suspends instead of throwing `Send queue full` at 4 MB, and caps `SO_SNDBUF` at 64 KB so a single upload cannot queue megabytes in the OS kernel. Shared `HTTP/2`, `gRPC`, `XHTTP`, `WebSocket` and `Mux` sessions now serialize frame writes, chunk frames over 32 KB, keep half-closed streams open until the upload finishes, and yield between 16 KB `DATA` frames so concurrent pings and browsing stay responsive.
+  - **WireGuard:** clamps TCP `MSS` on `SYN` / `SYN-ACK` packets to fit the tunnel MTU.
+
 ## [1.4.0] — 2026-10-22
 
 ### Fixed
@@ -334,6 +344,7 @@ The first public release of Mythaia for Android, Wear OS and Windows.
 - Reality verifies the server's Finished message.
 - Windows: the service no longer runs commands read from a user-writable file.
 
+[1.4.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Myth-T0ks1k/Mythaia/compare/v1.2.0...v1.3.0

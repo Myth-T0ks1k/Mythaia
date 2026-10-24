@@ -1,0 +1,3 @@
+• Fixed: uploading files no longer stalls the tunnel, spikes ping, or times out before the server replies.
+• Faster QUIC (Hysteria2, TUIC) uploads with BBR and multi-packet burst packing.
+• Lower latency under load across HTTP/2, XHTTP, gRPC, VLESS Vision, and WireGuard.

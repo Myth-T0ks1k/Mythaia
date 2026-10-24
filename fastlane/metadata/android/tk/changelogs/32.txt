@@ -1,0 +1,3 @@
+• Düzedildi: faýl ýüklemek (upload) indi tuneli saklamaýar, pingi ýokarlandyrmaýar we wagt çägi bilen kesilmeýär.
+• BBR we toplumlaýyn ibermek bilen QUIC (Hysteria2, TUIC) ýükleme tizligi ýokarlandyryldy.
+• HTTP/2, XHTTP, gRPC, VLESS Vision we WireGuard üçin ýük astynda pes ping.

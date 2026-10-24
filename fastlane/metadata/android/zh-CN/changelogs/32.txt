@@ -1,0 +1,3 @@
+• 修复：上传文件时不再出现隧道卡顿、延迟飙升或连接超时中断。
+• 启用 BBR 与多包突发发送，大幅提升 QUIC（Hysteria2、TUIC）上传速度。
+• 降低 HTTP/2、XHTTP、gRPC、VLESS Vision 与 WireGuard 在上传负载下的延迟。

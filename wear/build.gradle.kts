@@ -24,8 +24,8 @@ android {
         applicationId = "com.mythaia"
         minSdk = 30
         targetSdk = 36
-        versionCode = 31
-        versionName = "1.4.0"
+        versionCode = 32
+        versionName = "1.4.1"
     }
 
     // The phone app's release key, read the same way (local.properties, then
